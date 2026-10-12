@@ -44,6 +44,8 @@ interface StagingDatasetTableProps {
   /** Excel-style cell / row / column selection with Export Selected
    * (needs documentId). On by default. */
   selectable?: boolean;
+  /** Column header sort controls. Off for simple upload/read views. */
+  sortable?: boolean;
   /** The source document's name, for export file names. */
   filename?: string;
 }
@@ -99,6 +101,7 @@ export default function StagingDatasetTable({
   pageSize = DEFAULT_PAGE_SIZE,
   dense = false,
   selectable = true,
+  sortable = true,
   filename,
 }: StagingDatasetTableProps) {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -547,31 +550,32 @@ export default function StagingDatasetTable({
                       onResize={(size) => sizes.setColumn(column.canonical_field, size)}
                       onReset={() => sizes.setColumn(column.canonical_field, null)}
                     />
-                    {selecting ? (
+                    {selecting || sortable ? (
                       <span className="flex items-center gap-1.5">
-                        <SelectCheckbox
-                          checked={allSelected(selection, filteredIds, [column.canonical_field])}
-                          indeterminate={someSelected(selection, filteredIds, [column.canonical_field])}
-                          onChange={() =>
-                            setSelection((current) => toggleBlock(current, filteredIds, [column.canonical_field]))
-                          }
-                          label={`Select column ${column.display_label}`}
-                          className="col-check"
-                        />
-                        <SortableHeader
-                          label={column.display_label}
-                          active={active}
-                          direction={sort?.direction}
-                          onSort={() => changeSort(column.canonical_field)}
-                        />
+                        {selecting && (
+                          <SelectCheckbox
+                            checked={allSelected(selection, filteredIds, [column.canonical_field])}
+                            indeterminate={someSelected(selection, filteredIds, [column.canonical_field])}
+                            onChange={() =>
+                              setSelection((current) => toggleBlock(current, filteredIds, [column.canonical_field]))
+                            }
+                            label={`Select column ${column.display_label}`}
+                            className="col-check"
+                          />
+                        )}
+                        {sortable ? (
+                          <SortableHeader
+                            label={column.display_label}
+                            active={active}
+                            direction={sort?.direction}
+                            onSort={() => changeSort(column.canonical_field)}
+                          />
+                        ) : (
+                          <span className="line-clamp-2 min-w-0 break-normal">{column.display_label}</span>
+                        )}
                       </span>
                     ) : (
-                      <SortableHeader
-                        label={column.display_label}
-                        active={active}
-                        direction={sort?.direction}
-                        onSort={() => changeSort(column.canonical_field)}
-                      />
+                      <span className="line-clamp-2 min-w-0 break-normal">{column.display_label}</span>
                     )}
                   </th>
                   );
@@ -580,7 +584,7 @@ export default function StagingDatasetTable({
                   <th
                     scope="col"
                     aria-sort={
-                      sort?.field === STATUS_SORT_FIELD
+                      sortable && sort?.field === STATUS_SORT_FIELD
                         ? sort.direction === "asc"
                           ? "ascending"
                           : "descending"
@@ -588,12 +592,16 @@ export default function StagingDatasetTable({
                     }
                     className={`sticky top-0 z-20 border-b border-border bg-surface-soft text-left text-[11px] font-semibold uppercase tracking-wide text-text-secondary ${dense ? "h-8 px-2" : "h-11 px-3"}`}
                   >
-                    <SortableHeader
-                      label="Status"
-                      active={sort?.field === STATUS_SORT_FIELD}
-                      direction={sort?.direction}
-                      onSort={() => changeSort(STATUS_SORT_FIELD)}
-                    />
+                    {sortable ? (
+                      <SortableHeader
+                        label="Status"
+                        active={sort?.field === STATUS_SORT_FIELD}
+                        direction={sort?.direction}
+                        onSort={() => changeSort(STATUS_SORT_FIELD)}
+                      />
+                    ) : (
+                      <span>Status</span>
+                    )}
                   </th>
                 )}
                 {canOpen && (
@@ -607,8 +615,9 @@ export default function StagingDatasetTable({
             <tbody>
               {paged.map((record) => {
                 const height = sizes.rows[record.record_id];
-                const rowHandle = (
+                const resizeRow = (key: string) => (
                   <ResizeHandle
+                    key={key}
                     axis="row"
                     label={`Resize record ${cellText(record, columns[0]) || record.record_id}`}
                     onResize={(size) => sizes.setRow(record.record_id, size)}
@@ -638,7 +647,7 @@ export default function StagingDatasetTable({
                 >
                   {selecting && (
                     <td
-                      className={`sticky left-0 z-10 border-b border-border/70 bg-surface text-center align-middle ${
+                      className={`relative sticky left-0 z-10 border-b border-border/70 bg-surface text-center align-middle ${
                         wrapCells ? (dense ? "px-1 py-1.5" : "px-1 py-2") : dense ? "h-8" : "h-11"
                       }`}
                     >
@@ -648,7 +657,7 @@ export default function StagingDatasetTable({
                         onChange={() => setSelection((current) => toggleBlock(current, [record.record_id], fieldIds))}
                         label={`Select record ${cellText(record, columns[0]) || record.record_id}`}
                       />
-                      {rowHandle}
+                      {resizeRow("row-check")}
                     </td>
                   )}
                   {columns.map((column, columnIndex) => {
@@ -662,12 +671,13 @@ export default function StagingDatasetTable({
                         onClick={selecting ? (event) => selectCell(event, record.record_id, column.canonical_field) : undefined}
                         aria-selected={selecting ? picked : undefined}
                         className={[
+                          "relative",
                           picked ? "cell-selected" : "",
                           selecting ? "cursor-cell" : "",
                           wrapCells ? (dense ? "px-2 py-1.5 text-[13px]" : "px-3 py-2") : dense ? "h-8 px-2 text-[13px]" : "h-11 px-3",
                           "border-b border-border/70 align-middle group-hover:bg-surface-soft",
                           selectedId === requestId ? "bg-primary/[0.08]" : "",
-                          columnIndex < frozen ? "sticky z-10 bg-surface" : columnIndex === 0 && !selecting ? "relative" : "",
+                          columnIndex < frozen ? "sticky z-10 bg-surface" : "",
                           columnIndex === frozen - 1 ? "border-r" : "",
                         ].join(" ")}
                         style={columnIndex < frozen ? { left: offsets[columnIndex] } : undefined}
@@ -689,17 +699,24 @@ export default function StagingDatasetTable({
                         ) : (
                           renderValue(record, column)
                         )}
-                        {columnIndex === 0 && !selecting && rowHandle}
+                        {resizeRow(`row-${column.canonical_field}`)}
+                        <ResizeHandle
+                          axis="column"
+                          label={`Resize column ${column.display_label}`}
+                          onResize={(size) => sizes.setColumn(column.canonical_field, size)}
+                          onReset={() => sizes.setColumn(column.canonical_field, null)}
+                        />
                       </td>
                     );
                   })}
                   {isBusiness && (
-                    <td className={`border-b border-border/70 align-middle group-hover:bg-surface-soft ${dense ? "h-8 px-2" : "h-11 px-3"}`}>
+                    <td className={`relative border-b border-border/70 align-middle group-hover:bg-surface-soft ${dense ? "h-8 px-2" : "h-11 px-3"}`}>
                       <ReviewStatusBadge status={record.record_status} />
+                      {resizeRow("row-status")}
                     </td>
                   )}
                   {canOpen && (
-                    <td className={`border-b border-border/70 text-right align-middle group-hover:bg-surface-soft ${dense ? "h-8 px-2" : "h-11 px-3"}`}>
+                    <td className={`relative border-b border-border/70 text-right align-middle group-hover:bg-surface-soft ${dense ? "h-8 px-2" : "h-11 px-3"}`}>
                       <button
                         type="button"
                         onClick={(event) => {
@@ -710,10 +727,11 @@ export default function StagingDatasetTable({
                       >
                         Details
                       </button>
+                      {resizeRow("row-details")}
                     </td>
                   )}
                   {hasLinks && (
-                    <td className={`border-b border-border/70 text-right align-middle group-hover:bg-surface-soft ${dense ? "h-8 px-2" : "h-11 px-3"}`}>
+                    <td className={`relative border-b border-border/70 text-right align-middle group-hover:bg-surface-soft ${dense ? "h-8 px-2" : "h-11 px-3"}`}>
                       {record.links_to_dataset && onOpenDataset && (
                         <button
                           type="button"
@@ -726,6 +744,7 @@ export default function StagingDatasetTable({
                           View dataset →
                         </button>
                       )}
+                      {resizeRow("row-links")}
                     </td>
                   )}
                 </tr>

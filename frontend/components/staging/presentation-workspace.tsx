@@ -9,7 +9,6 @@ import { cellSourceRequest, formatCellValue } from "@/components/staging/review-
 import ResizeHandle, { useGridSizes } from "@/components/staging/resize-handle";
 import SelectCheckbox from "@/components/staging/select-checkbox";
 import SelectionToolbar from "@/components/staging/selection-toolbar";
-import SortableHeader from "@/components/staging/sortable-header";
 import StagingDatasetTable from "@/components/staging/staging-dataset-table";
 import StagingFieldList from "@/components/staging/staging-field-list";
 import StagingRecordDrawer from "@/components/staging/staging-record-drawer";
@@ -30,19 +29,7 @@ import {
   type StagingRecord,
   type StagingWorkbook,
 } from "@/lib/staging-workbook";
-import { cycleSort, sortByText, type SortState } from "@/lib/table-sort";
 import { displayLines } from "@/lib/text-display";
-import {
-  allSelected,
-  isSelected,
-  rangeBlock,
-  setCells,
-  someSelected,
-  toggleBlock,
-  toggleCell,
-  useTableSelection,
-} from "@/lib/table-selection";
-
 export interface MoreAction {
   label: string;
   onSelect: () => void;
@@ -527,6 +514,15 @@ function TextBlock({
                   {lines.map((line, lineIndex) => {
                     const rowId = `${item.id}:${lineIndex}`;
                     const height = sizes.rows[rowId];
+                    const resizeRow = (key: string) => (
+                      <ResizeHandle
+                        key={key}
+                        axis="row"
+                        label={`Resize row ${lineIndex + 1}`}
+                        onResize={(size) => sizes.setRow(rowId, size)}
+                        onReset={() => sizes.setRow(rowId, null)}
+                      />
+                    );
                     return (
                       <tr
                         key={rowId}
@@ -535,22 +531,30 @@ function TextBlock({
                       >
                         <td className="relative border-b border-border/70 px-2 py-2 align-top tabular-nums text-text-muted">
                           {lineIndex + 1}
+                          {resizeRow("row-index")}
                           <ResizeHandle
-                            axis="row"
-                            label={`Resize row ${lineIndex + 1}`}
-                            onResize={(size) => sizes.setRow(rowId, size)}
-                            onReset={() => sizes.setRow(rowId, null)}
+                            axis="column"
+                            label="Resize index column"
+                            onResize={(size) => sizes.setColumn("index", size)}
+                            onReset={() => sizes.setColumn("index", null)}
                           />
                         </td>
                         <td
-                          className="border-b border-border/70 px-3 py-2 align-top text-foreground"
+                          className="relative border-b border-border/70 px-3 py-2 align-top text-foreground"
                           title={line}
                         >
                           <span className={height ? "block break-words whitespace-pre-wrap" : "block"}>
                             {line}
                           </span>
+                          {resizeRow("row-content")}
+                          <ResizeHandle
+                            axis="column"
+                            label={`Resize column ${item.label || "Content"}`}
+                            onResize={(size) => sizes.setColumn("content", size)}
+                            onReset={() => sizes.setColumn("content", null)}
+                          />
                         </td>
-                        <td className="border-b border-border/70 px-3 py-2 text-right align-top">
+                        <td className="relative border-b border-border/70 px-3 py-2 text-right align-top">
                           {lineIndex === 0 ? (
                             <div className="flex flex-col items-end gap-1">
                               <ReviewMark cell={item.cell} onOpen={open} />
@@ -564,6 +568,13 @@ function TextBlock({
                               </button>
                             </div>
                           ) : null}
+                          {resizeRow("row-action")}
+                          <ResizeHandle
+                            axis="column"
+                            label="Resize source column"
+                            onResize={(size) => sizes.setColumn("action", size)}
+                            onReset={() => sizes.setColumn("action", null)}
+                          />
                         </td>
                       </tr>
                     );
@@ -650,12 +661,30 @@ function DetailList({ items, onSelect, picked, onPick }: { items: FieldItem[]; o
                     onResize={(size) => sizes.setRow(item.id, size)}
                     onReset={() => sizes.setRow(item.id, null)}
                   />
+                  <ResizeHandle
+                    axis="column"
+                    label="Resize field column"
+                    onResize={(size) => sizes.setColumn("field", size)}
+                    onReset={() => sizes.setColumn("field", null)}
+                  />
                 </td>
-                <td className="border-b border-border/70 px-3 py-2.5 align-top">
+                <td className="relative border-b border-border/70 px-3 py-2.5 align-top">
                   <span className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                     <ValueButton text={displayText(formatCellValue(item.cell))} onOpen={open} className="font-medium" wrap />
                     <ReviewMark cell={item.cell} onOpen={open} />
                   </span>
+                  <ResizeHandle
+                    axis="row"
+                    label={`Resize row ${item.label}`}
+                    onResize={(size) => sizes.setRow(item.id, size)}
+                    onReset={() => sizes.setRow(item.id, null)}
+                  />
+                  <ResizeHandle
+                    axis="column"
+                    label="Resize value column"
+                    onResize={(size) => sizes.setColumn("value", size)}
+                    onReset={() => sizes.setColumn("value", null)}
+                  />
                 </td>
               </tr>
             );
@@ -701,7 +730,6 @@ function SummaryBlock({ items, onSelect, picked, onPick }: { items: FieldItem[];
 
 type Filter = "all" | "Verified" | "Needs Review";
 const PAGE_SIZE = 25;
-const GRID_CHECK_WIDTH = 36;
 const GRID_DETAILS_WIDTH = 88;
 const GRID_DEFAULT_COLUMN = 160;
 
@@ -722,7 +750,6 @@ function RecordGrid({
   const columns = useMemo(() => section.columns ?? [], [section.columns]);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<SortState>(null);
   const [page, setPage] = useState(0);
   const [wrapCells, setWrapCells] = useState(false);
   const [openRecord, setOpenRecord] = useState<StagingRecord | null>(null);
@@ -731,7 +758,7 @@ function RecordGrid({
   const flagged = dataset.records.filter((record) => record.record_status === "Needs Review").length;
   const large = total >= 8;
   const searchable = total > 15;
-  const filtered = useMemo(() => {
+  const records = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return dataset.records.filter((record) => {
       if (filter !== "all" && record.record_status !== filter) return false;
@@ -739,14 +766,6 @@ function RecordGrid({
       return columns.some((column) => String(record.cells[column.canonical_field]?.value ?? "").toLowerCase().includes(needle));
     });
   }, [dataset.records, filter, query, columns]);
-  const records = useMemo(
-    () =>
-      sortByText(filtered, sort, (record, field) => {
-        const cell = record.cells[field];
-        return cell && !isBlank(cell.value) ? formatCellValue(cell) : "";
-      }),
-    [filtered, sort],
-  );
   const pages = Math.max(1, Math.ceil(records.length / PAGE_SIZE));
   const clamped = Math.min(page, pages - 1);
   const paged = records.slice(clamped * PAGE_SIZE, clamped * PAGE_SIZE + PAGE_SIZE);
@@ -759,20 +778,6 @@ function RecordGrid({
   const keepWhole = (text: string) =>
     (columns.length > 8 && text.length <= 32) || (Boolean(section.inlineReview) && text.length <= 16);
   const identity = columns.find((column) => /description|title|name|clause|far_number|clin/i.test(column.canonical_field)) ?? columns[0];
-
-  // Excel-style selection (cell / row / column) with Export Selected, as in
-  // the staging data grid. A value still opens its evidence on click.
-  // A composed table (no staged dataset of its own) keeps its selection
-  // local, so the page's Export menu never offers it as a dataset.
-  const [selection, setSelection] = useTableSelection(
-    section.cellSources ? undefined : documentId,
-    dataset.dataset_id,
-    dataset.display_name,
-  );
-  const [anchor, setAnchor] = useState<{ recordId: string; field: string } | null>(null);
-  const fieldIds = useMemo(() => columns.map((column) => column.canonical_field), [columns]);
-  const resultIds = useMemo(() => records.map((record) => record.record_id), [records]);
-  const pagedIds = paged.map((record) => record.record_id);
   const rowName = (record: StagingRecord) =>
     (identity ? String(record.cells[identity.canonical_field]?.value ?? "") : "") || record.record_id;
 
@@ -790,35 +795,7 @@ function RecordGrid({
     [columns, sizes.columns],
   );
   const tableWidth =
-    GRID_CHECK_WIDTH + columnWidths.reduce((sum, width) => sum + width, 0) + (needsDetails ? GRID_DETAILS_WIDTH : 0);
-
-  // A table composed for display (not a staged dataset) exports its
-  // selected cells by where each value is stored.
-  function exportComposed(format: SelectedExportFormat) {
-    const refs = resultIds.flatMap((recordId) =>
-      fieldIds
-        .filter((field) => isSelected(selection, recordId, field))
-        .map((field) => section.cellSources?.[recordId]?.[field])
-        .filter((source): source is FieldSource => Boolean(source))
-        .map(fieldRef),
-    );
-    if (refs.length === 0) return Promise.reject(new Error("Select a value (not the Item column) to export."));
-    return downloadSelectedFieldsExport(documentId, format, refs, dataset.display_name);
-  }
-
-  function selectCell(event: React.MouseEvent, recordId: string, field: string) {
-    // Clicking the value itself opens its evidence.
-    if ((event.target as HTMLElement).closest("button, input")) return;
-    if (event.shiftKey && anchor) {
-      const block = rangeBlock(resultIds, fieldIds, anchor, { recordId, field });
-      if (block) {
-        setSelection((current) => setCells(current, block.recordIds, block.fields, true));
-        return;
-      }
-    }
-    setAnchor({ recordId, field });
-    setSelection((current) => toggleCell(current, recordId, field));
-  }
+    columnWidths.reduce((sum, width) => sum + width, 0) + (needsDetails ? GRID_DETAILS_WIDTH : 0);
 
   function openCell(record: StagingRecord, column: StagingColumn) {
     const cell = record.cells[column.canonical_field];
@@ -900,26 +877,12 @@ function RecordGrid({
         )}
       </div>
 
-      <SelectionToolbar
-        documentId={documentId}
-        datasetId={dataset.dataset_id}
-        filename={dataset.display_name}
-        exportSelection={section.cellSources ? exportComposed : undefined}
-        selection={selection}
-        onClear={() => setSelection(new Map())}
-        onSelectVisible={() => setSelection((current) => setCells(current, pagedIds, fieldIds, true))}
-        resultCount={resultIds.length}
-        allResultsSelected={allSelected(selection, resultIds, fieldIds)}
-        onSelectAllResults={() => setSelection((current) => setCells(current, resultIds, fieldIds, true))}
-      />
-
       <div className="max-h-[65vh] overflow-auto rounded-xl border border-border bg-surface">
         <table
           className={["table-fixed border-separate border-spacing-0 text-sm", wrapCells ? "grid-cells-wrap" : ""].join(" ")}
           style={{ width: tableWidth, minWidth: "100%" }}
         >
           <colgroup>
-            <col style={{ width: GRID_CHECK_WIDTH }} />
             {columnWidths.map((width, index) => (
               <col key={columns[index].canonical_field} style={{ width }} />
             ))}
@@ -927,47 +890,13 @@ function RecordGrid({
           </colgroup>
           <thead className="sticky top-0 z-10 bg-surface-soft">
             <tr>
-              <th scope="col" className="relative px-2 py-2 text-center">
-                <SelectCheckbox
-                  checked={allSelected(selection, pagedIds, fieldIds)}
-                  indeterminate={someSelected(selection, pagedIds, fieldIds)}
-                  onChange={() => setSelection((current) => toggleBlock(current, pagedIds, fieldIds))}
-                  label={`Select all ${pagedIds.length} ${plural} on this page`}
-                />
-              </th>
-              {columns.map((column) => {
-                const active = sort?.field === column.canonical_field;
-                return (
+              {columns.map((column) => (
                 <th
                   key={column.canonical_field}
                   scope="col"
-                  aria-sort={
-                    active && sort
-                      ? sort.direction === "asc"
-                        ? "ascending"
-                        : "descending"
-                      : "none"
-                  }
                   className="relative border-b border-border bg-surface-soft px-3 py-2 pr-4 text-left text-[11px] font-semibold uppercase tracking-wide text-text-secondary"
                 >
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <SelectCheckbox
-                      checked={allSelected(selection, resultIds, [column.canonical_field])}
-                      indeterminate={someSelected(selection, resultIds, [column.canonical_field])}
-                      onChange={() => setSelection((current) => toggleBlock(current, resultIds, [column.canonical_field]))}
-                      label={`Select column ${column.display_label}`}
-                      className="col-check"
-                    />
-                    <SortableHeader
-                      label={column.display_label}
-                      active={Boolean(active)}
-                      direction={sort?.direction}
-                      onSort={() => {
-                        setSort((current) => cycleSort(current, column.canonical_field));
-                        setPage(0);
-                      }}
-                    />
-                  </span>
+                  <span className="line-clamp-2 min-w-0 break-normal">{column.display_label}</span>
                   <ResizeHandle
                     axis="column"
                     label={`Resize column ${column.display_label}`}
@@ -975,8 +904,7 @@ function RecordGrid({
                     onReset={() => sizes.setColumn(column.canonical_field, null)}
                   />
                 </th>
-                );
-              })}
+              ))}
               {needsDetails && (
                 <th className="relative whitespace-nowrap border-b border-border bg-surface-soft px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
                   Review
@@ -987,52 +915,35 @@ function RecordGrid({
           <tbody className="divide-y divide-border">
             {paged.map((record) => {
               const height = sizes.rows[record.record_id];
+              const resizeRow = (key: string) => (
+                <ResizeHandle
+                  key={key}
+                  axis="row"
+                  label={`Resize ${singular} ${rowName(record)}`}
+                  onResize={(size) => sizes.setRow(record.record_id, size)}
+                  onReset={() => sizes.setRow(record.record_id, null)}
+                />
+              );
               return (
               <tr
                 key={record.record_id}
                 className={`hover:bg-surface-soft/60 ${height || wrapCells ? "grid-row-wrap" : ""}`}
                 style={height && !wrapCells ? { height } : undefined}
               >
-                <td className="relative w-9 px-2 py-2 text-center align-top">
-                  <SelectCheckbox
-                    checked={allSelected(selection, [record.record_id], fieldIds)}
-                    indeterminate={someSelected(selection, [record.record_id], fieldIds)}
-                    onChange={() => setSelection((current) => toggleBlock(current, [record.record_id], fieldIds))}
-                    label={`Select ${singular} ${rowName(record)}`}
-                  />
-                  <ResizeHandle
-                    axis="row"
-                    label={`Resize ${singular} ${rowName(record)}`}
-                    onResize={(size) => sizes.setRow(record.record_id, size)}
-                    onReset={() => sizes.setRow(record.record_id, null)}
-                  />
-                </td>
                 {columns.map((column, index) => {
                   const cell = record.cells[column.canonical_field];
                   const text = cell && !isBlank(cell.value) ? displayText(formatCellValue(cell)) : "";
                   // Inline review: the record's identity (clause number,
                   // title) opens its details; review state is a small mark.
                   const opensRecord = section.inlineReview && (index === 0 || column.canonical_field.endsWith(".title"));
-                  const picked = isSelected(selection, record.record_id, column.canonical_field);
                   const whole = !wrapCells && keepWhole(text) && !sizes.columns[column.canonical_field];
                   return (
                     <td
                       key={column.canonical_field}
-                      onMouseDown={(event) => event.shiftKey && event.preventDefault()}
-                      onClick={(event) => selectCell(event, record.record_id, column.canonical_field)}
-                      aria-selected={picked}
-                      className={`cursor-cell px-3 py-2 align-top ${wrapCells ? "" : "overflow-hidden"} ${picked ? "cell-selected" : ""} ${whole ? "whitespace-nowrap" : ""}`}
+                      className={`relative px-3 py-2 align-top ${wrapCells ? "" : "overflow-hidden"} ${whole ? "whitespace-nowrap" : ""}`}
                       title={wrapCells ? undefined : text}
                     >
-                      <span className={`flex min-w-0 items-baseline gap-1.5 ${height && !wrapCells ? "overflow-hidden" : ""}`}>
-                      <SelectCheckbox
-                        small
-                        className="cell-check self-center"
-                        checked={picked}
-                        onChange={() => setSelection((current) => toggleCell(current, record.record_id, column.canonical_field))}
-                        label={`Select ${column.display_label} of ${rowName(record)}`}
-                      />
-                      <span className="min-w-0 flex-1">
+                      <span className={`min-w-0 ${height && !wrapCells ? "overflow-hidden" : ""}`}>
                       {text && section.inlineReview && index === 0 && record.record_status === "Needs Review" ? (
                         <span className="flex min-w-0 items-baseline gap-1">
                           <span className="shrink-0 text-[11px] font-semibold text-warning" title="Needs review — open details" aria-label="Needs review">
@@ -1049,12 +960,18 @@ function RecordGrid({
                         />
                       ) : null}
                       </span>
-                      </span>
+                      {resizeRow(`row-${column.canonical_field}`)}
+                      <ResizeHandle
+                        axis="column"
+                        label={`Resize column ${column.display_label}`}
+                        onResize={(size) => sizes.setColumn(column.canonical_field, size)}
+                        onReset={() => sizes.setColumn(column.canonical_field, null)}
+                      />
                     </td>
                   );
                 })}
                 {needsDetails && (
-                  <td className="whitespace-nowrap px-3 py-2 text-right align-top">
+                  <td className="relative whitespace-nowrap px-3 py-2 text-right align-top">
                     <button
                       type="button"
                       onClick={() => setOpenRecord(record)}
@@ -1067,6 +984,7 @@ function RecordGrid({
                     >
                       {record.record_status === "Needs Review" ? "! Needs Review" : "✓"}
                     </button>
+                    {resizeRow("row-details")}
                   </td>
                 )}
               </tr>
@@ -1162,7 +1080,13 @@ function TechnicalView({
           {dataset.cardinality === "single" ? (
             <StagingFieldList dataset={dataset} onOpenSource={onOpenSource} />
           ) : (
-            <StagingDatasetTable dataset={dataset} documentId={documentId} onOpenSource={onOpenSource} />
+            <StagingDatasetTable
+              dataset={dataset}
+              documentId={documentId}
+              onOpenSource={onOpenSource}
+              selectable={false}
+              sortable={false}
+            />
           )}
         </div>
       )}

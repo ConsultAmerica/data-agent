@@ -204,7 +204,7 @@ describe("compact data grid", () => {
     render(<StagingDatasetTable dataset={clauses()} documentId="x1" />);
     const textSort = screen.getByRole("button", { name: /Text\. Sort ascending/i });
     expect(textSort.querySelector("svg")).toBeTruthy();
-    expect(screen.getByRole("separator", { name: "Resize column Text" })).toBeTruthy();
+    expect(screen.getAllByRole("separator", { name: "Resize column Text" }).length).toBeGreaterThan(1);
 
     const textCell = () => {
       const row = screen.getAllByRole("row")[1];

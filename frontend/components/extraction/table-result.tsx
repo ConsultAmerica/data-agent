@@ -4,9 +4,7 @@ import { useMemo, useState } from "react";
 import { Check, Copy, Download, FileText } from "lucide-react";
 
 import ResizeHandle, { useGridSizes } from "@/components/staging/resize-handle";
-import SortableHeader from "@/components/staging/sortable-header";
 import { downloadBlob, toCsv, toTsv } from "@/lib/export";
-import { cycleSort, sortByText, type SortState } from "@/lib/table-sort";
 import type { UniversalTable } from "@/types/document";
 
 interface TableResultProps {
@@ -33,7 +31,6 @@ function autoWidth(header: string, rows: UniversalTable["rows"]): number {
 
 export default function TableResult({ table, onViewSource }: TableResultProps) {
   const [copied, setCopied] = useState(false);
-  const [sort, setSort] = useState<SortState>(null);
   const sizes = useGridSizes();
 
   const widths = useMemo(
@@ -43,113 +40,63 @@ export default function TableResult({ table, onViewSource }: TableResultProps) {
   );
   const tableWidth = widths.reduce((sum, width) => sum + width, 0);
 
-  const sortedRows = useMemo(() => {
-    const indexed = table.rows.map((row, index) => ({ row, index }));
-    return sortByText(indexed, sort, (entry, field) => String(entry.row[field] ?? ""));
-  }, [sort, table.rows]);
-
-  async function copyTable() {
-    try {
-      await navigator.clipboard.writeText(toTsv(table.headers, table.rows));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard access can be denied by the browser — the export
-      // buttons remain a reliable fallback.
-    }
+  async function copyTsv() {
+    await navigator.clipboard.writeText(toTsv(table.headers, table.rows));
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
   }
 
   function exportCsv() {
     downloadBlob(
+      `${table.name || "table"}.csv`,
       toCsv(table.headers, table.rows),
-      `table-page-${table.page_number}.csv`,
-      "text/csv;charset=utf-8;",
+      "text/csv;charset=utf-8",
     );
   }
 
   function exportJson() {
     downloadBlob(
-      JSON.stringify(table.rows, null, 2),
-      `table-page-${table.page_number}.json`,
-      "application/json;charset=utf-8;",
+      `${table.name || "table"}.json`,
+      JSON.stringify({ name: table.name, headers: table.headers, rows: table.rows }, null, 2),
+      "application/json",
     );
   }
 
   return (
-    <div className="editorial-card overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-4">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-            {table.title || "Extracted table"}
-          </p>
-          <p className="mt-1 font-semibold text-foreground">
-            Page {table.page_number}
-            <span className="ml-2 text-xs font-medium text-text-teal">
-              · Source evidence
-            </span>
-            <span className="ml-2 text-xs font-medium text-text-muted">
-              · {table.rows.length} row{table.rows.length === 1 ? "" : "s"} ×{" "}
-              {table.headers.length} column{table.headers.length === 1 ? "" : "s"}
-            </span>
-          </p>
-          <p className="mt-1 text-xs text-text-secondary">
-            {table.source_reference || `Verified against page ${table.page_number}`}
-          </p>
+    <div className="overflow-hidden rounded-xl border border-border bg-surface">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2 text-sm text-text-secondary">
+          <FileText className="h-4 w-4" />
+          <span className="font-medium text-foreground">{table.name || "Extracted table"}</span>
+          <span>
+            {table.rows.length} row{table.rows.length === 1 ? "" : "s"} · {table.headers.length}{" "}
+            column{table.headers.length === 1 ? "" : "s"}
+          </span>
         </div>
-
         <div className="flex flex-wrap gap-2">
-          {onViewSource ? (
+          {onViewSource && table.page_number != null && (
             <button
               type="button"
               onClick={() =>
                 onViewSource({
-                  pageNumber: table.page_number,
-                  highlightText: table.source_reference || null,
-                  label: table.title || "Extracted table",
+                  pageNumber: table.page_number as number,
+                  label: table.name || "Table",
                 })
               }
               className="btn-secondary py-1.5 text-xs"
             >
-              <FileText className="h-3.5 w-3.5" />
-              View Source
+              View source
             </button>
-          ) : (
-            <a
-              href={`#page-${table.page_number}`}
-              className="btn-secondary py-1.5 text-xs"
-            >
-              <FileText className="h-3.5 w-3.5" />
-              View Source
-            </a>
           )}
-
-          <button
-            type="button"
-            onClick={copyTable}
-            className="btn-secondary py-1.5 text-xs"
-          >
-            {copied ? (
-              <Check className="h-3.5 w-3.5 text-success" />
-            ) : (
-              <Copy className="h-3.5 w-3.5" />
-            )}
+          <button type="button" onClick={copyTsv} className="btn-secondary py-1.5 text-xs">
+            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
             {copied ? "Copied" : "Copy"}
           </button>
-
-          <button
-            type="button"
-            onClick={exportCsv}
-            className="btn-secondary py-1.5 text-xs"
-          >
+          <button type="button" onClick={exportCsv} className="btn-secondary py-1.5 text-xs">
             <Download className="h-3.5 w-3.5" />
             Export CSV
           </button>
-
-          <button
-            type="button"
-            onClick={exportJson}
-            className="btn-secondary py-1.5 text-xs"
-          >
+          <button type="button" onClick={exportJson} className="btn-secondary py-1.5 text-xs">
             <Download className="h-3.5 w-3.5" />
             Export JSON
           </button>
@@ -168,43 +115,37 @@ export default function TableResult({ table, onViewSource }: TableResultProps) {
           </colgroup>
           <thead className="sticky top-0 z-10 bg-surface-soft">
             <tr>
-              {table.headers.map((header) => {
-                const active = sort?.field === header;
-                return (
-                  <th
-                    key={header}
-                    scope="col"
-                    aria-sort={
-                      active && sort
-                        ? sort.direction === "asc"
-                          ? "ascending"
-                          : "descending"
-                        : "none"
-                    }
-                    className="relative border-b border-border bg-surface-soft px-4 py-3 text-left align-middle text-[11px] font-semibold uppercase tracking-wide text-text-secondary"
-                  >
-                    <ResizeHandle
-                      axis="column"
-                      label={`Resize column ${header}`}
-                      onResize={(size) => sizes.setColumn(header, size)}
-                      onReset={() => sizes.setColumn(header, null)}
-                    />
-                    <SortableHeader
-                      label={header}
-                      active={Boolean(active)}
-                      direction={sort?.direction}
-                      onSort={() => setSort((current) => cycleSort(current, header))}
-                    />
-                  </th>
-                );
-              })}
+              {table.headers.map((header) => (
+                <th
+                  key={header}
+                  scope="col"
+                  className="relative border-b border-border bg-surface-soft px-4 py-3 text-left align-middle text-[11px] font-semibold uppercase tracking-wide text-text-secondary"
+                >
+                  <span className="line-clamp-2 min-w-0 break-normal">{header}</span>
+                  <ResizeHandle
+                    axis="column"
+                    label={`Resize column ${header}`}
+                    onResize={(size) => sizes.setColumn(header, size)}
+                    onReset={() => sizes.setColumn(header, null)}
+                  />
+                </th>
+              ))}
             </tr>
           </thead>
 
           <tbody>
-            {sortedRows.map(({ row, index }) => {
+            {table.rows.map((row, index) => {
               const rowId = `r${index}`;
               const height = sizes.rows[rowId];
+              const resizeRow = (key: string) => (
+                <ResizeHandle
+                  key={key}
+                  axis="row"
+                  label={`Resize row ${index + 1}`}
+                  onResize={(size) => sizes.setRow(rowId, size)}
+                  onReset={() => sizes.setRow(rowId, null)}
+                />
+              );
               return (
                 <tr
                   key={rowId}
@@ -214,7 +155,7 @@ export default function TableResult({ table, onViewSource }: TableResultProps) {
                     height ? "grid-row-wrap" : "",
                   ].join(" ")}
                 >
-                  {table.headers.map((header, columnIndex) => (
+                  {table.headers.map((header) => (
                     <td
                       key={header}
                       className={[
@@ -226,14 +167,13 @@ export default function TableResult({ table, onViewSource }: TableResultProps) {
                       <span className={height ? "block break-words" : "block truncate"}>
                         {String(row[header] ?? "")}
                       </span>
-                      {columnIndex === 0 && (
-                        <ResizeHandle
-                          axis="row"
-                          label={`Resize row ${index + 1}`}
-                          onResize={(size) => sizes.setRow(rowId, size)}
-                          onReset={() => sizes.setRow(rowId, null)}
-                        />
-                      )}
+                      {resizeRow(`row-${header}`)}
+                      <ResizeHandle
+                        axis="column"
+                        label={`Resize column ${header}`}
+                        onResize={(size) => sizes.setColumn(header, size)}
+                        onReset={() => sizes.setColumn(header, null)}
+                      />
                     </td>
                   ))}
                 </tr>

@@ -1746,9 +1746,9 @@ tr:focus-within .cell-check,
   }
 }
 
-/* Excel-style resize edges: a column header's right edge, a row's bottom
-   edge (its first cell). A visible grip on every header makes drag-to-
-   resize discoverable without hovering. */
+/* Excel-style resize edges on every cell border (not only header / row
+   label). Hover anywhere on a column's right edge or a row's bottom edge
+   to get the resize cursor. */
 .grid-resize {
   position: absolute;
   z-index: 40;
@@ -1777,26 +1777,29 @@ tr:focus-within .cell-check,
   pointer-events: none;
 }
 .grid-resize-column::after {
-  top: 4px;
-  bottom: 4px;
+  top: 0;
+  bottom: 0;
   left: 6px;
   width: 3px;
   border-radius: 1px;
-  background: color-mix(in srgb, var(--text-muted) 55%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 35%, transparent);
 }
 .grid-resize-row::after {
-  left: 8px;
-  right: 8px;
+  left: 0;
+  right: 0;
   top: 5px;
   height: 2px;
   border-radius: 1px;
-  background: color-mix(in srgb, var(--text-muted) 40%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 30%, transparent);
 }
-th > .grid-resize-column::after {
-  background: color-mix(in srgb, var(--text-muted) 65%, transparent);
+th > .grid-resize-column::after,
+td > .grid-resize-column::after {
+  background: color-mix(in srgb, var(--text-muted) 50%, transparent);
 }
 th:hover > .grid-resize-column::after,
-tr:hover .grid-resize-row::after {
+td:hover > .grid-resize-column::after,
+tr:hover > td > .grid-resize-row::after,
+tr:hover > th > .grid-resize-row::after {
   background: var(--text-secondary);
 }
 .grid-resize:hover::after,
