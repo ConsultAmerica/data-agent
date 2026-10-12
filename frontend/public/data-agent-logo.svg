@@ -1,11 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" fill="none">
-  <rect width="40" height="40" rx="10" fill="#0d5b61"/>
-  <path d="M12 9.5h11.2L28 14.2V30.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 12 30.5v-21A1.5 1.5 0 0 1 13.5 8" fill="#f7fafa"/>
-  <path d="M23.2 9.5V14H28L23.2 9.5Z" fill="#b8cfd1"/>
-  <rect x="15.5" y="17" width="9" height="1.6" rx="0.8" fill="#0d5b61" opacity="0.55"/>
-  <rect x="15.5" y="20.5" width="12" height="1.6" rx="0.8" fill="#0d5b61" opacity="0.4"/>
-  <rect x="15.5" y="24" width="7" height="1.6" rx="0.8" fill="#0d5b61" opacity="0.4"/>
-  <path d="M8.5 22.5h3.2M31.5 18.5h-2.8" stroke="#a33eb2" stroke-width="1.6" stroke-linecap="round"/>
-  <circle cx="30.2" cy="25.8" r="2.2" fill="#a33eb2"/>
-  <circle cx="30.2" cy="25.8" r="0.9" fill="#f7fafa"/>
+  <defs>
+    <linearGradient id="da-back" x1="8" y1="6" x2="34" y2="34" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0a4f8a"/>
+      <stop offset="1" stop-color="#063a66"/>
+    </linearGradient>
+    <linearGradient id="da-mid" x1="10" y1="8" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1aa8d8" stop-opacity="0.92"/>
+      <stop offset="1" stop-color="#0d7eb0" stop-opacity="0.78"/>
+    </linearGradient>
+    <linearGradient id="da-front" x1="14" y1="10" x2="30" y2="30" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7ee8f8" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#e8f8fc" stop-opacity="0.9"/>
+    </linearGradient>
+  </defs>
+  <rect x="2.5" y="14" width="2.4" height="2.4" rx="0.4" fill="#0a5f9a"/>
+  <rect x="1" y="19.5" width="1.9" height="1.9" rx="0.35" fill="#1ec8e8"/>
+  <rect x="3.2" y="24" width="2.1" height="2.1" rx="0.35" fill="#0d7eb0" opacity="0.85"/>
+  <rect x="5.5" y="17.5" width="1.6" height="1.6" rx="0.3" fill="#5ad4f0" opacity="0.9"/>
+  <g transform="translate(2,1)">
+    <rect x="6" y="8" width="18" height="24" rx="3" transform="rotate(-14 15 20)" fill="url(#da-back)"/>
+    <rect x="11" y="7" width="18" height="24" rx="3" transform="rotate(-5 20 19)" fill="url(#da-mid)"/>
+    <rect x="15" y="6" width="17" height="23" rx="3" fill="url(#da-front)"/>
+    <rect x="18.5" y="12" width="10" height="1.5" rx="0.75" fill="#0a4f8a" opacity="0.45"/>
+    <rect x="18.5" y="16" width="10" height="1.5" rx="0.75" fill="#0a4f8a" opacity="0.35"/>
+    <rect x="18.5" y="20" width="7" height="1.5" rx="0.75" fill="#0a4f8a" opacity="0.3"/>
+  </g>
 </svg>

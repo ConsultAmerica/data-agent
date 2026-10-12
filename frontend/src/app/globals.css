@@ -8,12 +8,16 @@
   --menu-background: #b7ced0;
   --menu-tile: #e6eff0;
   --menu-tile-hover: #f2f7f7;
-  --accent-purple: #a33eb2;
-  --accent-purple-dark: #832c95;
-  --accent-lavender: #8e84ff;
+  /* Cyan accents from the DataAgent lockup (legacy purple names alias here). */
+  --accent-cyan: #1498c8;
+  --accent-cyan-dark: #0a6eb4;
+  --accent-cyan-soft: #7ee8f8;
+  --accent-purple: var(--accent-cyan);
+  --accent-purple-dark: var(--accent-cyan-dark);
+  --accent-lavender: var(--accent-cyan-soft);
   --text-on-dark: #f7fafa;
   --text-dark: #071d26;
-  --text-teal: #08616b;
+  --text-teal: #0a6a74;
 
   --bg-main: #eef3f4;
   --bg-soft: #e6eff0;
@@ -30,7 +34,7 @@
   /* Grid selection: a light tint and a hairline edge of the primary teal. */
   --selection-tint: rgba(13, 91, 97, 0.12);
   --selection-edge: rgba(13, 91, 97, 0.6);
-  --accent: var(--accent-purple);
+  --accent: var(--accent-cyan);
   --success: #29976a;
   --warning: #c58b27;
   --danger: #d44e4e;
@@ -62,7 +66,7 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-error: var(--danger);
-  --color-focus: var(--accent-lavender);
+  --color-focus: var(--accent-cyan);
   --color-cell-selected: var(--selection-tint);
   --color-row-hover: var(--row-hover);
   --color-review-needs: var(--warning);
@@ -84,6 +88,9 @@
   --color-primary-deep: var(--primary-hover);
   --color-primary-soft: var(--primary-soft);
   --color-accent: var(--accent);
+  --color-accent-cyan: var(--accent-cyan);
+  --color-accent-cyan-dark: var(--accent-cyan-dark);
+  --color-accent-cyan-soft: var(--accent-cyan-soft);
   --color-accent-lavender: var(--accent-lavender);
   --color-accent-purple: var(--accent-purple);
   --color-accent-purple-dark: var(--accent-purple-dark);
@@ -114,7 +121,7 @@
 
 /* Visible keyboard focus everywhere; mouse clicks stay clean. */
 :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
-  outline: 2px solid var(--color-focus, var(--accent-lavender));
+  outline: 2px solid var(--color-focus, var(--accent-cyan));
   outline-offset: 2px;
   border-radius: 6px;
 }
@@ -198,8 +205,8 @@ body {
 }
 
 .ai-surface {
-  background: linear-gradient(135deg, #f6f2ff 0%, #f2f5ff 100%);
-  border: 1px solid rgba(91, 79, 232, 0.12);
+  background: linear-gradient(135deg, #eef8fb 0%, #f2f7f7 100%);
+  border: 1px solid rgba(20, 152, 200, 0.16);
   border-radius: var(--radius-card);
 }
 
@@ -208,7 +215,7 @@ body {
   font-weight: 500;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #6a5be7;
+  color: var(--text-teal);
 }
 
 .headline-editorial {
@@ -278,7 +285,7 @@ body {
 
 .btn-secondary:hover {
   background: var(--surface-soft);
-  border-color: rgba(91, 79, 232, 0.18);
+  border-color: rgba(20, 152, 200, 0.28);
 }
 
 .btn-tertiary {
@@ -309,12 +316,12 @@ body {
 }
 
 .chip:hover {
-  border-color: rgba(91, 79, 232, 0.2);
+  border-color: rgba(20, 152, 200, 0.3);
   background: var(--surface-soft);
 }
 
 .chip-active {
-  border-color: rgba(91, 79, 232, 0.24);
+  border-color: rgba(20, 152, 200, 0.36);
   background: var(--primary-soft);
   color: var(--primary);
 }
@@ -425,8 +432,9 @@ body {
 .announcement-bar {
   background: linear-gradient(
     90deg,
-    var(--accent-purple-dark),
-    var(--accent-purple)
+    var(--accent-cyan-dark),
+    var(--sirion-teal),
+    var(--accent-cyan)
   );
   color: var(--text-on-dark);
   padding: 0.5rem 1rem;
@@ -440,12 +448,13 @@ body {
   min-width: 0;
   gap: 1.5rem;
   background: linear-gradient(
-    180deg,
+    115deg,
     var(--sirion-teal-dark) 0%,
-    var(--sirion-bg-deep) 100%
+    var(--sirion-bg-deep) 55%,
+    #0a3d4a 100%
   );
   padding: 0.875rem 1.25rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(20, 152, 200, 0.18);
 }
 
 @media (min-width: 1024px) {
@@ -505,10 +514,10 @@ body {
 .da-logo-a {
   display: inline-block;
   background: linear-gradient(
-    180deg,
-    #d5e8ea 0%,
-    var(--sirion-teal-soft) 45%,
-    #7eb0b5 100%
+    145deg,
+    #7ee8f8 0%,
+    #22c4e0 42%,
+    #0a6eb4 100%
   );
   -webkit-background-clip: text;
   background-clip: text;
@@ -529,7 +538,7 @@ body {
 }
 
 .da-logo-on-dark .da-logo-gent {
-  color: var(--sirion-teal-soft);
+  color: #7ee8f8;
 }
 
 .da-logo-on-dark .da-logo-tag {
@@ -541,7 +550,7 @@ body {
 }
 
 .da-logo-on-light .da-logo-gent {
-  color: var(--sirion-teal);
+  color: #1498c8;
 }
 
 .da-logo-on-light .da-logo-tag {
@@ -785,18 +794,19 @@ body {
   justify-content: center;
   gap: 0.375rem;
   border-radius: 9999px;
-  background: var(--accent-purple);
+  background: linear-gradient(135deg, #1498c8 0%, #0d5b61 100%);
   padding: 0.5625rem 1.125rem;
   font-size: 0.8125rem;
   font-weight: 600;
   color: white;
-  transition: background 180ms ease;
+  transition: filter 180ms ease, background 180ms ease;
   flex-shrink: 0;
   white-space: nowrap;
 }
 
 .btn-ask-agent:hover {
-  background: var(--accent-purple-dark);
+  background: linear-gradient(135deg, #22c4e0 0%, #0d5b61 100%);
+  filter: brightness(1.05);
 }
 
 .btn-new-extraction {
@@ -855,9 +865,10 @@ body {
   background: linear-gradient(
     155deg,
     #04151c 0%,
-    var(--sirion-bg-deep) 28%,
-    var(--sirion-teal-dark) 62%,
-    var(--sirion-teal) 100%
+    var(--sirion-bg-deep) 26%,
+    #0a3d4a 58%,
+    var(--sirion-teal) 82%,
+    #1498c8 100%
   );
   color: var(--text-on-dark);
 }
@@ -867,10 +878,25 @@ body {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(ellipse 70% 55% at 85% 20%, rgba(184, 207, 209, 0.16), transparent 55%),
-    radial-gradient(ellipse 50% 45% at 10% 80%, rgba(13, 91, 97, 0.18), transparent 50%),
-    linear-gradient(180deg, transparent 0%, rgba(7, 29, 38, 0.35) 100%);
+    radial-gradient(ellipse 70% 55% at 88% 18%, rgba(126, 232, 248, 0.14), transparent 55%),
+    radial-gradient(ellipse 48% 42% at 12% 78%, rgba(20, 152, 200, 0.22), transparent 52%),
+    radial-gradient(ellipse 40% 35% at 55% 40%, rgba(13, 91, 97, 0.2), transparent 60%),
+    linear-gradient(180deg, transparent 0%, rgba(7, 29, 38, 0.38) 100%);
   opacity: 1;
+}
+
+.page-hero-atmosphere::before {
+  content: "";
+  position: absolute;
+  inset: -20% -10%;
+  background:
+    radial-gradient(circle at 20% 30%, rgba(126, 232, 248, 0.12) 0 2px, transparent 3px),
+    radial-gradient(circle at 72% 22%, rgba(20, 152, 200, 0.16) 0 1.5px, transparent 2.5px),
+    radial-gradient(circle at 48% 68%, rgba(184, 207, 209, 0.14) 0 2px, transparent 3px),
+    radial-gradient(circle at 86% 58%, rgba(126, 232, 248, 0.1) 0 1.5px, transparent 2.5px),
+    radial-gradient(circle at 34% 82%, rgba(20, 152, 200, 0.12) 0 2px, transparent 3px);
+  background-size: 100% 100%;
+  animation: hero-particles-drift 18s ease-in-out infinite alternate;
 }
 
 .page-hero-atmosphere::after {
@@ -884,6 +910,15 @@ body {
     linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
   background-size: 48px 48px;
   mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.55), transparent 85%);
+}
+
+@keyframes hero-particles-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(2.5%, -2%, 0);
+  }
 }
 
 .page-hero-inner {
@@ -931,10 +966,10 @@ body {
 
 .page-hero-brand-name span {
   background: linear-gradient(
-    180deg,
-    #d5e8ea 0%,
-    var(--sirion-teal-soft) 55%,
-    #7eb0b5 100%
+    135deg,
+    #7ee8f8 0%,
+    #22c4e0 42%,
+    #1498c8 100%
   );
   -webkit-background-clip: text;
   background-clip: text;
@@ -1350,11 +1385,12 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(20, 152, 200, 0.18);
   background: linear-gradient(
-    180deg,
+    115deg,
     var(--sirion-teal-dark) 0%,
-    var(--sirion-bg-deep) 100%
+    var(--sirion-bg-deep) 55%,
+    #0a3d4a 100%
   );
   padding: 0 0.75rem 0 1rem;
 }
@@ -1545,8 +1581,8 @@ body {
   justify-content: center;
   gap: 0.5rem;
   border-radius: 9999px;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(126, 232, 248, 0.45);
+  background: rgba(20, 152, 200, 0.14);
   padding: 0.8rem 1.35rem;
   font-size: 0.8125rem;
   font-weight: 600;
@@ -1566,8 +1602,8 @@ body {
 }
 
 .btn-hero-secondary:hover {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(20, 152, 200, 0.24);
+  border-color: rgba(126, 232, 248, 0.7);
   transform: translateY(-1px);
 }
 
@@ -1623,8 +1659,10 @@ body {
 }
 
 .capability-tile:hover {
-  border-color: color-mix(in srgb, var(--sirion-teal) 40%, var(--border));
-  box-shadow: var(--shadow-soft);
+  border-color: color-mix(in srgb, var(--accent-cyan) 45%, var(--border));
+  box-shadow:
+    var(--shadow-soft),
+    0 0 0 1px color-mix(in srgb, var(--accent-cyan) 12%, transparent);
   transform: translateY(-2px);
 }
 
@@ -1919,12 +1957,26 @@ thead:hover .col-check,
   background:
     linear-gradient(
       105deg,
-      rgba(7, 29, 38, 0.92) 0%,
-      rgba(7, 56, 61, 0.78) 42%,
-      rgba(7, 29, 38, 0.35) 70%,
-      rgba(7, 29, 38, 0.55) 100%
+      rgba(7, 29, 38, 0.94) 0%,
+      rgba(7, 56, 61, 0.8) 38%,
+      rgba(10, 110, 180, 0.28) 62%,
+      rgba(7, 29, 38, 0.42) 78%,
+      rgba(7, 29, 38, 0.62) 100%
     ),
-    linear-gradient(180deg, rgba(7, 29, 38, 0.2) 0%, rgba(7, 29, 38, 0.72) 100%);
+    linear-gradient(180deg, rgba(7, 29, 38, 0.18) 0%, rgba(7, 29, 38, 0.74) 100%);
+}
+
+.hero-showcase-scrim::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 55% 40% at 78% 30%, rgba(126, 232, 248, 0.12), transparent 60%),
+    radial-gradient(circle at 18% 72%, rgba(20, 152, 200, 0.1) 0 1.5px, transparent 2.5px),
+    radial-gradient(circle at 62% 18%, rgba(126, 232, 248, 0.12) 0 2px, transparent 3px),
+    radial-gradient(circle at 88% 64%, rgba(20, 152, 200, 0.1) 0 1.5px, transparent 2.5px);
+  animation: hero-particles-drift 22s ease-in-out infinite alternate;
+  pointer-events: none;
 }
 
 .hero-showcase-inner {
@@ -2016,7 +2068,19 @@ thead:hover .col-check,
   width: 0.45rem;
   height: 0.45rem;
   border-radius: 9999px;
-  background: rgba(26, 46, 42, 0.18);
+  background: rgba(13, 91, 97, 0.22);
+}
+
+.hero-stage-dots i:nth-child(1) {
+  background: #1498c8;
+}
+
+.hero-stage-dots i:nth-child(2) {
+  background: #22c4e0;
+}
+
+.hero-stage-dots i:nth-child(3) {
+  background: rgba(13, 91, 97, 0.28);
 }
 
 .hero-stage-label {
@@ -2204,7 +2268,9 @@ thead:hover .col-check,
   .hero-showcase-slide,
   .hero-showcase-slide-active,
   .hero-stage-frame,
-  .hero-showcase-tab-active .hero-showcase-tab-progress {
+  .hero-showcase-tab-active .hero-showcase-tab-progress,
+  .page-hero-atmosphere::before,
+  .hero-showcase-scrim::after {
     transition: none;
     animation: none;
     transform: none;
@@ -2259,6 +2325,8 @@ thead:hover .col-check,
 }
 
 .marketing-band-inner {
+  position: relative;
+  z-index: 1;
   margin: 0 auto;
   width: 100%;
   max-width: 72rem;
@@ -2284,13 +2352,26 @@ thead:hover .col-check,
 }
 
 .marketing-band-dark {
+  position: relative;
+  overflow: hidden;
   background: linear-gradient(
     160deg,
     var(--sirion-bg-deep) 0%,
-    var(--sirion-teal-dark) 55%,
-    #0a454a 100%
+    var(--sirion-teal-dark) 48%,
+    #0a4f5a 78%,
+    #0d6a7a 100%
   );
   color: var(--text-on-dark);
+}
+
+.marketing-band-dark::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 50% 60% at 90% 20%, rgba(126, 232, 248, 0.1), transparent 55%),
+    radial-gradient(ellipse 40% 50% at 8% 90%, rgba(20, 152, 200, 0.12), transparent 50%);
 }
 
 .marketing-band-dark-split {
@@ -2321,7 +2402,7 @@ thead:hover .col-check,
 
 .pillar-card {
   padding: 1.5rem 0 0.25rem;
-  border-top: 1px solid color-mix(in srgb, var(--sirion-teal) 28%, var(--border));
+  border-top: 1px solid color-mix(in srgb, var(--accent-cyan) 32%, var(--border));
 }
 
 .pillar-title {
@@ -2386,16 +2467,33 @@ thead:hover .col-check,
 }
 
 .marketing-cta-finale {
+  position: relative;
+  overflow: hidden;
   background: linear-gradient(
     180deg,
     #062028 0%,
-    var(--sirion-bg-deep) 40%,
-    #0a3d42 100%
+    var(--sirion-bg-deep) 38%,
+    #0a4550 72%,
+    #0d5b61 100%
   );
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
+.marketing-cta-finale::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 60% 50% at 70% 80%,
+    rgba(20, 152, 200, 0.16),
+    transparent 60%
+  );
+}
+
 .marketing-cta-finale-inner {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   gap: 1.75rem;
