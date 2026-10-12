@@ -26,6 +26,7 @@ import type {
   ExtractionSummary,
   FieldAuditEntry,
   FinancialAnalysisResult,
+  GlobalAuditLogFilters,
   GlobalAuditLogResponse,
   MetadataField,
   PageRender,
@@ -75,6 +76,9 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   return apiFetch("/api/dashboard/stats");
 }
 
+export type DocumentSortBy = "uploaded_at" | "updated_at";
+export type DocumentSortDir = "asc" | "desc";
+
 export interface DocumentSearchParams {
   q?: string;
   status?: string;
@@ -84,6 +88,10 @@ export interface DocumentSearchParams {
   repositoryStatus?: string;
   /** Staging family: invoice, academic_transcript, government_contract … */
   family?: string;
+  /** Persisted staging profile id (contract_v3, invoice, …). */
+  profileId?: string;
+  sortBy?: DocumentSortBy;
+  sortDir?: DocumentSortDir;
   limit?: number;
   offset?: number;
 }
@@ -108,6 +116,9 @@ export async function searchDocuments(
     query.set("repository_status", params.repositoryStatus);
   }
   if (params.family) query.set("family", params.family);
+  if (params.profileId) query.set("profile_id", params.profileId);
+  if (params.sortBy) query.set("sort_by", params.sortBy);
+  if (params.sortDir) query.set("sort_dir", params.sortDir);
   query.set("limit", String(params.limit ?? 25));
   query.set("offset", String(params.offset ?? 0));
 
@@ -124,10 +135,20 @@ export async function getDocumentStatusCounts(
 export async function getGlobalAuditLog(
   limit = 50,
   offset = 0,
+  filters: GlobalAuditLogFilters = {},
 ): Promise<GlobalAuditLogResponse> {
-  return apiFetch(
-    `/api/documents/audit-log?limit=${limit}&offset=${offset}`,
-  );
+  const query = new URLSearchParams();
+  query.set("limit", String(limit));
+  query.set("offset", String(offset));
+  if (filters.documentId) query.set("document_id", filters.documentId);
+  if (filters.actorId) query.set("actor_id", filters.actorId);
+  if (filters.changedBy) query.set("changed_by", filters.changedBy);
+  if (filters.action) query.set("action", filters.action);
+  if (filters.requestId) query.set("request_id", filters.requestId);
+  if (filters.outcome) query.set("outcome", filters.outcome);
+  if (filters.from) query.set("from", filters.from);
+  if (filters.to) query.set("to", filters.to);
+  return apiFetch(`/api/documents/audit-log?${query.toString()}`);
 }
 
 export async function getReviewQueue(): Promise<ReviewQueueEntry[]> {
@@ -421,6 +442,30 @@ export async function reviewMetadataField(
   );
 }
 
+/** Prefer this over field_key review when the persisted row id is known. */
+export async function reviewMetadataFieldById(
+  documentId: string,
+  metadataFieldId: number,
+  action: ReviewAction,
+  changedBy: string,
+  value?: string,
+): Promise<MetadataField> {
+  return apiFetch(
+    `/api/documents/${documentId}/metadata-fields/by-id/${metadataFieldId}/review`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action,
+        value: value ?? null,
+        changed_by: changedBy,
+      }),
+    },
+  );
+}
+
 export async function acceptAllMetadataFields(
   documentId: string,
   changedBy: string,
@@ -440,6 +485,15 @@ export async function getFieldAuditLog(
 ): Promise<FieldAuditEntry[]> {
   return apiFetch(
     `/api/documents/${documentId}/metadata-fields/${fieldKey}/audit-log`,
+  );
+}
+
+export async function getFieldAuditLogById(
+  documentId: string,
+  metadataFieldId: number,
+): Promise<FieldAuditEntry[]> {
+  return apiFetch(
+    `/api/documents/${documentId}/metadata-fields/by-id/${metadataFieldId}/audit-log`,
   );
 }
 

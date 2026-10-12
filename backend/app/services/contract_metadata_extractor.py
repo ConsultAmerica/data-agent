@@ -1,5 +1,7 @@
+from datetime import datetime, timezone
+
 from dateutil import parser as dateutil_parser
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -28,8 +30,17 @@ from app.services.generic_label_extractor import (
 )
 from app.services.document_outline import SectionBoundary, build_document_outline
 from app.services.label_rejection import reject_as_field_value
+from app.services.reviewed_export import extracted_value_for
 from app.services.section_detection import section_for_value
 from app.services.source_validator import validate_source_value
+
+_HUMAN_LOCKED = frozenset({"edited", "accepted", "rejected"})
+
+
+def _stringify(value: object | None) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
 
 
 def _normalize_date(raw_value: str) -> str:
@@ -325,34 +336,126 @@ async def extract_contract_metadata(
 
     resolved.extend(ai_resolved)
 
-    database.execute(
-        delete(DocumentMetadataField).where(
-            DocumentMetadataField.document_id == document.id,
-            DocumentMetadataField.extraction_source == "contract",
-        )
-    )
-
-    for field in resolved:
-        database.add(
-            DocumentMetadataField(
-                document_id=document.id,
-                field_group=field.field_group,
-                field_key=field.field_key,
-                label=field.label,
-                value=field.value,
-                original_value=field.value,
-                confidence=field.confidence,
-                extraction_method=field.extraction_method,
-                evidence_json=field.evidence.model_dump(),
-                verified=field.verified,
-                review_status="pending",
-                extraction_source="contract",
+    # Upsert by field_key. Human Accept/Edit/Reject decisions survive
+    # re-analyze; only the machine extraction is refreshed (like target
+    # re-extract). Do not delete+recreate contract rows.
+    existing_rows = list(
+        database.scalars(
+            select(DocumentMetadataField).where(
+                DocumentMetadataField.document_id == document.id,
+                DocumentMetadataField.extraction_source == "contract",
             )
         )
+    )
+    by_key = {row.field_key: row for row in existing_rows}
+    seen_keys: set[str] = set()
+    now = datetime.now(timezone.utc)
+
+    for field in resolved:
+        seen_keys.add(field.field_key)
+        evidence = field.evidence.model_dump()
+        evidence["machine_value"] = field.value
+        existing = by_key.get(field.field_key)
+
+        if existing is None:
+            database.add(
+                DocumentMetadataField(
+                    document_id=document.id,
+                    field_group=field.field_group,
+                    field_key=field.field_key,
+                    label=field.label,
+                    value=field.value,
+                    original_value=field.value,
+                    confidence=field.confidence,
+                    extraction_method=field.extraction_method,
+                    evidence_json=evidence,
+                    verified=field.verified,
+                    human_approved=False,
+                    review_status="pending",
+                    extraction_source="contract",
+                    extracted_at=now,
+                )
+            )
+            continue
+
+        prior_status = existing.review_status
+        human_locked = prior_status in _HUMAN_LOCKED
+        reviewed_value = existing.value
+
+        existing.field_group = field.field_group
+        existing.label = field.label
+        existing.confidence = field.confidence
+        existing.extraction_method = field.extraction_method
+        existing.verified = field.verified
+        existing.extracted_at = now
+
+        if not human_locked:
+            existing.value = field.value
+            if not existing.original_value:
+                existing.original_value = field.value
+            existing.evidence_json = evidence
+            existing.review_status = "pending"
+            existing.human_approved = False
+        else:
+            # Preserve authoritative value; refresh machine extraction only.
+            evidence["reviewed_value"] = reviewed_value
+            evidence["prior_review_status"] = prior_status
+            if _stringify(reviewed_value) != _stringify(field.value):
+                # Machine disagrees with the human decision — reopen for review
+                # without overwriting the effective value.
+                existing.review_status = "pending"
+                existing.human_approved = False
+            else:
+                existing.review_status = prior_status
+                existing.human_approved = prior_status in {"accepted", "edited"}
+            existing.evidence_json = evidence
+            if not existing.original_value:
+                existing.original_value = field.value
+
+    # Drop contract fields the extractor no longer emits — but never drop
+    # human-locked rows (reviewer history must remain authoritative).
+    for key, row in by_key.items():
+        if key in seen_keys:
+            continue
+        if row.review_status in _HUMAN_LOCKED:
+            continue
+        database.delete(row)
 
     database.commit()
 
-    return resolved
+    # Return persisted rows (including preserved review status), not the
+    # ephemeral extraction results that would always look "pending".
+    persisted = list(
+        database.scalars(
+            select(DocumentMetadataField).where(
+                DocumentMetadataField.document_id == document.id,
+                DocumentMetadataField.extraction_source == "contract",
+            )
+        )
+    )
+    order = {field.field_key: index for index, field in enumerate(resolved)}
+    persisted.sort(key=lambda row: order.get(row.field_key, len(order)))
+    return [field_to_result(row) for row in persisted]
+
+
+def list_metadata_fields_by_key(
+    database: Session,
+    *,
+    document_id: str,
+    field_key: str,
+) -> list[DocumentMetadataField]:
+    """All rows for a document + field_key (may span extraction sources)."""
+
+    return list(
+        database.scalars(
+            select(DocumentMetadataField)
+            .where(
+                DocumentMetadataField.document_id == document_id,
+                DocumentMetadataField.field_key == field_key,
+            )
+            .order_by(DocumentMetadataField.id.asc())
+        )
+    )
 
 
 def get_metadata_field(
@@ -361,12 +464,51 @@ def get_metadata_field(
     document_id: str,
     field_key: str,
 ) -> DocumentMetadataField | None:
-    return database.scalar(
-        select(DocumentMetadataField).where(
-            DocumentMetadataField.document_id == document_id,
-            DocumentMetadataField.field_key == field_key,
-        )
+    """Best-effort single-row lookup for non-mutation callers.
+
+    Prefer :func:`require_unique_metadata_field` for Accept/Edit/Reject —
+    duplicate ``field_key`` rows are possible (no DB unique constraint), and
+    silently picking one would mis-apply a review decision.
+    """
+
+    rows = list_metadata_fields_by_key(
+        database,
+        document_id=document_id,
+        field_key=field_key,
     )
+    if not rows:
+        return None
+    return rows[0]
+
+
+class AmbiguousMetadataFieldError(Exception):
+    """More than one DocumentMetadataField shares document_id + field_key."""
+
+    def __init__(self, rows: list[DocumentMetadataField]) -> None:
+        self.rows = rows
+        super().__init__(
+            f"Ambiguous metadata field_key with {len(rows)} matching rows."
+        )
+
+
+def require_unique_metadata_field(
+    database: Session,
+    *,
+    document_id: str,
+    field_key: str,
+) -> DocumentMetadataField | None:
+    """Lookup for review mutations — never silently chooses among duplicates."""
+
+    rows = list_metadata_fields_by_key(
+        database,
+        document_id=document_id,
+        field_key=field_key,
+    )
+    if not rows:
+        return None
+    if len(rows) > 1:
+        raise AmbiguousMetadataFieldError(rows)
+    return rows[0]
 
 
 def _persisted_evidence(evidence_json: dict | None) -> SourceEvidence:
@@ -383,20 +525,38 @@ def _persisted_evidence(evidence_json: dict | None) -> SourceEvidence:
     return SourceEvidence(**evidence)
 
 
+def get_metadata_field_by_id(
+    database: Session,
+    *,
+    document_id: str,
+    metadata_field_id: int,
+) -> DocumentMetadataField | None:
+    """Exact-row lookup: id must belong to the requested document."""
+
+    row = database.get(DocumentMetadataField, metadata_field_id)
+    if row is None or row.document_id != document_id:
+        return None
+    return row
+
+
 def field_to_result(
     field: DocumentMetadataField,
 ) -> MetadataFieldResult:
     """Reconstruct the API response shape from a persisted row."""
 
+    extracted = extracted_value_for(field)
     return MetadataFieldResult(
+        id=field.id,
         field_group=field.field_group,
         field_key=field.field_key,
         label=field.label,
         value=field.value,
         confidence=field.confidence,
         extraction_method=field.extraction_method,
+        extraction_source=field.extraction_source or "contract",
         evidence=_persisted_evidence(field.evidence_json),
         verified=field.verified,
         review_status=field.review_status,
-        original_value=field.original_value,
+        original_value=field.original_value or extracted,
+        extracted_value=extracted,
     )

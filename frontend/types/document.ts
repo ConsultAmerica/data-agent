@@ -158,8 +158,26 @@ export interface GlobalAuditEntry {
   action: ReviewAction;
   previous_value: string | null;
   new_value: string | null;
+  previous_status?: string | null;
+  new_status?: string | null;
+  reason?: string | null;
+  request_id?: string | null;
+  actor_id?: string | null;
+  actor_type?: string | null;
+  actor_role?: string | null;
   changed_by: string;
   changed_at: string;
+}
+
+export interface GlobalAuditLogFilters {
+  documentId?: string;
+  actorId?: string;
+  changedBy?: string;
+  action?: string;
+  requestId?: string;
+  outcome?: string;
+  from?: string;
+  to?: string;
 }
 
 export interface GlobalAuditLogResponse {
@@ -676,25 +694,34 @@ export type ReviewAction =
   | "mark_unknown";
 
 export interface MetadataField {
+  /** Persisted DocumentMetadataField.id — preferred review address. */
+  id?: number | null;
   field_group: string;
   field_key: string;
   label: string;
 
+  /** Authoritative effective value (accepted / edited / current). */
   value: string;
 
   confidence: number;
 
   extraction_method: string;
 
+  /** contract | target | v3 — distinguishes duplicate field_key rows. */
+  extraction_source?: string;
+
   evidence: SourceEvidence;
 
   verified: boolean;
   review_status: ReviewStatus;
   original_value: string;
+  /** Machine extraction when the API provides it; else fall back to original_value. */
+  extracted_value?: string;
 }
 
 export interface FieldAuditEntry {
   action: ReviewAction;
+  metadata_field_id?: number | null;
   previous_value: string | null;
   new_value: string | null;
   changed_by: string;

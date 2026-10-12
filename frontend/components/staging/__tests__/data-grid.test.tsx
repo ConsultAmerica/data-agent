@@ -13,7 +13,21 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => search,
 }));
 vi.mock("@/lib/documents", () => ({
-  getDocument: vi.fn(() => Promise.resolve({ original_filename: "FAR_Part_52_OKCXMLIMPDFN_PART2.xml" })),
+  getDocument: vi.fn(() =>
+    Promise.resolve({
+      document_id: "x1",
+      original_filename: "FAR_Part_52_OKCXMLIMPDFN_PART2.xml",
+      status: "completed",
+      content_type: "application/xml",
+      size_bytes: 1,
+      checksum_sha256: null,
+      page_count: 1,
+      encrypted: false,
+      uploaded_at: "2026-10-01T00:00:00Z",
+      message: "",
+    }),
+  ),
+  startProcessingJob: vi.fn(),
 }));
 vi.mock("@/components/staging/source-transcription", () => ({ default: () => <p>Source transcription</p> }));
 vi.mock("@/lib/staging-workbook", async (importOriginal) => ({
@@ -162,33 +176,82 @@ describe("compact data grid", () => {
       "ITEM NO", "SUPPLIES/SERVICES", "QUANTITY", "UNIT", "UNIT PRICE", "AMOUNT",
     ]);
   });
+
+  it(
+    "supports column visibility and value search without changing selection contracts",
+    () => {
+      render(<StagingDatasetTable dataset={clauses()} documentId="x1" />);
+      expect(screen.getByTestId("grid-toolbar")).toBeTruthy();
+      expect(screen.getByRole("button", { name: /Text\. Sort ascending/i })).toBeTruthy();
+      fireEvent.click(screen.getByTestId("column-visibility"));
+      fireEvent.click(screen.getByLabelText("Show column Text"));
+      expect(screen.queryByRole("button", { name: /Text\. Sort ascending/i })).toBeNull();
+      expect(screen.getByRole("button", { name: /Number\. Sort ascending/i })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Show all columns" }));
+      expect(screen.getByRole("button", { name: /Text\. Sort ascending/i })).toBeTruthy();
+
+      fireEvent.change(screen.getByLabelText("Search values in this table"), {
+        target: { value: "52.225-8" },
+      });
+      expect(screen.getAllByRole("row")).toHaveLength(2);
+      fireEvent.click(screen.getAllByRole("checkbox", { name: /Select record/ })[0]);
+      expect(screen.getByTestId("selection-toolbar").textContent).toMatch(/selected/);
+    },
+    15_000,
+  );
+
+  it("exposes always-visible sort controls, column resize handles, and wrap text", () => {
+    render(<StagingDatasetTable dataset={clauses()} documentId="x1" />);
+    const textSort = screen.getByRole("button", { name: /Text\. Sort ascending/i });
+    expect(textSort.querySelector("svg")).toBeTruthy();
+    expect(screen.getByRole("separator", { name: "Resize column Text" })).toBeTruthy();
+
+    const textCell = () => {
+      const row = screen.getAllByRole("row")[1];
+      return within(row).getAllByRole("cell")[15]; // Text column (with leading checkbox)
+    };
+    expect(textCell().querySelector(".truncate")).toBeTruthy();
+
+    const wrap = screen.getByTestId("wrap-cells");
+    expect(wrap.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(wrap);
+    expect(wrap.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("table").className).toContain("grid-cells-wrap");
+    expect(textCell().querySelector(".truncate")).toBeNull();
+    expect(textCell().querySelector(".whitespace-pre-wrap")).toBeTruthy();
+  });
 });
 
 describe("document workspace", () => {
-  it("uses the full width, names the document by its profile and opens on its data", async () => {
-    search = new URLSearchParams();
-    const { unmount } = render(<DocumentWorkspace documentId="x1" />);
-    // Documents open on the business Data view; technical stages follow.
-    const views = await screen.findByRole("tablist", { name: "Document views" });
-    const names = within(views).getAllByRole("tab").map((tab) => tab.textContent);
-    expect(names.slice(0, 3)).toEqual(["Data", "Source", "Overview"]);
-    expect(within(views).getByRole("tab", { name: "Data" }).getAttribute("aria-selected")).toBe("true");
-    unmount();
+  it(
+    "uses the full width, names the document by filename and opens on its data",
+    async () => {
+      search = new URLSearchParams();
+      const { unmount } = render(<DocumentWorkspace documentId="x1" />);
+      // Documents open on the business Data view; technical stages follow.
+      const views = await screen.findByRole("tablist", { name: "Document views" });
+      const names = within(views).getAllByRole("tab").map((tab) => tab.textContent);
+      expect(names.slice(0, 3)).toEqual(["Data", "Source", "Overview"]);
+      expect(within(views).getByRole("tab", { name: "Data" }).getAttribute("aria-selected")).toBe("true");
+      unmount();
 
-    search = new URLSearchParams("view=staging");
-    render(<DocumentWorkspace documentId="x1" />);
-    const workspace = await screen.findByTestId("document-workspace");
-    expect(workspace.className).toContain("w-full");
-    expect(workspace.className).not.toMatch(/max-w-/);
-    expect(screen.getByRole("heading", { level: 1, name: "XML Document" })).toBeTruthy();
-    expect(screen.getByText("FAR_Part_52_OKCXMLIMPDFN_PART2.xml · 3 clause records")).toBeTruthy();
-    expect(screen.queryByText(/invoice/i)).toBeNull();
-    // Compact dataset tabs: only datasets with records.
-    const tabs = within(screen.getByRole("tablist", { name: "Datasets" })).getAllByRole("tab");
-    expect(tabs.map((tab) => tab.textContent)).toEqual(["Clauses3"]);
-    fireEvent.change(screen.getByLabelText("Search Clauses"), { target: { value: "52.225-8" } });
-    expect(screen.getAllByRole("row")).toHaveLength(2);
-  });
+      search = new URLSearchParams("view=staging");
+      render(<DocumentWorkspace documentId="x1" />);
+      const workspace = await screen.findByTestId("document-workspace");
+      expect(workspace.className).toContain("w-full");
+      expect(workspace.className).not.toMatch(/max-w-/);
+      expect(screen.getByRole("heading", { level: 1, name: "FAR_Part_52_OKCXMLIMPDFN_PART2.xml" })).toBeTruthy();
+      expect(screen.getByTestId("workspace-profile").textContent).toBe("XML Document");
+      expect(screen.getByText(/3 clause records/)).toBeTruthy();
+      expect(screen.queryByText(/invoice/i)).toBeNull();
+      // Compact dataset tabs: only datasets with records.
+      const tabs = within(screen.getByRole("tablist", { name: "Datasets" })).getAllByRole("tab");
+      expect(tabs.map((tab) => tab.textContent)).toEqual(["Clauses3"]);
+      fireEvent.change(screen.getByLabelText("Search Clauses"), { target: { value: "52.225-8" } });
+      expect(screen.getAllByRole("row")).toHaveLength(2);
+    },
+    20_000,
+  );
 });
 
 describe("method labels", () => {

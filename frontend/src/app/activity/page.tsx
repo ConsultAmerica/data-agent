@@ -68,7 +68,7 @@ export default function ActivityPage() {
     <div className="mx-auto max-w-6xl px-6 py-8">
       <PageHeader
         title="Activity"
-        description="Review actions and changes across your contract portfolio."
+        description="Recent metadata review actions in your workspace. Use Audit explorer for document, actor, action, outcome, date, and correlation filters."
       />
 
       {error && (

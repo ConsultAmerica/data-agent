@@ -150,7 +150,7 @@ export default function ArchitecturePage() {
       <ContentSection>
         <SectionHeading
           title="Deploy topology"
-          description="What runs where for the live Consult America demo."
+          description="What runs where for the live Data Agent demo."
         />
         <div className="overflow-hidden rounded-xl border border-border">
           <table className="w-full text-left text-sm">

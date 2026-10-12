@@ -276,6 +276,64 @@ def test_global_audit_log_reflects_field_review() -> None:
     assert matching[0]["document_filename"].startswith("audit-")
 
 
+def test_global_audit_log_server_filters() -> None:
+    document_id = upload(
+        [
+            "Contract Title: Filterable Agreement",
+            f"Governing Law: State of California {uuid4()}",
+        ],
+        f"audit-filter-{uuid4()}.pdf",
+    )
+    extract_pages(document_id)
+    analyzed = analyze(document_id)
+    first_field_key = analyzed["metadata_fields"][0]["field_key"]
+
+    client.post(
+        f"/api/documents/{document_id}/metadata-fields/"
+        f"{first_field_key}/review",
+        json={"action": "accept", "changed_by": "Filter Actor"},
+    )
+
+    by_doc = client.get(
+        "/api/documents/audit-log",
+        params={"document_id": document_id, "limit": 20},
+    )
+    assert by_doc.status_code == 200
+    assert all(
+        entry["document_id"] == document_id for entry in by_doc.json()["entries"]
+    )
+
+    by_actor = client.get(
+        "/api/documents/audit-log",
+        params={"changed_by": "Filter Actor", "limit": 50},
+    )
+    assert by_actor.status_code == 200
+    assert any(
+        entry["document_id"] == document_id for entry in by_actor.json()["entries"]
+    )
+
+    by_action = client.get(
+        "/api/documents/audit-log",
+        params={
+            "document_id": document_id,
+            "action": "accept",
+            "outcome": "accepted",
+            "limit": 20,
+        },
+    )
+    assert by_action.status_code == 200
+    entries = by_action.json()["entries"]
+    assert len(entries) >= 1
+    assert all(entry["action"] == "accept" for entry in entries)
+
+    miss = client.get(
+        "/api/documents/audit-log",
+        params={"document_id": document_id, "action": "reject", "limit": 20},
+    )
+    assert miss.status_code == 200
+    assert miss.json()["entries"] == []
+
+
 def test_search_returns_repository_columns() -> None:
     unique = str(uuid4())
     document_id = upload(
@@ -411,3 +469,31 @@ def test_status_counts_match_status_filtered_search() -> None:
             "/api/documents/search", params={"status": status, "limit": 1}
         ).json()
         assert body["by_status"].get(status, 0) == filtered["total"], status
+
+
+def test_search_profile_id_and_sort_params() -> None:
+    """RC2-02: profile filter + sort_by/sort_dir are accepted and scoped."""
+    ascending = client.get(
+        "/api/documents/search",
+        params={"sort_by": "uploaded_at", "sort_dir": "asc", "limit": 5},
+    )
+    descending = client.get(
+        "/api/documents/search",
+        params={"sort_by": "uploaded_at", "sort_dir": "desc", "limit": 5},
+    )
+    assert ascending.status_code == 200, ascending.text
+    assert descending.status_code == 200, descending.text
+
+    updated = client.get(
+        "/api/documents/search",
+        params={"sort_by": "updated_at", "sort_dir": "desc", "limit": 5},
+    )
+    assert updated.status_code == 200, updated.text
+
+    by_profile = client.get(
+        "/api/documents/search",
+        params={"profile_id": "invoice", "limit": 5},
+    )
+    assert by_profile.status_code == 200, by_profile.text
+    for document in by_profile.json()["documents"]:
+        assert document.get("profile_id") == "invoice"

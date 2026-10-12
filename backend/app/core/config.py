@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     # Default false — enterprise governance prefers explicit human accept.
     auto_accept_high_confidence: bool = False
 
+    # Metadata Accept/Edit/Reject (+ accept-all + target corrections that
+    # mutate review_status). None = unset: enabled outside production,
+    # fail-closed when APP_ENV=production (RC2 restricted core-platform).
+    # Set METADATA_REVIEW_MUTATIONS_ENABLED=true only with an explicit waiver.
+    metadata_review_mutations_enabled: bool | None = None
+
     # When true, requests must present X-Actor-Id or Bearer API key.
     # Default false keeps local/dev/tests working with seeded Dev Admin.
     # Production (app_env=production) always enforces RBAC regardless.
@@ -178,6 +184,19 @@ class Settings(BaseSettings):
         if (self.app_env or "").strip().lower() == "production":
             return True
         return bool(self.rbac_enforced)
+
+    @property
+    def effective_metadata_review_mutations_enabled(self) -> bool:
+        """Whether metadata review mutation APIs may run.
+
+        Explicit METADATA_REVIEW_MUTATIONS_ENABLED wins. When unset,
+        production is fail-closed; other environments remain open for
+        local development and the automated test suite.
+        """
+
+        if self.metadata_review_mutations_enabled is not None:
+            return bool(self.metadata_review_mutations_enabled)
+        return (self.app_env or "").strip().lower() != "production"
 
     @property
     def resolved_database_url(self) -> str:

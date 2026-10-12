@@ -1,6 +1,6 @@
 "use client";
 
-import { FileSearch, MoreHorizontal, Search } from "lucide-react";
+import { FileSearch, MoreHorizontal, Search, WrapText } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { SourceViewRequest } from "@/components/source-verification-panel";
@@ -9,6 +9,7 @@ import { cellSourceRequest, formatCellValue } from "@/components/staging/review-
 import ResizeHandle, { useGridSizes } from "@/components/staging/resize-handle";
 import SelectCheckbox from "@/components/staging/select-checkbox";
 import SelectionToolbar from "@/components/staging/selection-toolbar";
+import SortableHeader from "@/components/staging/sortable-header";
 import StagingDatasetTable from "@/components/staging/staging-dataset-table";
 import StagingFieldList from "@/components/staging/staging-field-list";
 import StagingRecordDrawer from "@/components/staging/staging-record-drawer";
@@ -29,6 +30,8 @@ import {
   type StagingRecord,
   type StagingWorkbook,
 } from "@/lib/staging-workbook";
+import { cycleSort, sortByText, type SortState } from "@/lib/table-sort";
+import { displayLines } from "@/lib/text-display";
 import {
   allSelected,
   isSelected,
@@ -234,6 +237,7 @@ export default function PresentationWorkspace({
           target={target}
           onClose={() => setTarget(null)}
           onViewInDocument={onOpenSource || onViewInDocument ? viewInDocument : undefined}
+          metadataReviewHref={`/documents/${documentId}/review`}
         />
       )}
     </div>
@@ -439,8 +443,11 @@ function SummaryCard({ items, onSelect, picked, onPick }: { items: FieldItem[]; 
 
 // --- A1. Document text ----------------------------------------------------------
 
-/** A section of the document's own text: each printed line as a line
- * (bullets and wrapped lines already resolved), with its evidence. */
+const TEXT_COL_INDEX = 56;
+const TEXT_COL_CONTENT = 480;
+const TEXT_COL_ACTION = 110;
+
+/** Document prose / bullet lists as a dense resizable table (index + content). */
 function TextBlock({
   items,
   onSelect,
@@ -450,33 +457,119 @@ function TextBlock({
   onSelect: (target: EvidenceTarget) => void;
   picked: ReadonlySet<string>;
 }) {
+  const sizes = useGridSizes();
+  const indexWidth = sizes.columns.index ?? TEXT_COL_INDEX;
+  const contentWidth = sizes.columns.content ?? TEXT_COL_CONTENT;
+  const actionWidth = sizes.columns.action ?? TEXT_COL_ACTION;
+  const tableWidth = indexWidth + contentWidth + actionWidth;
+
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {items.map((item) => {
         const open = () => onSelect(itemTarget(item));
-        const lines = formatCellValue(item.cell).split("\n").filter((line) => line.trim());
+        const lines = displayLines(formatCellValue(item.cell));
         return (
           <div
             key={item.id}
-            className={`rounded-xl border border-border bg-surface px-5 py-4 ${picked.has(item.id) ? "cell-selected" : ""}`}
+            className={`overflow-hidden rounded-xl border border-border bg-surface ${picked.has(item.id) ? "cell-selected" : ""}`}
           >
-            <div className="space-y-1.5 text-sm leading-relaxed text-foreground">
-              {lines.map((line, index) => (
-                <p key={index} className="break-words">
-                  {line}
-                </p>
-              ))}
-            </div>
-            <div className="mt-3 flex items-center gap-3">
-              <ReviewMark cell={item.cell} onOpen={open} />
-              <button
-                type="button"
-                onClick={open}
-                className="inline-flex items-center gap-1 text-xs text-text-secondary hover:text-primary"
+            <div className="max-h-[65vh] overflow-auto">
+              <table
+                className="table-fixed border-separate border-spacing-0 text-sm"
+                style={{ width: tableWidth, minWidth: "100%" }}
               >
-                <FileSearch className="h-3.5 w-3.5" aria-hidden="true" />
-                View source
-              </button>
+                <colgroup>
+                  <col style={{ width: indexWidth }} />
+                  <col style={{ width: contentWidth }} />
+                  <col style={{ width: actionWidth }} />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th
+                      scope="col"
+                      className="relative sticky top-0 z-20 border-b border-border bg-surface-soft px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-text-secondary"
+                    >
+                      #
+                      <ResizeHandle
+                        axis="column"
+                        label="Resize index column"
+                        onResize={(size) => sizes.setColumn("index", size)}
+                        onReset={() => sizes.setColumn("index", null)}
+                      />
+                    </th>
+                    <th
+                      scope="col"
+                      className="relative sticky top-0 z-20 border-b border-border bg-surface-soft px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-text-secondary"
+                    >
+                      {item.label || "Content"}
+                      <ResizeHandle
+                        axis="column"
+                        label={`Resize column ${item.label || "Content"}`}
+                        onResize={(size) => sizes.setColumn("content", size)}
+                        onReset={() => sizes.setColumn("content", null)}
+                      />
+                    </th>
+                    <th
+                      scope="col"
+                      className="relative sticky top-0 z-20 border-b border-border bg-surface-soft px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-text-secondary"
+                    >
+                      Source
+                      <ResizeHandle
+                        axis="column"
+                        label="Resize source column"
+                        onResize={(size) => sizes.setColumn("action", size)}
+                        onReset={() => sizes.setColumn("action", null)}
+                      />
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((line, lineIndex) => {
+                    const rowId = `${item.id}:${lineIndex}`;
+                    const height = sizes.rows[rowId];
+                    return (
+                      <tr
+                        key={rowId}
+                        style={height ? { height } : undefined}
+                        className={height ? "grid-row-wrap" : undefined}
+                      >
+                        <td className="relative border-b border-border/70 px-2 py-2 align-top tabular-nums text-text-muted">
+                          {lineIndex + 1}
+                          <ResizeHandle
+                            axis="row"
+                            label={`Resize row ${lineIndex + 1}`}
+                            onResize={(size) => sizes.setRow(rowId, size)}
+                            onReset={() => sizes.setRow(rowId, null)}
+                          />
+                        </td>
+                        <td
+                          className="border-b border-border/70 px-3 py-2 align-top text-foreground"
+                          title={line}
+                        >
+                          <span className={height ? "block break-words whitespace-pre-wrap" : "block"}>
+                            {line}
+                          </span>
+                        </td>
+                        <td className="border-b border-border/70 px-3 py-2 text-right align-top">
+                          {lineIndex === 0 ? (
+                            <div className="flex flex-col items-end gap-1">
+                              <ReviewMark cell={item.cell} onOpen={open} />
+                              <button
+                                type="button"
+                                onClick={open}
+                                className="inline-flex items-center gap-1 text-xs text-text-secondary hover:text-primary"
+                              >
+                                <FileSearch className="h-3.5 w-3.5" aria-hidden="true" />
+                                View
+                              </button>
+                            </div>
+                          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
         );
@@ -487,30 +580,89 @@ function TextBlock({
 
 // --- A. Detail group ------------------------------------------------------------
 
+const DETAIL_FIELD_WIDTH = 220;
+const DETAIL_VALUE_WIDTH = 420;
+
 function DetailList({ items, onSelect, picked, onPick }: { items: FieldItem[]; onSelect: (target: EvidenceTarget) => void } & ListPicking) {
+  const sizes = useGridSizes();
+  const fieldWidth = sizes.columns.field ?? DETAIL_FIELD_WIDTH;
+  const valueWidth = sizes.columns.value ?? DETAIL_VALUE_WIDTH;
+  const tableWidth = fieldWidth + valueWidth;
+
   return (
-    <dl className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface">
-      {items.map((item) => {
-        const open = () => onSelect(itemTarget(item));
-        return (
-          <div
-            key={item.id}
-            className={`list-row grid gap-x-6 gap-y-0.5 px-4 py-2.5 sm:grid-cols-[minmax(10rem,32%)_1fr] ${picked.has(item.id) ? "cell-selected" : ""}`}
-          >
-            <dt className="flex items-start gap-2 text-sm text-text-secondary">
-              <span className="flex h-5 items-center">
-                <ItemCheckbox item={item} picked={picked} onPick={onPick} />
-              </span>
-              {item.label}
-            </dt>
-            <dd className="flex min-w-0 flex-wrap items-center justify-between gap-2 text-sm">
-              <ValueButton text={displayText(formatCellValue(item.cell))} onOpen={open} className="font-medium" wrap />
-              <ReviewMark cell={item.cell} onOpen={open} />
-            </dd>
-          </div>
-        );
-      })}
-    </dl>
+    <div className="max-h-[65vh] overflow-auto rounded-xl border border-border bg-surface">
+      <table
+        className="table-fixed border-separate border-spacing-0 text-sm"
+        style={{ width: tableWidth, minWidth: "100%" }}
+      >
+        <colgroup>
+          <col style={{ width: fieldWidth }} />
+          <col style={{ width: valueWidth }} />
+        </colgroup>
+        <thead>
+          <tr>
+            <th
+              scope="col"
+              className="relative sticky top-0 z-20 border-b border-border bg-surface-soft px-3 py-2 pr-4 text-left text-[11px] font-semibold uppercase tracking-wide text-text-secondary"
+            >
+              Field
+              <ResizeHandle
+                axis="column"
+                label="Resize field column"
+                onResize={(size) => sizes.setColumn("field", size)}
+                onReset={() => sizes.setColumn("field", null)}
+              />
+            </th>
+            <th
+              scope="col"
+              className="relative sticky top-0 z-20 border-b border-border bg-surface-soft px-3 py-2 pr-4 text-left text-[11px] font-semibold uppercase tracking-wide text-text-secondary"
+            >
+              Value
+              <ResizeHandle
+                axis="column"
+                label="Resize value column"
+                onResize={(size) => sizes.setColumn("value", size)}
+                onReset={() => sizes.setColumn("value", null)}
+              />
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => {
+            const open = () => onSelect(itemTarget(item));
+            const height = sizes.rows[item.id];
+            return (
+              <tr
+                key={item.id}
+                style={height ? { height } : undefined}
+                className={`list-row ${height ? "grid-row-wrap" : ""} ${picked.has(item.id) ? "cell-selected" : ""}`}
+              >
+                <td className="relative border-b border-border/70 px-3 py-2.5 align-top text-text-secondary">
+                  <span className="flex items-start gap-2">
+                    <span className="flex h-5 items-center">
+                      <ItemCheckbox item={item} picked={picked} onPick={onPick} />
+                    </span>
+                    <span className="min-w-0 break-words">{item.label}</span>
+                  </span>
+                  <ResizeHandle
+                    axis="row"
+                    label={`Resize row ${item.label}`}
+                    onResize={(size) => sizes.setRow(item.id, size)}
+                    onReset={() => sizes.setRow(item.id, null)}
+                  />
+                </td>
+                <td className="border-b border-border/70 px-3 py-2.5 align-top">
+                  <span className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                    <ValueButton text={displayText(formatCellValue(item.cell))} onOpen={open} className="font-medium" wrap />
+                    <ReviewMark cell={item.cell} onOpen={open} />
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -549,9 +701,9 @@ function SummaryBlock({ items, onSelect, picked, onPick }: { items: FieldItem[];
 
 type Filter = "all" | "Verified" | "Needs Review";
 const PAGE_SIZE = 25;
-/** A grid cell's padding (px-3 / py-2): a set size is the cell's outer size. */
-const CELL_PAD_X = 24;
-const CELL_PAD_Y = 16;
+const GRID_CHECK_WIDTH = 36;
+const GRID_DETAILS_WIDTH = 88;
+const GRID_DEFAULT_COLUMN = 160;
 
 function RecordGrid({
   section,
@@ -570,14 +722,16 @@ function RecordGrid({
   const columns = useMemo(() => section.columns ?? [], [section.columns]);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<SortState>(null);
   const [page, setPage] = useState(0);
+  const [wrapCells, setWrapCells] = useState(false);
   const [openRecord, setOpenRecord] = useState<StagingRecord | null>(null);
 
   const total = dataset.records.length;
   const flagged = dataset.records.filter((record) => record.record_status === "Needs Review").length;
   const large = total >= 8;
   const searchable = total > 15;
-  const records = useMemo(() => {
+  const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return dataset.records.filter((record) => {
       if (filter !== "all" && record.record_status !== filter) return false;
@@ -585,6 +739,14 @@ function RecordGrid({
       return columns.some((column) => String(record.cells[column.canonical_field]?.value ?? "").toLowerCase().includes(needle));
     });
   }, [dataset.records, filter, query, columns]);
+  const records = useMemo(
+    () =>
+      sortByText(filtered, sort, (record, field) => {
+        const cell = record.cells[field];
+        return cell && !isBlank(cell.value) ? formatCellValue(cell) : "";
+      }),
+    [filtered, sort],
+  );
   const pages = Math.max(1, Math.ceil(records.length / PAGE_SIZE));
   const clamped = Math.min(page, pages - 1);
   const paged = records.slice(clamped * PAGE_SIZE, clamped * PAGE_SIZE + PAGE_SIZE);
@@ -615,11 +777,20 @@ function RecordGrid({
     (identity ? String(record.cells[identity.canonical_field]?.value ?? "") : "") || record.record_id;
 
   // Excel-style column widths / row heights set by dragging an edge.
+  // Widths apply through <colgroup> + table-fixed so drag actually changes columns.
   const sizes = useGridSizes();
-  const columnStyle = (field: string): React.CSSProperties | undefined => {
-    const width = sizes.columns[field];
-    return width ? { width: width - CELL_PAD_X, minWidth: width - CELL_PAD_X, maxWidth: width - CELL_PAD_X } : undefined;
-  };
+  const columnWidths = useMemo(
+    () =>
+      columns.map((column) => {
+        const set = sizes.columns[column.canonical_field];
+        if (set) return set;
+        const label = column.display_label.length * 7.5 + 48;
+        return Math.min(340, Math.max(GRID_DEFAULT_COLUMN, Math.round(label)));
+      }),
+    [columns, sizes.columns],
+  );
+  const tableWidth =
+    GRID_CHECK_WIDTH + columnWidths.reduce((sum, width) => sum + width, 0) + (needsDetails ? GRID_DETAILS_WIDTH : 0);
 
   // A table composed for display (not a staged dataset) exports its
   // selected cells by where each value is stored.
@@ -667,51 +838,67 @@ function RecordGrid({
 
   return (
     <div className="space-y-2">
-      {(total > 1 || large) && (
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            {searchable && (
-              <label className="flex min-w-[200px] items-center gap-2 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm">
-                <Search className="h-3.5 w-3.5 text-text-muted" aria-hidden="true" />
-                <input
-                  value={query}
-                  onChange={(event) => {
-                    setQuery(event.target.value);
+      <div className="flex flex-wrap items-center justify-between gap-2" data-testid="grid-toolbar">
+        <div className="flex flex-wrap items-center gap-2">
+          {(total > 1 || large) && searchable && (
+            <label className="flex min-w-[200px] items-center gap-2 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm">
+              <Search className="h-3.5 w-3.5 text-text-muted" aria-hidden="true" />
+              <input
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setPage(0);
+                }}
+                placeholder={`Search ${plural}`}
+                aria-label={`Search ${plural}`}
+                className="w-full bg-transparent outline-none placeholder:text-text-muted"
+              />
+            </label>
+          )}
+          {large && flagged > 0 && (
+            <div className="flex gap-0.5 rounded-lg border border-border bg-surface-soft p-0.5 text-xs" role="group" aria-label="Review filter">
+              {(["all", "Verified", "Needs Review"] as Filter[]).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={filter === value}
+                  onClick={() => {
+                    setFilter(value);
                     setPage(0);
                   }}
-                  placeholder={`Search ${plural}`}
-                  aria-label={`Search ${plural}`}
-                  className="w-full bg-transparent outline-none placeholder:text-text-muted"
-                />
-              </label>
-            )}
-            {large && flagged > 0 && (
-              <div className="flex gap-0.5 rounded-lg border border-border bg-surface-soft p-0.5 text-xs" role="group" aria-label="Review filter">
-                {(["all", "Verified", "Needs Review"] as Filter[]).map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    aria-pressed={filter === value}
-                    onClick={() => {
-                      setFilter(value);
-                      setPage(0);
-                    }}
-                    className={[
-                      "rounded-md px-2.5 py-1 font-medium",
-                      filter === value ? "bg-surface text-foreground shadow-sm" : "text-text-secondary hover:text-foreground",
-                    ].join(" ")}
-                  >
-                    {value === "all" ? "All" : value}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+                  className={[
+                    "rounded-md px-2.5 py-1 font-medium",
+                    filter === value ? "bg-surface text-foreground shadow-sm" : "text-text-secondary hover:text-foreground",
+                  ].join(" ")}
+                >
+                  {value === "all" ? "All" : value}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            aria-pressed={wrapCells}
+            onClick={() => setWrapCells((value) => !value)}
+            title={wrapCells ? "Show one line per cell" : "Wrap cell text to show full content"}
+            className={[
+              "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium",
+              wrapCells
+                ? "border-primary/40 bg-primary/10 text-foreground"
+                : "border-border text-foreground hover:bg-surface-soft",
+            ].join(" ")}
+            data-testid="wrap-cells"
+          >
+            <WrapText className="h-3.5 w-3.5" aria-hidden="true" />
+            Wrap text
+          </button>
+        </div>
+        {(total > 1 || large) && (
           <span className="text-xs text-text-muted">
             {records.length === total ? `${total.toLocaleString()} ${total === 1 ? singular : plural}` : `${records.length} of ${total} ${plural}`}
           </span>
-        </div>
-      )}
+        )}
+      </div>
 
       <SelectionToolbar
         documentId={documentId}
@@ -727,11 +914,20 @@ function RecordGrid({
       />
 
       <div className="max-h-[65vh] overflow-auto rounded-xl border border-border bg-surface">
-        {/* Wide target templates scroll sideways instead of squeezing every value. */}
-        <table className={columns.length > 8 ? "w-max min-w-full text-sm" : "w-full text-sm"}>
+        <table
+          className={["table-fixed border-separate border-spacing-0 text-sm", wrapCells ? "grid-cells-wrap" : ""].join(" ")}
+          style={{ width: tableWidth, minWidth: "100%" }}
+        >
+          <colgroup>
+            <col style={{ width: GRID_CHECK_WIDTH }} />
+            {columnWidths.map((width, index) => (
+              <col key={columns[index].canonical_field} style={{ width }} />
+            ))}
+            {needsDetails && <col style={{ width: GRID_DETAILS_WIDTH }} />}
+          </colgroup>
           <thead className="sticky top-0 z-10 bg-surface-soft">
             <tr>
-              <th scope="col" className="w-9 px-2 py-2 text-center">
+              <th scope="col" className="relative px-2 py-2 text-center">
                 <SelectCheckbox
                   checked={allSelected(selection, pagedIds, fieldIds)}
                   indeterminate={someSelected(selection, pagedIds, fieldIds)}
@@ -739,12 +935,22 @@ function RecordGrid({
                   label={`Select all ${pagedIds.length} ${plural} on this page`}
                 />
               </th>
-              {columns.map((column) => (
+              {columns.map((column) => {
+                const active = sort?.field === column.canonical_field;
+                return (
                 <th
                   key={column.canonical_field}
-                  className="relative whitespace-nowrap px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-text-secondary"
+                  scope="col"
+                  aria-sort={
+                    active && sort
+                      ? sort.direction === "asc"
+                        ? "ascending"
+                        : "descending"
+                      : "none"
+                  }
+                  className="relative border-b border-border bg-surface-soft px-3 py-2 pr-4 text-left text-[11px] font-semibold uppercase tracking-wide text-text-secondary"
                 >
-                  <span className="flex items-center gap-1.5" style={columnStyle(column.canonical_field)}>
+                  <span className="flex min-w-0 items-center gap-1.5">
                     <SelectCheckbox
                       checked={allSelected(selection, resultIds, [column.canonical_field])}
                       indeterminate={someSelected(selection, resultIds, [column.canonical_field])}
@@ -752,9 +958,15 @@ function RecordGrid({
                       label={`Select column ${column.display_label}`}
                       className="col-check"
                     />
-                    <span className="min-w-0 truncate" title={column.display_label}>
-                      {column.display_label}
-                    </span>
+                    <SortableHeader
+                      label={column.display_label}
+                      active={Boolean(active)}
+                      direction={sort?.direction}
+                      onSort={() => {
+                        setSort((current) => cycleSort(current, column.canonical_field));
+                        setPage(0);
+                      }}
+                    />
                   </span>
                   <ResizeHandle
                     axis="column"
@@ -763,9 +975,10 @@ function RecordGrid({
                     onReset={() => sizes.setColumn(column.canonical_field, null)}
                   />
                 </th>
-              ))}
+                );
+              })}
               {needsDetails && (
-                <th className="w-px whitespace-nowrap px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
+                <th className="relative whitespace-nowrap border-b border-border bg-surface-soft px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
                   Review
                 </th>
               )}
@@ -777,8 +990,8 @@ function RecordGrid({
               return (
               <tr
                 key={record.record_id}
-                className={`hover:bg-surface-soft/60 ${height ? "grid-row-wrap" : ""}`}
-                style={height ? { height } : undefined}
+                className={`hover:bg-surface-soft/60 ${height || wrapCells ? "grid-row-wrap" : ""}`}
+                style={height && !wrapCells ? { height } : undefined}
               >
                 <td className="relative w-9 px-2 py-2 text-center align-top">
                   <SelectCheckbox
@@ -801,24 +1014,17 @@ function RecordGrid({
                   // title) opens its details; review state is a small mark.
                   const opensRecord = section.inlineReview && (index === 0 || column.canonical_field.endsWith(".title"));
                   const picked = isSelected(selection, record.record_id, column.canonical_field);
-                  // A hand-set width wins over keeping short values whole.
-                  const whole = keepWhole(text) && !sizes.columns[column.canonical_field];
-                  const sized = columnStyle(column.canonical_field);
+                  const whole = !wrapCells && keepWhole(text) && !sizes.columns[column.canonical_field];
                   return (
                     <td
                       key={column.canonical_field}
                       onMouseDown={(event) => event.shiftKey && event.preventDefault()}
                       onClick={(event) => selectCell(event, record.record_id, column.canonical_field)}
                       aria-selected={picked}
-                      // Content-sized (wide) tables: short values (numbers, codes) are
-                      // never truncated; long text keeps its ellipsis.
-                      className={`max-w-[24rem] cursor-cell px-3 py-2 align-top ${picked ? "cell-selected" : ""} ${whole ? "whitespace-nowrap pr-6" : ""}`}
-                      title={text}
+                      className={`cursor-cell px-3 py-2 align-top ${wrapCells ? "" : "overflow-hidden"} ${picked ? "cell-selected" : ""} ${whole ? "whitespace-nowrap" : ""}`}
+                      title={wrapCells ? undefined : text}
                     >
-                      <span
-                        className={`flex min-w-0 items-baseline gap-1.5 ${height ? "overflow-hidden" : ""}`}
-                        style={height ? { ...sized, maxHeight: Math.max(0, height - CELL_PAD_Y) } : sized}
-                      >
+                      <span className={`flex min-w-0 items-baseline gap-1.5 ${height && !wrapCells ? "overflow-hidden" : ""}`}>
                       <SelectCheckbox
                         small
                         className="cell-check self-center"
@@ -832,13 +1038,14 @@ function RecordGrid({
                           <span className="shrink-0 text-[11px] font-semibold text-warning" title="Needs review — open details" aria-label="Needs review">
                             !
                           </span>
-                          <ValueButton text={text} onOpen={() => setOpenRecord(record)} />
+                          <ValueButton text={text} onOpen={() => setOpenRecord(record)} wrap={wrapCells} />
                         </span>
                       ) : text ? (
                         <ValueButton
                           text={text}
                           onOpen={() => (opensRecord ? setOpenRecord(record) : openCell(record, column))}
                           className={whole ? "max-w-none" : ""}
+                          wrap={wrapCells}
                         />
                       ) : null}
                       </span>

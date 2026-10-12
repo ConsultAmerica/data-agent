@@ -1,9 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Check, Copy, Download, FileText } from "lucide-react";
 
+import ResizeHandle, { useGridSizes } from "@/components/staging/resize-handle";
+import SortableHeader from "@/components/staging/sortable-header";
 import { downloadBlob, toCsv, toTsv } from "@/lib/export";
+import { cycleSort, sortByText, type SortState } from "@/lib/table-sort";
 import type { UniversalTable } from "@/types/document";
 
 interface TableResultProps {
@@ -15,8 +18,35 @@ interface TableResultProps {
   }) => void;
 }
 
+const MIN_AUTO_WIDTH = 96;
+const MAX_AUTO_WIDTH = 320;
+const CHAR_PX = 8;
+const CELL_PAD = 32;
+
+function autoWidth(header: string, rows: UniversalTable["rows"]): number {
+  let longest = header.length;
+  for (const row of rows.slice(0, 40)) {
+    longest = Math.max(longest, String(row[header] ?? "").length);
+  }
+  return Math.min(MAX_AUTO_WIDTH, Math.max(MIN_AUTO_WIDTH, longest * CHAR_PX + CELL_PAD));
+}
+
 export default function TableResult({ table, onViewSource }: TableResultProps) {
   const [copied, setCopied] = useState(false);
+  const [sort, setSort] = useState<SortState>(null);
+  const sizes = useGridSizes();
+
+  const widths = useMemo(
+    () =>
+      table.headers.map((header) => sizes.columns[header] ?? autoWidth(header, table.rows)),
+    [sizes.columns, table.headers, table.rows],
+  );
+  const tableWidth = widths.reduce((sum, width) => sum + width, 0);
+
+  const sortedRows = useMemo(() => {
+    const indexed = table.rows.map((row, index) => ({ row, index }));
+    return sortByText(indexed, sort, (entry, field) => String(entry.row[field] ?? ""));
+  }, [sort, table.rows]);
 
   async function copyTable() {
     try {
@@ -127,36 +157,88 @@ export default function TableResult({ table, onViewSource }: TableResultProps) {
       </div>
 
       <div className="max-h-[32rem] overflow-auto">
-        <table className="min-w-full text-sm">
+        <table
+          className="table-fixed border-separate border-spacing-0 text-sm"
+          style={{ width: tableWidth, minWidth: "100%" }}
+        >
+          <colgroup>
+            {widths.map((width, index) => (
+              <col key={table.headers[index]} style={{ width }} />
+            ))}
+          </colgroup>
           <thead className="sticky top-0 z-10 bg-surface-soft">
             <tr>
-              {table.headers.map((header) => (
-                <th
-                  key={header}
-                  className="whitespace-nowrap border-b border-border bg-surface-soft px-4 py-3 text-left font-semibold text-foreground"
-                >
-                  {header}
-                </th>
-              ))}
+              {table.headers.map((header) => {
+                const active = sort?.field === header;
+                return (
+                  <th
+                    key={header}
+                    scope="col"
+                    aria-sort={
+                      active && sort
+                        ? sort.direction === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                    className="relative border-b border-border bg-surface-soft px-4 py-3 text-left align-middle text-[11px] font-semibold uppercase tracking-wide text-text-secondary"
+                  >
+                    <ResizeHandle
+                      axis="column"
+                      label={`Resize column ${header}`}
+                      onResize={(size) => sizes.setColumn(header, size)}
+                      onReset={() => sizes.setColumn(header, null)}
+                    />
+                    <SortableHeader
+                      label={header}
+                      active={Boolean(active)}
+                      direction={sort?.direction}
+                      onSort={() => setSort((current) => cycleSort(current, header))}
+                    />
+                  </th>
+                );
+              })}
             </tr>
           </thead>
 
           <tbody>
-            {table.rows.map((row, rowIndex) => (
-              <tr
-                key={rowIndex}
-                className="border-b border-border last:border-0 hover:bg-surface-soft"
-              >
-                {table.headers.map((header) => (
-                  <td
-                    key={header}
-                    className="whitespace-nowrap px-4 py-3 text-text-secondary"
-                  >
-                    {String(row[header] ?? "")}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {sortedRows.map(({ row, index }) => {
+              const rowId = `r${index}`;
+              const height = sizes.rows[rowId];
+              return (
+                <tr
+                  key={rowId}
+                  style={height ? { height } : undefined}
+                  className={[
+                    "group border-b border-border last:border-0 hover:bg-surface-soft",
+                    height ? "grid-row-wrap" : "",
+                  ].join(" ")}
+                >
+                  {table.headers.map((header, columnIndex) => (
+                    <td
+                      key={header}
+                      className={[
+                        "relative px-4 py-3 align-top text-text-secondary",
+                        height ? "" : "whitespace-nowrap",
+                      ].join(" ")}
+                      title={String(row[header] ?? "")}
+                    >
+                      <span className={height ? "block break-words" : "block truncate"}>
+                        {String(row[header] ?? "")}
+                      </span>
+                      {columnIndex === 0 && (
+                        <ResizeHandle
+                          axis="row"
+                          label={`Resize row ${index + 1}`}
+                          onResize={(size) => sizes.setRow(rowId, size)}
+                          onReset={() => sizes.setRow(rowId, null)}
+                        />
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

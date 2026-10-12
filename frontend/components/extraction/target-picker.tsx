@@ -131,13 +131,14 @@ export default function TargetPicker({
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-surface">
       <div className="flex items-center gap-2 border-b border-border bg-surface-soft px-3">
-        <Search className="h-4 w-4 shrink-0 text-text-muted" />
+        <Search className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
         <input
-          type="text"
+          type="search"
           value={query}
           disabled={disabled}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search this document’s schema..."
+          aria-label="Search schema fields"
           className="flex-1 bg-transparent py-3 text-sm text-foreground outline-none placeholder:text-text-muted disabled:opacity-50"
         />
         {hasAnyDetected && (
@@ -227,6 +228,9 @@ export default function TargetPicker({
                   >
                     <button
                       type="button"
+                      role="checkbox"
+                      aria-checked={selected}
+                      aria-label={target.label}
                       disabled={disabled}
                       onClick={() => onToggle(target.id)}
                       className="flex min-w-0 flex-1 items-center gap-3 px-2 py-2 text-left disabled:opacity-50"
@@ -238,6 +242,7 @@ export default function TargetPicker({
                             ? "border-primary bg-primary"
                             : "border-border bg-surface",
                         ].join(" ")}
+                        aria-hidden="true"
                       >
                         {selected && <Check className="h-3 w-3 text-white" />}
                       </span>
@@ -351,14 +356,14 @@ export default function TargetPicker({
         </section>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-t border-border p-3">
+      <div className="flex flex-wrap items-center gap-2 border-t border-border p-3" role="toolbar" aria-label="Schema selection">
         <button
           type="button"
           disabled={disabled || selectedIds.size === 0}
           onClick={onClear}
           className="rounded-lg px-3 py-1.5 text-xs font-medium text-text-muted transition hover:text-foreground disabled:opacity-40"
         >
-          Clear
+          Clear selection
         </button>
         <button
           type="button"
@@ -367,11 +372,11 @@ export default function TargetPicker({
           className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground transition hover:bg-surface-soft disabled:opacity-40"
         >
           {selectedIds.size === filtered.length && filtered.length > 0
-            ? `Select all ${filtered.length} ✓`
+            ? `All ${filtered.length} selected`
             : `Select all ${filtered.length || ""}`.trim()}
         </button>
         <div className="flex-1" />
-        <span className="text-xs text-text-muted">
+        <span className="text-xs text-text-muted" aria-live="polite">
           {selectedIds.size} selected
         </span>
       </div>

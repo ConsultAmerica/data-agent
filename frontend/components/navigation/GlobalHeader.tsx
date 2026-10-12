@@ -1,12 +1,12 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { Bell, Menu, Plus, Search, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 
 import BackendStatusPill from "@/components/navigation/BackendStatusPill";
+import DataAgentLogo from "@/components/navigation/data-agent-logo";
 import MobileNavigation from "@/components/navigation/MobileNavigation";
 import NavDropdown from "@/components/navigation/NavDropdown";
 import { TOP_MENUS, menuForPath, type TopMenu } from "@/components/navigation/nav-config";
@@ -28,23 +28,8 @@ export default function GlobalHeader({ onOpenSearch }: GlobalHeaderProps) {
       <header className="global-header app-header shrink-0">
         {/* Brand — never shrink */}
         <div className="header-left">
-          <Link href="/" className="flex shrink-0 items-center gap-2.5 sm:gap-3">
-            <Image
-              src="/consult-america-logo.jpg"
-              alt="Consult America"
-              width={36}
-              height={36}
-              className="h-8 w-8 rounded-full object-contain bg-white sm:h-9 sm:w-9"
-              priority
-            />
-            <div className="header-brand-text min-w-0">
-              <p className="truncate text-xs font-bold uppercase tracking-wide text-text-on-dark sm:text-sm">
-                Consult America
-              </p>
-              <p className="truncate text-[11px] text-sirion-teal-soft sm:text-xs">
-                Data Agent
-              </p>
-            </div>
+          <Link href="/" className="header-brand-link" aria-label="Data Agent home">
+            <DataAgentLogo variant="wordmark" tone="onDark" size={34} />
           </Link>
         </div>
 

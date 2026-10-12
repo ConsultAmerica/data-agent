@@ -92,7 +92,16 @@ export default function SelectionToolbar({
           <span className="text-text-secondary tabular-nums">{plural(counts.fields, "field")}</span>
         </>
       )}
-      {error && <span className="text-danger">{error}</span>}
+      {busy && (
+        <span className="sr-only" aria-live="polite">
+          Preparing selected export…
+        </span>
+      )}
+      {error && (
+        <span className="text-danger" role="alert">
+          {error}
+        </span>
+      )}
       <div className="ml-auto flex items-center gap-1.5">
         <button type="button" onClick={onClear} className="rounded-md border border-border px-2 py-1 hover:bg-surface-soft">
           Clear

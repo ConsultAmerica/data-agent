@@ -35,6 +35,14 @@ class MetadataFieldAuditLog(Base):
         index=True,
     )
 
+    # Exact DocumentMetadataField.id when known (RC2-05B). Nullable for
+    # historical rows written before ID-addressed review.
+    metadata_field_id: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        index=True,
+    )
+
     action: Mapped[str] = mapped_column(
         String(20),
         nullable=False,

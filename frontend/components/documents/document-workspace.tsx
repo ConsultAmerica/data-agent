@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, RefreshCw } from "lucide-react";
 
+import { useDocumentChrome } from "@/components/layout/document-chrome-context";
+import OracleIntegrationPanel from "@/components/oracle-integration-panel";
 import type { SourceViewRequest } from "@/components/source-verification-panel";
 import type { EvidenceTarget } from "@/components/staging/evidence-drawer";
 import FarRecordsView from "@/components/staging/far-records-view";
@@ -14,12 +16,21 @@ import { withoutBlankColumns } from "@/lib/far-records";
 import SourceTranscription from "@/components/staging/source-transcription";
 import StagingDatasetTable from "@/components/staging/staging-dataset-table";
 import StagingFieldList from "@/components/staging/staging-field-list";
-import { getDocument } from "@/lib/documents";
+import { getDocument, startProcessingJob } from "@/lib/documents";
+import { FAMILY_LABELS } from "@/lib/document-families";
+import { presentDocument, statusMark } from "@/lib/document-presentation";
+import { downloadJson } from "@/lib/export";
+import {
+  downloadDocumentExportCsv,
+  downloadDocumentExportXlsx,
+  getDocumentExport,
+} from "@/lib/reviewed-export";
 import {
   SELECTED_EXPORT_FORMATS,
   downloadExport,
   downloadSelectedExport,
   getStagingWorkbook,
+  type ExportCapability,
   type ProfileView,
   type SelectedExportFormat,
   type StagingDataset,
@@ -38,6 +49,7 @@ import {
   useSelectionStore,
   useTableSelection,
 } from "@/lib/table-selection";
+import type { DocumentStatus, UploadedDocument } from "@/types/document";
 
 /** Generic tabs, for profiles that don't declare their own presentation:
  * the business view (Data) and the document itself first, then the
@@ -72,13 +84,23 @@ function laneOf(dataset: StagingDataset): GenericViewId | "advanced" {
 export default function DocumentWorkspace({ documentId }: { documentId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { setDocumentTitle } = useDocumentChrome();
   const requestedView = searchParams.get("view");
+  const returnQs = searchParams.get("return");
+  const documentsHref = returnQs ? `/documents?${returnQs}` : "/documents";
   const [workbook, setWorkbook] = useState<StagingWorkbook | null>(null);
+  const [documentMeta, setDocumentMeta] = useState<UploadedDocument | null>(null);
   const [filename, setFilename] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportError, setExportError] = useState("");
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportNotice, setExportNotice] = useState("");
+  const [showOracle, setShowOracle] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [reprocessing, setReprocessing] = useState(false);
   const [activeDataset, setActiveDataset] = useState("");
   // A value opened from the Data tab ("View in document"), shown in Source.
   const [sourceFocus, setSourceFocus] = useState<SourceViewRequest | null>(null);
@@ -86,6 +108,7 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
   // filters and pagination, and the Export menu can export them.
   const selectionStore = useSelectionStore();
   const selected = selectionStore.active;
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -93,6 +116,7 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
     Promise.all([getDocument(documentId), getStagingWorkbook(documentId)])
       .then(([document, staging]) => {
         if (!active) return;
+        setDocumentMeta(document);
         setFilename(document.original_filename || staging.document_filename);
         setWorkbook(staging);
       })
@@ -105,7 +129,35 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
     return () => {
       active = false;
     };
-  }, [documentId]);
+  }, [documentId, reloadKey]);
+
+  useEffect(() => {
+    const title = filename || workbook?.document_filename || null;
+    setDocumentTitle(title);
+    return () => setDocumentTitle(null);
+  }, [filename, workbook?.document_filename, setDocumentTitle]);
+
+  useEffect(() => {
+    if (searchParams.get("panel") === "oracle") {
+      setShowOracle(true);
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!exportOpen) return;
+    function onDown(event: MouseEvent) {
+      if (!exportMenuRef.current?.contains(event.target as Node)) setExportOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setExportOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [exportOpen]);
 
   const datasets = workbook?.datasets ?? [];
   const profileViews = workbook?.profile.views ?? [];
@@ -133,7 +185,28 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
   }, [laneDatasets, activeDataset]);
 
   function openView(next: string) {
-    router.replace(`/documents/${documentId}?view=${next}`);
+    const params = new URLSearchParams();
+    params.set("view", next);
+    if (returnQs) params.set("return", returnQs);
+    router.replace(`/documents/${documentId}?${params.toString()}`);
+  }
+
+  async function reprocess() {
+    if (documentMeta?.status === "processing") {
+      setNotice("This document is already processing.");
+      return;
+    }
+    setReprocessing(true);
+    setNotice("");
+    try {
+      await startProcessingJob(documentId);
+      setNotice("Reprocess started. Staging will refresh when the job completes.");
+      setReloadKey((key) => key + 1);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Reprocess failed.");
+    } finally {
+      setReprocessing(false);
+    }
   }
 
   function viewInDocument(target: EvidenceTarget) {
@@ -171,97 +244,355 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
     : GENERIC_VIEWS.map((item) => ({ id: item.id, label: item.label }));
   const activeTab = profileView?.view_id ?? genericView;
 
-  async function exportSelected(format: SelectedExportFormat) {
-    if (!selected) return;
+  async function runExport(task: () => Promise<void>, successMessage: string) {
     setExportOpen(false);
     setExportError("");
+    setExportNotice("");
+    setExportBusy(true);
     try {
-      await downloadSelectedExport(
-        documentId,
-        selected.datasetId,
-        format,
-        selectionManifest(selected.selection),
-        filename || workbook?.document_filename || "export",
-      );
+      await task();
+      setExportNotice(successMessage);
+      window.setTimeout(() => setExportNotice(""), 3500);
     } catch (err) {
       setExportError(err instanceof Error ? err.message : "Export failed.");
+    } finally {
+      setExportBusy(false);
     }
+  }
+
+  async function exportSelected(format: SelectedExportFormat) {
+    if (!selected) {
+      setExportError("Select cells, rows, or columns in a table before Export Selected.");
+      return;
+    }
+    const base = filename || workbook?.document_filename || "export";
+    await runExport(
+      () =>
+        downloadSelectedExport(
+          documentId,
+          selected.datasetId,
+          format,
+          selectionManifest(selected.selection),
+          base,
+        ),
+      `Selected ${format.toUpperCase()} download started.`,
+    );
+  }
+
+  async function exportAllCapability(capability: ExportCapability) {
+    const base = filename || workbook?.document_filename || "export";
+    await runExport(
+      () => downloadExport(capability, base),
+      `${capability.label} download started.`,
+    );
+  }
+
+  async function exportMetadata(
+    format: "json" | "csv" | "xlsx",
+    authoritativeOnly: boolean,
+  ) {
+    const base = (filename || workbook?.document_filename || "export").replace(
+      /\.[^.]+$/,
+      "",
+    );
+    const suffix = authoritativeOnly ? "-authoritative" : "-metadata";
+    await runExport(async () => {
+      if (format === "json") {
+        const body = await getDocumentExport(documentId, { authoritativeOnly });
+        downloadJson(`${base}${suffix}.json`, body);
+        return;
+      }
+      if (format === "csv") {
+        await downloadDocumentExportCsv(
+          documentId,
+          `${base}${suffix}.csv`,
+          { authoritativeOnly },
+        );
+        return;
+      }
+      await downloadDocumentExportXlsx(
+        documentId,
+        `${base}${suffix}.xlsx`,
+        { authoritativeOnly },
+      );
+    }, `Metadata ${format.toUpperCase()} download started.`);
   }
 
   const selectedCounts = selected ? selectionCounts(selected.selection) : null;
 
+  const docStatus = (documentMeta?.status ?? "completed") as DocumentStatus;
+  const familyId = profile.document_families?.[0] ?? "";
+  const typeLabel = (familyId && FAMILY_LABELS[familyId]) || profile.display_name;
+  const presentation = presentDocument({
+    document_id: documentId,
+    original_filename: filename || workbook.document_filename,
+    document_type: null,
+    status: docStatus,
+    confidence: null,
+    uploaded_at: documentMeta?.uploaded_at ?? "",
+    page_count: documentMeta?.page_count ?? 0,
+    fields_extracted: qa.record_count,
+    last_updated: documentMeta?.uploaded_at ?? "",
+    profile_id: profile.profile_id,
+    profile_label: profile.display_name,
+    type_label: typeLabel,
+    staging_status: "staged",
+  });
+  const processingLabel =
+    docStatus === "processing"
+      ? "Processing"
+      : docStatus === "failed"
+        ? "Failed"
+        : ready
+          ? "Complete"
+          : outcome.title;
+  const reviewLabel =
+    presentation.status === "review"
+      ? "Needs Review"
+      : presentation.status === "failed"
+        ? "—"
+        : qa.needs_review > 0
+          ? "Needs Review"
+          : "Staging Verified";
+
   return (
     <SelectionProvider store={selectionStore}>
-    {/* A wide data workspace: the full content width with 24px gutters. */}
-    <div className="w-full px-4 py-6 sm:px-6" data-testid="document-workspace">
-      <Link href="/documents" className="text-sm text-text-secondary hover:text-foreground">
-        ← Documents
-      </Link>
-      <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
+    <div className="workspace-page w-full px-4 py-4 sm:px-6" data-testid="document-workspace">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold text-foreground">{profile.display_name}</h1>
-          <p className="mt-1 break-words text-sm text-foreground">
-            {filename || workbook.document_filename} · {recordSummary(workbook)}
+          <Link
+            href={documentsHref}
+            className="text-sm text-text-secondary hover:text-foreground"
+            data-testid="return-to-documents"
+          >
+            ← Documents
+          </Link>
+          <h1 className="mt-2 truncate text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
+            {filename || workbook.document_filename}
+          </h1>
+          <p className="mt-1 text-sm text-text-secondary">
+            <span className="text-foreground">{profile.display_name}</span>
+            <span className="mx-1.5 text-text-muted">·</span>
+            {recordSummary(workbook)}
           </p>
-          <p className="mt-1 text-xs text-text-secondary">
-            {ready ? "✓ Processing complete" : outcome.title} · {qa.needs_review.toLocaleString()} need review
-          </p>
+          <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs" data-testid="workspace-status">
+            <div className="flex items-center gap-1.5">
+              <dt className="text-text-muted">Type</dt>
+              <dd className="font-medium text-foreground" data-testid="workspace-type">
+                {typeLabel}
+              </dd>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <dt className="text-text-muted">Profile</dt>
+              <dd className="font-medium text-foreground" data-testid="workspace-profile">
+                {profile.display_name}
+              </dd>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <dt className="text-text-muted">Processing</dt>
+              <dd className={`font-medium ${docStatus === "failed" ? "text-danger" : "text-foreground"}`}>
+                {processingLabel}
+              </dd>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <dt className="text-text-muted">Review</dt>
+              <dd className={`font-medium ${qa.needs_review > 0 || presentation.status === "review" ? "text-warning" : "text-success"}`}>
+                {statusMark(qa.needs_review > 0 ? "review" : presentation.status)} {reviewLabel}
+                {qa.needs_review > 0 && (
+                  <span className="ml-1 font-normal text-text-secondary">
+                    ({qa.needs_review.toLocaleString()})
+                  </span>
+                )}
+              </dd>
+            </div>
+          </dl>
         </div>
-        <div className="relative">
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href={`/documents/${documentId}/review`}
+            className="btn-secondary px-3 py-2 text-sm"
+            data-testid="open-metadata-review"
+          >
+            Metadata review
+          </Link>
           <button
             type="button"
-            onClick={() => setExportOpen((open) => !open)}
-            className="btn-secondary text-sm"
+            disabled={reprocessing || docStatus === "processing"}
+            onClick={() => void reprocess()}
+            className="btn-secondary px-3 py-2 text-sm disabled:opacity-50"
+            aria-label="Reprocess document"
           >
-            Export
-            <ChevronDown className="h-3.5 w-3.5" />
+            <RefreshCw className={`h-3.5 w-3.5 ${reprocessing || docStatus === "processing" ? "animate-spin" : ""}`} />
+            {docStatus === "processing" ? "Processing…" : reprocessing ? "Starting…" : "Reprocess"}
           </button>
-          {exportOpen && (
-            <div className="absolute right-0 z-50 mt-1 w-72 rounded-lg border border-border bg-surface py-1 shadow-sm" role="menu">
-              <p className="px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Export All</p>
-              {profile.export_capabilities.map((capability) => (
+          <button
+            type="button"
+            className="btn-secondary px-3 py-2 text-sm"
+            aria-pressed={showOracle}
+            onClick={() => setShowOracle((open) => !open)}
+            data-testid="toggle-oracle-panel"
+          >
+            Oracle
+          </button>
+          <div className="relative" ref={exportMenuRef}>
+            <button
+              type="button"
+              onClick={() => setExportOpen((open) => !open)}
+              aria-haspopup="menu"
+              aria-expanded={exportOpen}
+              disabled={exportBusy}
+              className="btn-secondary text-sm disabled:opacity-60"
+              data-testid="export-menu-trigger"
+            >
+              {exportBusy ? "Exporting…" : "Export"}
+              <ChevronDown className="h-3.5 w-3.5" />
+            </button>
+            {exportOpen && (
+              <div
+                className="absolute right-0 z-50 mt-1 w-80 rounded-lg border border-border bg-surface py-1 shadow-sm"
+                role="menu"
+                data-testid="export-menu"
+              >
+                <div className="border-b border-border px-3 py-2 text-[11px] text-text-secondary">
+                  <p className="font-semibold uppercase tracking-wide text-text-muted">Export scope</p>
+                  <p className="mt-1 text-foreground">
+                    {filename || workbook.document_filename}
+                  </p>
+                  <p className="mt-0.5">
+                    Profile {profile.display_name}
+                    {current ? ` · Dataset ${current.display_name}` : ""}
+                  </p>
+                  {selected && selectedCounts ? (
+                    <p className="mt-0.5">
+                      Selection: {selected.datasetName} ·{" "}
+                      {selectedCounts.cells.toLocaleString()} cell
+                      {selectedCounts.cells === 1 ? "" : "s"} ·{" "}
+                      {selectedCounts.records.toLocaleString()} record
+                      {selectedCounts.records === 1 ? "" : "s"}
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 text-text-muted">No staging cells selected</p>
+                  )}
+                </div>
+                <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
+                  Staging — Export All
+                </p>
+                {profile.export_capabilities.length === 0 && (
+                  <p className="px-3 py-1.5 pl-5 text-xs text-text-muted">
+                    No staging export formats available for this profile.
+                  </p>
+                )}
+                {profile.export_capabilities.map((capability) => (
+                  <button
+                    key={capability.capability_id}
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-1.5 pl-5 text-left text-sm hover:bg-surface-soft"
+                    onClick={() => void exportAllCapability(capability)}
+                  >
+                    {capability.label}
+                  </button>
+                ))}
+                <div className="my-1 border-t border-border" />
+                <p className="px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
+                  Staging — Export Selected
+                </p>
+                {SELECTED_EXPORT_FORMATS.map((item) => (
+                  <button
+                    key={item.format}
+                    type="button"
+                    role="menuitem"
+                    disabled={!selected}
+                    title={
+                      selected
+                        ? undefined
+                        : "Select cells, rows or columns in a table first"
+                    }
+                    className="block w-full px-3 py-1.5 pl-5 text-left text-sm hover:bg-surface-soft disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
+                    onClick={() => void exportSelected(item.format)}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+                <div className="my-1 border-t border-border" />
+                <p className="px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
+                  Metadata export
+                </p>
+                <p className="px-3 pb-1 text-[11px] text-text-muted">
+                  Uses DocumentMetadataField values — not staging cell QA.
+                </p>
+                {(
+                  [
+                    ["json", "JSON"],
+                    ["csv", "CSV"],
+                    ["xlsx", "Excel"],
+                  ] as const
+                ).map(([format, label]) => (
+                  <button
+                    key={format}
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-1.5 pl-5 text-left text-sm hover:bg-surface-soft"
+                    onClick={() => void exportMetadata(format, false)}
+                  >
+                    {label} (all review statuses)
+                  </button>
+                ))}
                 <button
-                  key={capability.capability_id}
                   type="button"
                   role="menuitem"
                   className="block w-full px-3 py-1.5 pl-5 text-left text-sm hover:bg-surface-soft"
-                  onClick={() => {
-                    setExportOpen(false);
-                    void downloadExport(capability, filename || "export");
-                  }}
+                  onClick={() => void exportMetadata("json", true)}
                 >
-                  {capability.label}
+                  JSON (accepted / edited only)
                 </button>
-              ))}
-              <div className="my-1 border-t border-border" />
-              <p className="px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
-                Export Selected
-                {selected && selectedCounts && (
-                  <span className="ml-1 font-normal normal-case tracking-normal">
-                    · {selected.datasetName}, {selectedCounts.cells.toLocaleString()} cell{selectedCounts.cells === 1 ? "" : "s"}
-                  </span>
-                )}
-              </p>
-              {SELECTED_EXPORT_FORMATS.map((item) => (
+                <div className="my-1 border-t border-border" />
                 <button
-                  key={item.format}
                   type="button"
                   role="menuitem"
-                  disabled={!selected}
-                  title={selected ? undefined : "Select cells, rows or columns in a table first"}
-                  className="block w-full px-3 py-1.5 pl-5 text-left text-sm hover:bg-surface-soft disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
-                  onClick={() => void exportSelected(item.format)}
+                  className="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface-soft"
+                  onClick={() => {
+                    setExportOpen(false);
+                    setShowOracle(true);
+                  }}
                 >
-                  {item.label}
+                  Open Oracle preview / send…
                 </button>
-              ))}
+              </div>
+            )}
+            <div className="mt-1 max-w-xs text-right text-xs" aria-live="polite">
+              {exportBusy && <p className="text-text-secondary">Preparing download…</p>}
+              {exportNotice && (
+                <p className="text-success" role="status">
+                  {exportNotice}
+                </p>
+              )}
+              {exportError && (
+                <p className="text-danger" role="alert">
+                  {exportError}
+                </p>
+              )}
             </div>
-          )}
-          {exportError && <p className="mt-1 max-w-xs text-right text-xs text-danger">{exportError}</p>}
+          </div>
         </div>
       </div>
 
-      <div className="mt-5 flex items-end gap-1 border-b border-border">
+      {notice && (
+        <div className="mt-3 rounded-lg border border-border bg-surface-soft px-3 py-2 text-sm text-text-secondary" role="status">
+          {notice}
+        </div>
+      )}
+
+      {showOracle && (
+        <div className="mt-4" data-testid="workspace-oracle-section">
+          <OracleIntegrationPanel
+            documentId={documentId}
+            documentFilename={filename || workbook.document_filename}
+          />
+        </div>
+      )}
+
+      <div className="mt-4 flex items-end gap-1 border-b border-border">
         {/* One row that scrolls sideways on narrow screens, never wraps. */}
         <div className="scrollbar-none -mb-px flex min-w-0 flex-1 items-end gap-1 overflow-x-auto" role="tablist" aria-label="Document views">
           {tabs.map((item) => (
@@ -381,9 +712,9 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
         )}
       </div>
 
-      <ol className="mt-8 flex flex-wrap gap-6 border-t border-border pt-4 text-xs text-text-secondary">
+      <ol className="mt-6 flex flex-wrap gap-6 border-t border-border pt-3 text-xs text-text-secondary">
         <Readiness label="Extracted" ok={outcome.record_count > 0} />
-        <Readiness label="Verified" ok={verified} />
+        <Readiness label="Staging Verified" ok={verified} />
         {!profileView && (
           <Readiness label="Canonical" ok={datasets.some((dataset) => laneOf(dataset) === "canonical")} />
         )}
@@ -690,7 +1021,7 @@ function Overview({
         </div>
         <p className="mt-2 text-sm text-text-secondary">
           {qa.needs_review === 0 ? "No validation issues detected." : `${qa.needs_review} items need review.`}
-          {verified ? " Verification is complete." : ""}
+          {verified ? " Staging verification is complete." : ""}
         </p>
       </div>
       <div>
@@ -855,7 +1186,7 @@ function DatasetWorkspace({
 function DatasetBody({
   documentId,
   dataset,
-  dense = false,
+  dense = true,
 }: {
   documentId: string;
   dataset: StagingDataset;
@@ -871,18 +1202,23 @@ function DatasetBody({
 function WorkspaceSkeleton() {
   const bar = "animate-pulse rounded bg-surface-soft";
   return (
-    <div className="w-full px-4 py-6 sm:px-6" aria-busy="true" aria-label="Opening document">
+    <div className="workspace-page w-full px-4 py-4 sm:px-6" aria-busy="true" aria-label="Opening document" data-testid="workspace-skeleton">
       <div className={`${bar} h-4 w-24`} />
-      <div className={`${bar} mt-4 h-6 w-56`} />
-      <div className={`${bar} mt-2 h-4 w-80 max-w-full`} />
-      <div className="mt-6 flex gap-4 border-b border-border pb-2">
+      <div className={`${bar} mt-3 h-7 w-72 max-w-full`} />
+      <div className={`${bar} mt-2 h-4 w-96 max-w-full`} />
+      <div className="mt-3 flex gap-4">
+        {[56, 64, 72, 80].map((width, index) => (
+          <div key={index} className={`${bar} h-3`} style={{ width }} />
+        ))}
+      </div>
+      <div className="mt-5 flex gap-4 border-b border-border pb-2">
         {[48, 56, 64, 56].map((width, index) => (
           <div key={index} className={`${bar} h-4`} style={{ width }} />
         ))}
       </div>
-      <div className="mt-6 space-y-2">
-        {Array.from({ length: 6 }, (_, index) => (
-          <div key={index} className={`${bar} h-10`} />
+      <div className="mt-4 space-y-2">
+        {Array.from({ length: 8 }, (_, index) => (
+          <div key={index} className={`${bar} h-8`} />
         ))}
       </div>
     </div>

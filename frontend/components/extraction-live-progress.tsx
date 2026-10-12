@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 
+import {
+  EXTRACTION_WORKFLOW_STEPS,
+  workflowStepFromStage,
+} from "@/lib/extraction-workflow";
 import type {
   ExtractionProgress,
   ProcessingStageEntry,
@@ -16,31 +20,25 @@ interface ExtractionLiveProgressProps {
   discoveryReused?: boolean;
 }
 
+/** Backend stage → short live label (detail drawer / status). */
 export const PIPELINE_STAGE_LABELS: Record<string, string> = {
-  uploaded: "Uploading",
-  queued: "Reading pages",
-  reading_document: "Reading pages",
-  processing_document: "Reading pages",
-  rendering_ocr: "OCR",
-  running_ocr: "OCR",
-  indexing: "Detecting structure",
-  detecting_structure: "Detecting structure",
-  discovering_fields: "Discovering fields",
-  extracting_data: "Extracting",
-  validating_results: "Validating",
-  complete: "Complete",
+  uploaded: "Upload",
+  queued: "Understand",
+  reading_document: "Understand",
+  processing_document: "Understand",
+  rendering_ocr: "Understand",
+  running_ocr: "Understand",
+  indexing: "Understand",
+  detecting_structure: "Understand",
+  discovering_fields: "Discover Schema",
+  extracting_data: "Extract",
+  validating_results: "Validate",
+  v3_classification: "Prepare Staging",
+  prepare_staging: "Prepare Staging",
+  complete: "Prepare Staging",
 };
 
-const PIPELINE_ORDER = [
-  "Uploading",
-  "Reading pages",
-  "OCR",
-  "Detecting structure",
-  "Discovering fields",
-  "Extracting",
-  "Validating",
-  "Complete",
-];
+const PIPELINE_ORDER = EXTRACTION_WORKFLOW_STEPS.map((step) => step.label);
 
 const TIMING_LABELS: Record<string, string> = {
   source_retrieval_ms: "Source retrieval",
@@ -101,9 +99,12 @@ export default function ExtractionLiveProgress({
   const [prevProgress, setPrevProgress] =
     useState<ExtractionProgress | null>(null);
 
-  const stageLabel = pipelineStage
-    ? PIPELINE_STAGE_LABELS[pipelineStage] ?? pipelineStage
-    : null;
+  const productStep = workflowStepFromStage(pipelineStage);
+  const stageLabel = productStep
+    ? EXTRACTION_WORKFLOW_STEPS.find((step) => step.id === productStep)?.label ?? null
+    : pipelineStage
+      ? PIPELINE_STAGE_LABELS[pipelineStage] ?? null
+      : null;
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -157,22 +158,28 @@ export default function ExtractionLiveProgress({
   );
 
   return (
-    <div className="mt-5 space-y-5">
+    <div
+      className="mt-5 space-y-5"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+      data-testid="extraction-live-progress"
+    >
       <div>
         <p className="text-sm font-medium text-foreground">
-          {stageLabel ?? "Extracting document"}
+          {stageLabel ?? "Processing document"}
         </p>
 
         {stageLabel && (
-          <ol className="mt-2 flex flex-wrap gap-2 text-[11px] text-text-muted">
+          <ol className="mt-2 flex flex-wrap gap-2 text-[11px] text-text-muted" aria-label="Processing steps">
             {PIPELINE_ORDER.map((label) => {
               const active = label === stageLabel;
               const done =
-                PIPELINE_ORDER.indexOf(label) <
-                PIPELINE_ORDER.indexOf(stageLabel);
+                PIPELINE_ORDER.indexOf(label) < PIPELINE_ORDER.indexOf(stageLabel);
               return (
                 <li
                   key={label}
+                  aria-current={active ? "step" : undefined}
                   className={
                     active
                       ? "font-medium text-foreground"
@@ -190,12 +197,12 @@ export default function ExtractionLiveProgress({
 
         {hasPageTotal ? (
           <p className="mt-1 text-sm text-text-secondary">
-            Processing page {progress!.page_current} of{" "}
-            {progress!.page_total}
+            Processing page {progress!.page_current} of {progress!.page_total}
           </p>
         ) : (
           <p className="mt-1 text-sm text-text-secondary">
-            Large contracts may take a minute or two.
+            Large documents may take a minute or two. Progress updates when the
+            service confirms each step.
           </p>
         )}
 

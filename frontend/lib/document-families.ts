@@ -30,3 +30,16 @@ export const DOCUMENT_FAMILY_LABELS: Record<string, string> = {
 export function documentFamilyLabel(key: string): string {
   return DOCUMENT_FAMILY_LABELS[key] ?? key;
 }
+
+/** Staging family labels — persisted resolution vocabulary, not filenames. */
+export const FAMILY_LABELS: Record<string, string> = {
+  invoice: "Invoice",
+  academic_transcript: "Academic Transcript",
+  government_contract: "Government Contract",
+  far_regulation: "FAR Regulation",
+  far_regulatory_change: "FAR Final Rule",
+  xml_data: "FAR Clause XML",
+  correspondence: "Correspondence",
+  generic_business: "Generic Document",
+  unknown: "Generic Document",
+};

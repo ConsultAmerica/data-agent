@@ -51,6 +51,12 @@ export interface OraclePayloadPreview {
   authoritative_count: number;
   skipped_count: number;
   ready_to_send: boolean;
+  actor?: {
+    actor_id?: string;
+    actor_type?: string;
+    actor_role?: string;
+    can_send?: boolean;
+  };
 }
 
 const CSV_HEADERS = [
@@ -213,5 +219,63 @@ export async function getOraclePayloadPreview(
 ): Promise<OraclePayloadPreview> {
   return apiFetch<OraclePayloadPreview>(
     `/api/documents/${documentId}/oracle-payload`,
+  );
+}
+
+export interface OracleSendResult {
+  document_id: string;
+  integration_audit_id: number;
+  status: string;
+  dry_run: boolean;
+  request_snapshot?: Record<string, unknown>;
+  response_snapshot?: {
+    status?: string;
+    code?: string;
+    message?: string;
+    accepted_fields?: number;
+  };
+  actor?: {
+    actor_id?: string;
+    actor_type?: string;
+    actor_role?: string;
+  };
+}
+
+export interface IntegrationAuditEntry {
+  id: number;
+  integration: string;
+  action: string;
+  status: string;
+  actor_id: string | null;
+  actor_type: string | null;
+  actor_role: string | null;
+  changed_by: string | null;
+  request_id: string | null;
+  request_snapshot: Record<string, unknown> | null;
+  response_snapshot: Record<string, unknown> | null;
+  created_at: string;
+  detail: string | null;
+}
+
+/** Explicit send — never call without user confirmation. */
+export async function sendOraclePayload(
+  documentId: string,
+  confirm: true,
+): Promise<OracleSendResult> {
+  return apiFetch<OracleSendResult>(
+    `/api/documents/${documentId}/oracle-send`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm }),
+    },
+  );
+}
+
+export async function listIntegrationAudit(
+  documentId: string,
+): Promise<IntegrationAuditEntry[]> {
+  return apiFetch<IntegrationAuditEntry[]>(
+    `/api/documents/${documentId}/integration-audit`,
   );
 }

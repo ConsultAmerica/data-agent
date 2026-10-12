@@ -281,7 +281,7 @@ export default function ExtractionResultsWorkspace({
           <RelationshipCard
             documentId={document.document_id}
             relationship={analysis.relationship}
-            reviewerName="Consult America"
+            reviewerName="Data Agent"
             busy={relationshipBusy}
             onConfirm={() => onRelationshipAction("confirm")}
             onReject={() => onRelationshipAction("reject")}

@@ -229,10 +229,10 @@ describe("StagingDatasetTable selection (contract CLINs)", () => {
     const dataset = { ...CLINS, records: CLINS.records.map((r, i) => ({ ...r, record_status: i === 0 ? ("Needs Review" as const) : ("Verified" as const) })) };
     renderTable(dataset);
     const row = screen.getByRole("row", { name: /0001/ });
-    expect(within(row).getByText("Needs Review")).toBeTruthy();
+    expect(within(row).getByText("Staging Needs Review")).toBeTruthy();
     fireEvent.click(screen.getByRole("checkbox", { name: "Select record 0001" }));
-    expect(within(row).getByText("Needs Review")).toBeTruthy();
-    expect(within(row).queryByText("Verified")).toBeNull();
+    expect(within(row).getByText("Staging Needs Review")).toBeTruthy();
+    expect(within(row).queryByText("Staging Verified")).toBeNull();
   });
 
   it("Export Selected posts ids only — never values — and downloads the server's file", async () => {

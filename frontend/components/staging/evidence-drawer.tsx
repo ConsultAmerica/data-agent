@@ -1,6 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
+import Link from "next/link";
 import { useEffect } from "react";
 
 import { ReviewStatusBadge, canOpenSource, formatCellValue } from "@/components/staging/review-status";
@@ -25,6 +26,11 @@ interface EvidenceDrawerProps {
   target: EvidenceTarget;
   onClose: () => void;
   onViewInDocument?: (target: EvidenceTarget) => void;
+  /**
+   * Entry point to metadata Accept/Edit/Reject. Do not invent field-level
+   * linkage — use the review page, optionally with a confirmed field_key.
+   */
+  metadataReviewHref?: string | null;
 }
 
 function Highlighted({ evidence, value }: { evidence: string; value: string }) {
@@ -43,7 +49,12 @@ function Highlighted({ evidence, value }: { evidence: string; value: string }) {
 /** One value's evidence: the source text it was read from, where it sits,
  * and a way to see it on the original. Extraction internals are kept in a
  * collapsed Technical Details section. */
-export default function EvidenceDrawer({ target, onClose, onViewInDocument }: EvidenceDrawerProps) {
+export default function EvidenceDrawer({
+  target,
+  onClose,
+  onViewInDocument,
+  metadataReviewHref = null,
+}: EvidenceDrawerProps) {
   const { cell } = target;
   const provenance = cell.provenance;
   const value = formatCellValue(cell);
@@ -53,11 +64,15 @@ export default function EvidenceDrawer({ target, onClose, onViewInDocument }: Ev
   const locator = provenance?.source_locator;
 
   useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") onClose();
     }
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      previous?.focus?.();
+    };
   }, [onClose]);
 
   const technical: [string, string][] = [
@@ -89,7 +104,10 @@ export default function EvidenceDrawer({ target, onClose, onViewInDocument }: Ev
             <p className="mt-1 whitespace-pre-wrap break-words text-base text-foreground">{value || "—"}</p>
           </div>
           <div className="flex items-center gap-2">
-            <ReviewStatusBadge status={cell.review_status} />
+            <div className="text-right">
+              <ReviewStatusBadge status={cell.review_status} />
+              <p className="mt-0.5 text-[10px] text-text-muted">Staging QA</p>
+            </div>
             <button
               type="button"
               onClick={onClose}
@@ -121,14 +139,26 @@ export default function EvidenceDrawer({ target, onClose, onViewInDocument }: Ev
             ) : (
               <p className="text-text-muted">No source evidence was recorded for this value.</p>
             )}
-            {onViewInDocument && canOpenSource(cell) && (
-              <button
-                type="button"
-                onClick={() => onViewInDocument(target)}
-                className="btn-secondary text-xs"
-              >
-                View in Document
-              </button>
+            <div className="flex flex-wrap gap-2">
+              {onViewInDocument && canOpenSource(cell) && (
+                <button
+                  type="button"
+                  onClick={() => onViewInDocument(target)}
+                  className="btn-secondary text-xs"
+                >
+                  View in Document
+                </button>
+              )}
+              {metadataReviewHref && (
+                <Link href={metadataReviewHref} className="btn-secondary text-xs" data-testid="open-metadata-review">
+                  Open metadata review
+                </Link>
+              )}
+            </div>
+            {metadataReviewHref && (
+              <p className="text-[11px] text-text-muted">
+                Staging Verified is not Metadata Accepted. Accept / Edit / Reject live in metadata review.
+              </p>
             )}
           </section>
 

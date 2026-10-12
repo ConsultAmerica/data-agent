@@ -65,35 +65,39 @@ const CAPABILITIES = [
 export default function CapabilitySection() {
   return (
     <section className="capability-section">
-      <div className="mb-6 max-w-2xl">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-text-teal">
-          Platform
-        </p>
-        <h2 className="mt-2 text-2xl font-medium tracking-tight text-foreground sm:text-3xl">
-          What Data Agent can do
+      <div className="mb-8 max-w-2xl">
+        <p className="section-eyebrow">One platform across the workflow</p>
+        <h2 className="section-title">
+          From the first upload to systems your teams trust every day.
         </h2>
-        <p className="mt-2 text-sm leading-6 text-text-secondary">
+        <p className="section-lede">
           Document intelligence across extraction, discovery, verification, and
           review — with Contract Intelligence as a deep specialization.
         </p>
       </div>
 
       <div className="capability-grid">
-        {CAPABILITIES.map((item) => (
+        {CAPABILITIES.map((item, index) => (
           <Link
             key={item.title}
             href={item.href}
             className="capability-tile group"
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-              <item.icon className="h-5 w-5" strokeWidth={1.75} />
+            <div className="capability-tile-top">
+              <span className="capability-index">
+                {String(index + 1).padStart(2, "0")}
+              </span>
+              <item.icon
+                className="h-5 w-5 text-primary opacity-80"
+                strokeWidth={1.75}
+              />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+              <p className="flex items-center gap-1.5 text-base font-semibold tracking-tight text-foreground">
                 {item.title}
                 <ArrowRight className="h-3.5 w-3.5 opacity-0 transition group-hover:translate-x-0.5 group-hover:opacity-100" />
               </p>
-              <p className="mt-1 text-sm leading-5 text-text-secondary">
+              <p className="mt-2 text-sm leading-6 text-text-secondary">
                 {item.description}
               </p>
             </div>

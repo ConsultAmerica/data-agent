@@ -75,6 +75,59 @@ const CUSTOM_QUICK_PICKS: CustomQuickPick[] = [
   },
 ];
 
+function schemaPanelHeading(
+  family: string | null | undefined,
+  familyLabel: string | null | undefined,
+): { title: string; subtitle: string; description: string } {
+  const key = family ?? "";
+  if (key === "xml_data" || /xml|clause xml/i.test(familyLabel ?? "")) {
+    return {
+      title: "Schema & Extraction",
+      subtitle: "Clause and provision fields",
+      description:
+        "Fields come from this XML document’s schema. Unrelated invoice or contract presets are not shown.",
+    };
+  }
+  if (key === "far_regulation" || key === "far_regulatory_change") {
+    return {
+      title: "Schema & Extraction",
+      subtitle: "Regulatory structure",
+      description:
+        "Suggestions follow the FAR document’s detected sections and fields — not generic business templates.",
+    };
+  }
+  if (key === "invoice") {
+    return {
+      title: "Schema & Extraction",
+      subtitle: "Invoice fields and line items",
+      description:
+        "Pick supplier, amounts, and line items discovered in this invoice.",
+    };
+  }
+  if (key === "academic_transcript") {
+    return {
+      title: "Schema & Extraction",
+      subtitle: "Student and course fields",
+      description:
+        "Suggestions follow this transcript’s detected schema.",
+    };
+  }
+  if (key === "government_contract") {
+    return {
+      title: "Schema & Extraction",
+      subtitle: "Contract fields and tables",
+      description:
+        "Suggestions follow this contract’s detected schema — not static presets.",
+    };
+  }
+  return {
+    title: "Schema & Extraction",
+    subtitle: "What do you want to extract?",
+    description:
+      "Suggestions follow this document’s detected schema — not static presets or unrelated saved models.",
+  };
+}
+
 export default function AnalysisRequest({
   disabled = false,
   waking = false,
@@ -348,54 +401,74 @@ export default function AnalysisRequest({
     tableTargets.length > 0 &&
     tableTargets.every((t) => selectedIds.has(t.id));
 
+  const schemaHeading = schemaPanelHeading(documentFamily, documentFamilyLabel);
+  const classificationUnresolved =
+    !documentFamilyLabel ||
+    documentFamily === "unknown" ||
+    documentFamily === null;
+
   return (
-    <div className="editorial-card p-6 sm:p-8">
+    <div className="editorial-card p-6 sm:p-8" data-testid="schema-extraction-panel">
       <div className="flex items-start gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10" aria-hidden="true">
           <Search className="h-5 w-5 text-primary" strokeWidth={1.75} />
         </div>
 
         <div className="min-w-0">
-          <h2 className="text-lg font-medium text-foreground">
-            Universal Extraction
-          </h2>
+          <h2 className="text-lg font-medium text-foreground">{schemaHeading.title}</h2>
           <p className="mt-0.5 text-base font-medium text-foreground">
-            What do you want to extract?
+            {schemaHeading.subtitle}
           </p>
           <p className="mt-1 text-sm leading-6 text-text-secondary">
-            Suggestions follow this document&apos;s detected schema — not
-            static presets or unrelated saved models.
+            {schemaHeading.description}
           </p>
         </div>
       </div>
 
-      {documentFamilyLabel && (
-        <div className="mt-4 rounded-xl border border-border bg-surface-soft/60 px-4 py-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-            Detected document
+      <div className="mt-4 rounded-xl border border-border bg-surface-soft/60 px-4 py-3" data-testid="detected-document">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+          Detected document
+        </p>
+        <div className="mt-1 flex flex-wrap items-baseline justify-between gap-2">
+          <p
+            className={
+              classificationUnresolved
+                ? "text-sm font-semibold text-warning"
+                : "text-sm font-semibold text-foreground"
+            }
+          >
+            {classificationUnresolved
+              ? "Classification unresolved"
+              : documentFamilyLabel}
           </p>
-          <div className="mt-1 flex flex-wrap items-baseline justify-between gap-2">
-            <p className="text-sm font-semibold text-foreground">
-              {documentFamilyLabel}
+          {typeof documentFamilyConfidence === "number" && !classificationUnresolved && (
+            <p className="text-xs font-medium text-text-secondary">
+              {Math.round(documentFamilyConfidence * 100)}% confidence
             </p>
-            {typeof documentFamilyConfidence === "number" && (
-              <p className="text-xs font-medium text-text-secondary">
-                {Math.round(documentFamilyConfidence * 100)}% confidence
-              </p>
-            )}
-          </div>
+          )}
         </div>
-      )}
+        {classificationUnresolved && (
+          <p className="mt-1 text-xs text-text-secondary">
+            Schema suggestions stay limited until the document type is resolved.
+            Classification is never taken from the filename alone.
+          </p>
+        )}
+      </div>
 
       <div className="mt-5 space-y-4">
         {schemaDiscovering || documentProcessing ? (
-          <div className="space-y-3 rounded-xl border border-border bg-surface-soft px-4 py-5">
+          <div
+            className="space-y-3 rounded-xl border border-border bg-surface-soft px-4 py-5"
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+          >
             <div className="flex items-center gap-2 text-sm text-text-secondary">
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
               {waking
                 ? "Connecting to processing service…"
                 : schemaDiscovering
-                  ? "Discovering fields…"
+                  ? "Discovering schema…"
                   : pipelineStage && PIPELINE_STAGE_LABELS[pipelineStage]
                     ? `${PIPELINE_STAGE_LABELS[pipelineStage]}…`
                     : "Processing document pages…"}
@@ -589,7 +662,7 @@ export default function AnalysisRequest({
       )}
 
       <div className="mt-5 flex flex-wrap items-center gap-3">
-        <p className="text-sm text-text-secondary">
+        <p className="text-sm text-text-secondary" aria-live="polite">
           {selectedIds.size} selected
         </p>
         <button
@@ -597,26 +670,40 @@ export default function AnalysisRequest({
           disabled={busy || selectedIds.size === 0}
           onClick={() => void runExtraction(Array.from(selectedIds))}
           className="btn-primary inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-40"
+          aria-busy={extracting}
+          data-testid="extract-selected"
         >
           {extracting ? (
             <>
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
               {extractionStageLabel(extractionJob)}
             </>
           ) : (
             <>
               Extract {selectedIds.size} selected
-              <ArrowRight className="h-4 w-4" />
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </>
           )}
         </button>
+        {selectedIds.size > 0 && !extracting && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={clearSelection}
+            className="btn-secondary text-sm"
+          >
+            Clear selection
+          </button>
+        )}
       </div>
 
       {extractError && (
-        <p className="mt-3 text-sm text-danger">{extractError}</p>
+        <p className="mt-3 text-sm text-danger" role="alert">
+          {extractError}
+        </p>
       )}
       {noMatch && (
-        <p className="mt-3 text-sm text-text-secondary">
+        <p className="mt-3 text-sm text-text-secondary" role="status">
           No values were resolved for the selected targets in this document.
         </p>
       )}

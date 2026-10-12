@@ -94,6 +94,9 @@ class ClassificationHistoryEntry(BaseModel):
 
 
 class MetadataFieldResult(BaseModel):
+    # Immutable primary key — preferred address for Accept/Edit/Reject.
+    id: int | None = None
+
     field_group: str
     field_key: str
     label: str
@@ -107,6 +110,8 @@ class MetadataFieldResult(BaseModel):
     # own method vocabulary, so this mirrors the free-form DB column.
     extraction_method: str = Field(min_length=1, max_length=40)
 
+    extraction_source: str = "contract"
+
     evidence: SourceEvidence
 
     verified: bool = False
@@ -114,6 +119,10 @@ class MetadataFieldResult(BaseModel):
     review_status: ReviewStatusLiteral = "pending"
 
     original_value: str = ""
+
+    # Machine extraction (evidence.machine_value → original_value → value).
+    # Distinct from `value`, which is the authoritative effective value.
+    extracted_value: str = ""
 
 
 class FieldReviewRequest(BaseModel):
@@ -130,6 +139,8 @@ class AcceptAllRequest(BaseModel):
 
 class FieldAuditEntry(BaseModel):
     action: ReviewActionLiteral
+
+    metadata_field_id: int | None = None
 
     previous_value: str | None = None
     new_value: str | None = None

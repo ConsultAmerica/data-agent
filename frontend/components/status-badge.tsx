@@ -1,5 +1,3 @@
-import { CheckCheck } from "lucide-react";
-
 import { STATUS_LABELS, STATUS_STYLES } from "@/lib/document-status";
 import type {
   DocumentStatus,
@@ -15,12 +13,13 @@ const FIELD_STATUS_STYLES: Record<ReviewStatus, string> = {
   unknown: "bg-warning/10 text-warning",
 };
 
+/** Metadata governance labels — never "Verified" (that is Staging QA). */
 const FIELD_STATUS_LABELS: Record<ReviewStatus, string> = {
-  pending: "Pending",
-  accepted: "Accepted",
-  edited: "Edited",
-  rejected: "Rejected",
-  unknown: "Unknown",
+  pending: "Metadata Pending",
+  accepted: "Metadata Accepted",
+  edited: "Metadata Edited",
+  rejected: "Metadata Rejected",
+  unknown: "Metadata Unknown",
 };
 
 const REPOSITORY_STATUS_STYLES: Record<RepositoryStatus, string> = {
@@ -58,20 +57,8 @@ export default function StatusBadge(props: StatusBadgeProps) {
   const sizeClass =
     size === "sm" ? "px-2 py-0.5 text-[10px]" : "px-2.5 py-0.5 text-xs";
 
-  if (props.kind === "field" && props.verified) {
-    return (
-      <span
-        className={[
-          "inline-flex items-center gap-1 rounded-full font-medium",
-          sizeClass,
-          "bg-success/10 text-success",
-        ].join(" ")}
-      >
-        <CheckCheck className="h-3 w-3" />
-        Verified
-      </span>
-    );
-  }
+  // Do not map metadata `verified` to "Verified" — that word is reserved for
+  // Staging QA (Staging Verified). Always render the review_status label.
 
   if (props.kind === "document") {
     return (

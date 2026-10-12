@@ -580,6 +580,9 @@ async def readiness_check(response: Response) -> dict[str, object]:
         "git_sha": resolve_git_sha(),
         "oracle_dry_run": settings.oracle_dry_run,
         "rbac_enforced": settings.effective_rbac_enforced,
+        "metadata_review_mutations_enabled": (
+            settings.effective_metadata_review_mutations_enabled
+        ),
         "entra_configured": settings.entra_configured,
         "legacy_office_conversion": {
             "available": lo_ok,

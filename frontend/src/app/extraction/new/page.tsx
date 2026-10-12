@@ -44,6 +44,11 @@ import {
   renameCustomTarget,
   universalExtract,
 } from "@/lib/documents";
+import {
+  actionableWorkflowError,
+  resolveClassificationDisplay,
+  resolveWorkflowStep,
+} from "@/lib/extraction-workflow";
 import { listExtractionModels } from "@/lib/extraction-models";
 import { getStagingProfile, type ProfileDescriptor } from "@/lib/staging-workbook";
 import type {
@@ -120,6 +125,9 @@ function NewExtractionPageContent() {
   const resultsWorkspaceRef = useRef<HTMLDivElement | null>(null);
   const universalResultRef = useRef<HTMLDivElement | null>(null);
   const targetResultRef = useRef<HTMLDivElement | null>(null);
+  /** Prevents overlapping process / extract submissions. */
+  const processInFlightRef = useRef(false);
+  const extractInFlightRef = useRef(false);
 
   // Overlap Render cold-start with browsing/file pick — upload auto-starts when healthy.
   useEffect(() => {
@@ -460,6 +468,8 @@ function NewExtractionPageContent() {
   async function handleUploadComplete(
     uploadedDocument: UploadedDocument,
   ) {
+    if (processInFlightRef.current) return;
+    processInFlightRef.current = true;
     setDocument(uploadedDocument);
     setExtraction(null);
     setPages([]);
@@ -504,6 +514,7 @@ function NewExtractionPageContent() {
               "This document has no stored pages, and the original file is " +
                 "no longer available on the server. Please re-upload the document.",
             );
+            processInFlightRef.current = false;
             return;
           }
           // File still available — continue into normal extraction below.
@@ -559,6 +570,7 @@ function NewExtractionPageContent() {
           } catch {
             // Non-fatal — we already have the upload payload.
           }
+          processInFlightRef.current = false;
           return;
         }
       } catch (error) {
@@ -567,6 +579,7 @@ function NewExtractionPageContent() {
             ? error.message
             : "Unable to open the existing document.",
         );
+        processInFlightRef.current = false;
         return;
       } finally {
         if (!fallThroughToExtract) {
@@ -575,6 +588,7 @@ function NewExtractionPageContent() {
         }
       }
       if (!fallThroughToExtract) {
+        processInFlightRef.current = false;
         return;
       }
     }
@@ -750,6 +764,7 @@ function NewExtractionPageContent() {
     } finally {
       setExtracting(false);
       setWaking(false);
+      processInFlightRef.current = false;
     }
   }
 
@@ -787,6 +802,10 @@ function NewExtractionPageContent() {
     if (!document) {
       throw new Error("Upload a document first.");
     }
+    if (extractInFlightRef.current) {
+      throw new Error("Extraction is already running.");
+    }
+    extractInFlightRef.current = true;
 
     const startedAt = Date.now();
 
@@ -863,6 +882,7 @@ function NewExtractionPageContent() {
     } finally {
       setWaking(false);
       setTargetExtractionJob(null);
+      extractInFlightRef.current = false;
     }
   }
 
@@ -922,7 +942,7 @@ function NewExtractionPageContent() {
       const result = await confirmRelationship(
         document.document_id,
         action,
-        "Consult America",
+        "Data Agent",
       );
 
       setContractAnalysis({
@@ -940,33 +960,74 @@ function NewExtractionPageContent() {
     }
   }
 
+  const classificationBase = resolveClassificationDisplay({
+    persistedFamilyKey: stagingProfile?.document_families?.[0] ?? null,
+    persistedFamilyLabel: null,
+    persistedProfileLabel: stagingProfile?.display_name ?? null,
+    discoveryFamilyKey:
+      schemaDiscovery?.document_family ?? structureDetection?.document_family ?? null,
+    discoveryFamilyLabel:
+      schemaDiscovery?.document_family_label ??
+      structureDetection?.document_family_label ??
+      null,
+    discoveryConfidence: schemaDiscovery?.document_family_confidence ?? null,
+  });
+  const classification =
+    resolvedProfile && !classificationBase.unresolved
+      ? { ...classificationBase, profileLabel: resolvedProfile.display_name }
+      : classificationBase;
+
+  const workflowStep = resolveWorkflowStep({
+    hasDocument: Boolean(document),
+    extracting,
+    pipelineStage,
+    schemaReady: Boolean(schemaDiscovery),
+    schemaDiscovering,
+    hasExtractResults: Boolean(targetResult || universalResult || contractAnalysis),
+    hasPresentedProfile: Boolean(presentedProfile),
+    stagingReady: Boolean(stagingProfile && extraction && !extracting),
+  });
+
+  const sourcePreview =
+    pages.find((page) => page.final_text?.trim())?.final_text?.trim().slice(0, 420) ?? null;
+
+  const workflowErrorInfo = workflowError ? actionableWorkflowError(workflowError) : null;
+
   return (
     <>
-      <PageHero
-        compact
-        eyebrow="Store / Extraction"
-        title={
-          <>
-            Turn documents into verified structured data
-          </>
-        }
-        description="Contracts, invoices, regulatory documents, spreadsheets, scans, images, and business records. Data Agent detects the type and staging profile."
-      />
+      {!document ? (
+        <PageHero
+          compact
+          eyebrow="Store / Extraction"
+          title={<>Turn documents into verified structured data</>}
+          description="Contracts, invoices, regulatory documents, spreadsheets, scans, images, and business records. Data Agent detects the type and staging profile."
+        />
+      ) : (
+        <div className="extraction-bar-inner border-b border-border bg-surface py-3" data-testid="extraction-page-header">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                Extraction workspace
+              </p>
+              <h1 className="truncate text-base font-semibold text-foreground sm:text-lg">
+                {document.original_filename}
+              </h1>
+            </div>
+            <Link
+              href={document ? `/documents/${document.document_id}` : "/documents"}
+              className="btn-secondary shrink-0 text-sm"
+            >
+              Open workspace
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </Link>
+          </div>
+        </div>
+      )}
 
       <ContentSection wide>
         <BackendStatusBanner />
-        <div className="mb-8">
-          <WorkflowBreadcrumb
-            activeStep={
-              contractAnalysis
-                ? "review"
-                : extraction
-                  ? "extract"
-                  : document
-                    ? "upload"
-                    : "upload"
-            }
-          />
+        <div className="mb-6">
+          <WorkflowBreadcrumb activeStep={workflowStep} />
         </div>
 
         <div className="extraction-workspace">
@@ -982,14 +1043,16 @@ function NewExtractionPageContent() {
                     Workflow
                   </p>
                   <h2 className="mt-2 text-lg font-medium text-foreground">
-                    Upload → Understand → Extract → Verify
+                    Upload → Understand → Discover Schema → Extract → Validate → Prepare Staging
                   </h2>
                   <ol className="mt-6 space-y-5">
                     {[
-                      ["Upload", "Extract pages and detect the document's structure."],
-                      ["Understand", "Discover the document's actual schema — not static presets."],
-                      ["Extract", "Choose detected fields, tables, clauses, or contacts."],
-                      ["Verify", "Check results against source evidence, then review."],
+                      ["Upload", "Add a supported document. Processing starts when the file is ready."],
+                      ["Understand", "Read pages and detect structure from the source — not the filename."],
+                      ["Discover Schema", "Inspect fields and tables found in this document."],
+                      ["Extract", "Choose relevant fields and run extraction."],
+                      ["Validate", "Confirm results against source evidence."],
+                      ["Prepare Staging", "Open the document workspace for review and export."],
                     ].map(([title, body], i) => (
                       <li key={title} className="flex gap-4">
                         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-soft text-sm font-semibold text-primary tabular-nums">
@@ -1007,12 +1070,15 @@ function NewExtractionPageContent() {
                 </section>
               </div>
             ) : (
-              <div className="grid gap-5 lg:grid-cols-[minmax(300px,30fr)_minmax(0,70fr)]">
-                <section className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+              <div
+                className="extraction-split grid gap-5 lg:grid-cols-[minmax(260px,30fr)_minmax(0,70fr)]"
+                data-testid="extraction-split"
+              >
+                <section className="extraction-overview-panel space-y-4 lg:sticky lg:top-4 lg:self-start" data-testid="document-overview-panel">
                   <DocumentOverview
                     document={document}
                     structureDetection={structureDetection}
-                    contractAnalysis={contractAnalysis}
+                    classification={classification}
                     extraction={extraction}
                     extracting={extracting}
                     progress={progress}
@@ -1023,8 +1089,13 @@ function NewExtractionPageContent() {
                     stageTimingsMs={stageTimingsMs}
                     pagesReused={pagesReused}
                     discoveryReused={discoveryReused}
+                    sourcePreview={sourcePreview}
+                    workflowFailed={Boolean(workflowError)}
+                    documentHref={`/documents/${document.document_id}`}
                     onOpenProcessingDetails={() => setProcessingDrawerOpen(true)}
                     onReplaceDocument={() => {
+                      processInFlightRef.current = false;
+                      extractInFlightRef.current = false;
                       setDocument(null);
                       setExtraction(null);
                       setPages([]);
@@ -1038,6 +1109,7 @@ function NewExtractionPageContent() {
                       setSchemaDiscoveryError("");
                       setWorkflowError("");
                       setContractAnalysisError("");
+                      setStagingProfile(null);
                     }}
                     onViewResults={
                       contractAnalysis || universalResult || targetResult
@@ -1053,7 +1125,7 @@ function NewExtractionPageContent() {
                   />
                 </section>
 
-                <section className="min-w-0 space-y-5">
+                <section className="extraction-schema-panel min-w-0 space-y-5" data-testid="schema-panel">
                   {!presentedProfile && (
                     <AnalysisRequest
                       documentHref={document ? `/documents/${document.document_id}?view=data` : undefined}
@@ -1074,19 +1146,14 @@ function NewExtractionPageContent() {
                           target.target_type !== "obligation" &&
                           !target.key.startsWith("table_p"),
                       )}
-                      documentFamily={
-                        resolvedProfile
-                          ? (resolvedProfile.document_families[0] ?? null)
-                          : schemaDiscovery?.document_family
-                      }
+                      documentFamily={classification.familyKey}
                       documentFamilyLabel={
-                        resolvedProfile?.display_name ??
-                        schemaDiscovery?.document_family_label
+                        classification.unresolved ? null : classification.familyLabel
                       }
                       documentFamilyConfidence={
-                        resolvedProfile
-                          ? undefined
-                          : schemaDiscovery?.document_family_confidence
+                        classification.source === "schema_discovery"
+                          ? classification.confidence
+                          : undefined
                       }
                       schemaDiscovering={schemaDiscovering}
                       documentProcessing={extracting && !schemaDiscovering}
@@ -1239,33 +1306,36 @@ function NewExtractionPageContent() {
                     </div>
                   )}
 
-                  {workflowError && (
-                    <div className="rounded-xl border border-danger/20 bg-danger/5 p-4">
-                      <p className="text-sm font-medium text-danger">
-                        Extraction could not be completed
-                      </p>
-                      <p className="mt-1 text-sm leading-6 text-danger/80">
-                        {workflowError.includes("no longer available") ||
-                        workflowError.includes("re-upload")
-                          ? workflowError
-                          : "The document was uploaded successfully, but page extraction failed."}
-                      </p>
+                  {workflowErrorInfo && (
+                    <div
+                      className="rounded-xl border border-danger/20 bg-danger/5 p-4"
+                      role="alert"
+                      data-testid="workflow-error"
+                    >
+                      <p className="text-sm font-medium text-danger">{workflowErrorInfo.title}</p>
+                      <p className="mt-1 text-sm leading-6 text-danger/80">{workflowErrorInfo.body}</p>
                       <div className="mt-3 flex flex-wrap items-center gap-3">
-                        {!workflowError.includes("re-upload") && (
+                        {workflowErrorInfo.canRetry && (
                           <button
                             type="button"
                             onClick={() => handleUploadComplete(document)}
                             className="btn-secondary text-sm"
+                            disabled={extracting}
                           >
-                            Retry Extraction
+                            Retry
                           </button>
                         )}
-                        <details className="text-xs text-danger/80">
-                          <summary className="cursor-pointer select-none">
-                            View Details
-                          </summary>
-                          <p className="mt-1">{workflowError}</p>
-                        </details>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            processInFlightRef.current = false;
+                            setDocument(null);
+                            setWorkflowError("");
+                          }}
+                          className="text-sm font-medium text-danger/80 underline decoration-dotted underline-offset-4"
+                        >
+                          Replace document
+                        </button>
                       </div>
                     </div>
                   )}

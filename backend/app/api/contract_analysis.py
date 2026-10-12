@@ -56,9 +56,12 @@ from app.services.contract_clause_extractor import (
     get_document_clauses,
 )
 from app.services.contract_metadata_extractor import (
+    AmbiguousMetadataFieldError,
     extract_contract_metadata,
     field_to_result,
     get_metadata_field,
+    get_metadata_field_by_id,
+    require_unique_metadata_field,
 )
 from app.services.contract_signature_extractor import (
     extract_contract_signatures,
@@ -940,42 +943,35 @@ _ACTION_TO_STATUS: dict[str, str] = {
     "mark_unknown": "unknown",
 }
 
+_REVIEW_PERMISSION_BY_ACTION = {
+    "accept": "review.accept",
+    "edit": "review.edit",
+    "reject": "review.reject",
+    "mark_unknown": "review.edit",
+}
 
-@router.post(
-    "/{document_id}/metadata-fields/{field_key}/review",
-    response_model=MetadataFieldResult,
-)
-async def review_metadata_field(
-    document_id: str,
-    field_key: str,
-    payload: FieldReviewRequest,
-    database: Session = Depends(get_database),
-    actor: ActorContext = Depends(get_current_actor),
-) -> MetadataFieldResult:
-    permission_by_action = {
-        "accept": "review.accept",
-        "edit": "review.edit",
-        "reject": "review.reject",
-        "mark_unknown": "review.edit",
-    }
-    needed = permission_by_action.get(payload.action, "review.edit")
+
+def _require_review_permission(actor: ActorContext, action: str) -> None:
+    from app.core.feature_gates import require_metadata_review_mutations_enabled
+
+    require_metadata_review_mutations_enabled()
+    needed = _REVIEW_PERMISSION_BY_ACTION.get(action, "review.edit")
     if not actor.has(needed):  # type: ignore[arg-type]
         raise HTTPException(
             status_code=403,
             detail=f"Permission denied: {needed}",
         )
 
-    field = get_metadata_field(
-        database,
-        document_id=document_id,
-        field_key=field_key,
-    )
 
-    if field is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Metadata field not found.",
-        )
+def _apply_metadata_field_review(
+    *,
+    database: Session,
+    document_id: str,
+    field: DocumentMetadataField,
+    payload: FieldReviewRequest,
+    actor: ActorContext,
+) -> MetadataFieldResult:
+    """Shared Accept/Edit/Reject mutation — one state machine for key and id paths."""
 
     if payload.action == "edit" and not payload.value:
         raise HTTPException(
@@ -985,20 +981,28 @@ async def review_metadata_field(
 
     previous_value = field.value
     previous_status = field.review_status
-    new_value = (
-        payload.value if payload.action == "edit" else field.value
-    )
+    new_value = payload.value if payload.action == "edit" else field.value
+
+    evidence = dict(field.evidence_json) if isinstance(field.evidence_json, dict) else {}
+    if "machine_value" not in evidence or evidence.get("machine_value") in (None, ""):
+        evidence["machine_value"] = field.original_value or previous_value
+    if not field.original_value:
+        field.original_value = str(evidence.get("machine_value") or previous_value or "")
 
     if payload.action == "edit":
         field.value = payload.value or ""
+        evidence["reviewed_value"] = field.value
 
     field.review_status = _ACTION_TO_STATUS[payload.action]
+    field.human_approved = payload.action in {"accept", "edit"}
+    field.evidence_json = evidence
     display_name = payload.changed_by or actor.display_name
 
     database.add(
         MetadataFieldAuditLog(
             document_id=document_id,
-            field_key=field_key,
+            field_key=field.field_key,
+            metadata_field_id=field.id,
             action=payload.action,
             previous_value=previous_value,
             new_value=new_value,
@@ -1019,8 +1023,151 @@ async def review_metadata_field(
     )
 
     database.commit()
-
     return field_to_result(field)
+
+
+def _audit_entry(entry: MetadataFieldAuditLog) -> FieldAuditEntry:
+    return FieldAuditEntry(
+        action=entry.action,
+        metadata_field_id=entry.metadata_field_id,
+        previous_value=entry.previous_value,
+        new_value=entry.new_value,
+        previous_status=entry.previous_status,
+        new_status=entry.new_status,
+        reason=entry.reason,
+        request_id=entry.request_id,
+        actor_id=entry.actor_id,
+        actor_type=entry.actor_type,
+        actor_role=entry.actor_role,
+        changed_by=entry.changed_by,
+        changed_at=entry.changed_at,
+    )
+
+
+@router.post(
+    "/{document_id}/metadata-fields/by-id/{metadata_field_id}/review",
+    response_model=MetadataFieldResult,
+)
+async def review_metadata_field_by_id(
+    document_id: str,
+    metadata_field_id: int,
+    payload: FieldReviewRequest,
+    database: Session = Depends(get_database),
+    actor: ActorContext = Depends(get_current_actor),
+) -> MetadataFieldResult:
+    """Accept/Edit/Reject against an exact DocumentMetadataField.id."""
+
+    _require_review_permission(actor, payload.action)
+
+    field = get_metadata_field_by_id(
+        database,
+        document_id=document_id,
+        metadata_field_id=metadata_field_id,
+    )
+    if field is None:
+        # Same wording for missing id and cross-document id — no leakage.
+        raise HTTPException(
+            status_code=404,
+            detail="Metadata field not found.",
+        )
+
+    return _apply_metadata_field_review(
+        database=database,
+        document_id=document_id,
+        field=field,
+        payload=payload,
+        actor=actor,
+    )
+
+
+@router.get(
+    "/{document_id}/metadata-fields/by-id/{metadata_field_id}/audit-log",
+    response_model=list[FieldAuditEntry],
+)
+async def get_field_audit_log_by_id(
+    document_id: str,
+    metadata_field_id: int,
+    database: Session = Depends(get_database),
+) -> list[FieldAuditEntry]:
+    field = get_metadata_field_by_id(
+        database,
+        document_id=document_id,
+        metadata_field_id=metadata_field_id,
+    )
+    if field is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Metadata field not found.",
+        )
+
+    entries = list(
+        database.scalars(
+            select(MetadataFieldAuditLog)
+            .where(
+                MetadataFieldAuditLog.document_id == document_id,
+                MetadataFieldAuditLog.metadata_field_id == metadata_field_id,
+            )
+            .order_by(MetadataFieldAuditLog.changed_at.desc())
+        )
+    )
+    return [_audit_entry(entry) for entry in entries]
+
+
+@router.post(
+    "/{document_id}/metadata-fields/{field_key}/review",
+    response_model=MetadataFieldResult,
+)
+async def review_metadata_field(
+    document_id: str,
+    field_key: str,
+    payload: FieldReviewRequest,
+    database: Session = Depends(get_database),
+    actor: ActorContext = Depends(get_current_actor),
+) -> MetadataFieldResult:
+    _require_review_permission(actor, payload.action)
+
+    try:
+        field = require_unique_metadata_field(
+            database,
+            document_id=document_id,
+            field_key=field_key,
+        )
+    except AmbiguousMetadataFieldError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "Multiple metadata rows share this field_key. "
+                    "Use POST .../metadata-fields/by-id/{id}/review "
+                    "with the exact metadata field id."
+                ),
+                "document_id": document_id,
+                "field_key": field_key,
+                "candidates": [
+                    {
+                        "id": row.id,
+                        "extraction_source": row.extraction_source,
+                        "review_status": row.review_status,
+                        "value": row.value,
+                    }
+                    for row in exc.rows
+                ],
+            },
+        ) from exc
+
+    if field is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Metadata field not found.",
+        )
+
+    return _apply_metadata_field_review(
+        database=database,
+        document_id=document_id,
+        field=field,
+        payload=payload,
+        actor=actor,
+    )
 
 
 @router.post(
@@ -1033,6 +1180,9 @@ async def accept_all_metadata_fields(
     database: Session = Depends(get_database),
     actor: ActorContext = Depends(get_current_actor),
 ) -> list[MetadataFieldResult]:
+    from app.core.feature_gates import require_metadata_review_mutations_enabled
+
+    require_metadata_review_mutations_enabled()
     if not actor.has("review.accept"):
         raise HTTPException(
             status_code=403,
@@ -1061,11 +1211,13 @@ async def accept_all_metadata_fields(
 
         previous_status = field.review_status
         field.review_status = "accepted"
+        field.human_approved = True
 
         database.add(
             MetadataFieldAuditLog(
                 document_id=document_id,
                 field_key=field.field_key,
+                metadata_field_id=field.id,
                 action="accept",
                 previous_value=field.value,
                 new_value=field.value,
@@ -1105,23 +1257,7 @@ async def get_field_audit_log(
         )
     )
 
-    return [
-        FieldAuditEntry(
-            action=entry.action,
-            previous_value=entry.previous_value,
-            new_value=entry.new_value,
-            previous_status=entry.previous_status,
-            new_status=entry.new_status,
-            reason=entry.reason,
-            request_id=entry.request_id,
-            actor_id=entry.actor_id,
-            actor_type=entry.actor_type,
-            actor_role=entry.actor_role,
-            changed_by=entry.changed_by,
-            changed_at=entry.changed_at,
-        )
-        for entry in entries
-    ]
+    return [_audit_entry(entry) for entry in entries]
 
 
 @router.post(

@@ -15,7 +15,7 @@ import {
 import ConfidenceBadge from "@/components/confidence-badge";
 import ClickableFieldValue from "@/components/clickable-field-value";
 import StatusBadge from "@/components/status-badge";
-import { getFieldAuditLog } from "@/lib/documents";
+import { getFieldAuditLog, getFieldAuditLogById } from "@/lib/documents";
 import type {
   FieldAuditEntry,
   MetadataField,
@@ -25,16 +25,31 @@ import type {
 interface ReviewFieldListProps {
   documentId: string;
   fields: MetadataField[];
-  activeFieldKey: string | null;
+  activeFieldId: number | null;
   onSelectField: (field: MetadataField) => void;
   onReviewField: (
-    fieldKey: string,
+    field: MetadataField,
     action: ReviewAction,
     value?: string,
   ) => Promise<void> | void;
   onAcceptAll: () => void;
-  reviewingKey: string | null;
+  reviewingFieldId: number | null;
   acceptingAll: boolean;
+}
+
+function fieldRowKey(field: MetadataField, index: number): string {
+  if (field.id != null) return `meta-${field.id}`;
+  return `${field.field_key}-${index}`;
+}
+
+function sourceLabel(source: string | undefined): string | null {
+  if (!source) return null;
+  const labels: Record<string, string> = {
+    contract: "Contract analysis",
+    target: "Target extraction",
+    v3: "All fields (V3)",
+  };
+  return labels[source] ?? source;
 }
 
 const GROUP_ORDER = [
@@ -57,11 +72,11 @@ const ACTION_LABELS: Record<ReviewAction, string> = {
 export default function ReviewFieldList({
   documentId,
   fields,
-  activeFieldKey,
+  activeFieldId,
   onSelectField,
   onReviewField,
   onAcceptAll,
-  reviewingKey,
+  reviewingFieldId,
   acceptingAll,
 }: ReviewFieldListProps) {
   const groups = new Map<string, MetadataField[]>();
@@ -83,35 +98,45 @@ export default function ReviewFieldList({
     fields.length > 0 &&
     fields.every((field) => field.review_status !== "pending");
 
+  const pendingCount = fields.filter((field) => field.review_status === "pending").length;
+  const reviewedCount = fields.length - pendingCount;
+
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center justify-between border-b border-border/80 bg-surface px-6 py-4">
-        <p className="text-sm font-medium text-foreground">
-          Extracted intelligence
-        </p>
+    <div className="flex h-full flex-col" data-testid="metadata-review-list">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border/80 bg-surface px-6 py-4">
+        <div>
+          <p className="text-sm font-medium text-foreground">Metadata review</p>
+          <p className="mt-0.5 text-xs text-text-secondary" aria-live="polite">
+            {fields.length === 0
+              ? "No metadata fields to review"
+              : `${reviewedCount} of ${fields.length} reviewed · ${pendingCount} pending`}
+          </p>
+          <p className="mt-1 text-[11px] text-text-muted">
+            Metadata Accepted is not the same as Staging Verified.
+          </p>
+        </div>
 
         <button
           type="button"
           onClick={onAcceptAll}
-          disabled={acceptingAll || allReviewed}
+          disabled={acceptingAll || allReviewed || pendingCount === 0}
           className="btn-primary px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <CheckCheck className="h-3.5 w-3.5" />
-          {allReviewed ? "All reviewed" : "Accept All"}
+          <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
+          {allReviewed ? "All reviewed" : "Accept all pending"}
         </button>
       </div>
 
       <div className="flex-1 overflow-auto">
-        <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+        <table className="w-full min-w-[720px] border-collapse text-left text-sm">
           <thead className="sticky top-0 z-10 bg-surface-soft text-xs font-medium uppercase tracking-wide text-text-secondary">
             <tr>
               <th className="px-4 py-2 font-semibold">Field</th>
-              <th className="px-4 py-2 font-semibold">
-                Extracted Value
-              </th>
+              <th className="px-4 py-2 font-semibold">Extracted</th>
+              <th className="px-4 py-2 font-semibold">Effective</th>
               <th className="px-4 py-2 font-semibold">Confidence</th>
               <th className="px-4 py-2 font-semibold">Status</th>
-              <th className="px-4 py-2 font-semibold w-10" />
+              <th className="w-10 px-4 py-2 font-semibold" />
             </tr>
           </thead>
 
@@ -122,8 +147,8 @@ export default function ReviewFieldList({
                 documentId={documentId}
                 group={group}
                 fields={groups.get(group)!}
-                activeFieldKey={activeFieldKey}
-                reviewingKey={reviewingKey}
+                activeFieldId={activeFieldId}
+                reviewingFieldId={reviewingFieldId}
                 onSelectField={onSelectField}
                 onReviewField={onReviewField}
               />
@@ -139,19 +164,19 @@ function FieldGroupRows({
   documentId,
   group,
   fields,
-  activeFieldKey,
-  reviewingKey,
+  activeFieldId,
+  reviewingFieldId,
   onSelectField,
   onReviewField,
 }: {
   documentId: string;
   group: string;
   fields: MetadataField[];
-  activeFieldKey: string | null;
-  reviewingKey: string | null;
+  activeFieldId: number | null;
+  reviewingFieldId: number | null;
   onSelectField: (field: MetadataField) => void;
   onReviewField: (
-    fieldKey: string,
+    field: MetadataField,
     action: ReviewAction,
     value?: string,
   ) => Promise<void> | void;
@@ -160,20 +185,20 @@ function FieldGroupRows({
     <>
       <tr>
         <th
-          colSpan={5}
+          colSpan={6}
           className="border-t border-border bg-surface-soft px-4 py-2 text-left text-xs font-medium uppercase tracking-wide text-text-secondary"
         >
           {group}
         </th>
       </tr>
 
-      {fields.map((field) => (
+      {fields.map((field, index) => (
         <FieldRow
-          key={field.field_key}
+          key={fieldRowKey(field, index)}
           documentId={documentId}
           field={field}
-          active={field.field_key === activeFieldKey}
-          busy={reviewingKey === field.field_key}
+          active={field.id != null && field.id === activeFieldId}
+          busy={field.id != null && field.id === reviewingFieldId}
           onSelect={() => onSelectField(field)}
           onReview={onReviewField}
         />
@@ -196,13 +221,16 @@ function FieldRow({
   busy: boolean;
   onSelect: () => void;
   onReview: (
-    fieldKey: string,
+    field: MetadataField,
     action: ReviewAction,
     value?: string,
   ) => Promise<void> | void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draftValue, setDraftValue] = useState(field.value);
+  const [saveError, setSaveError] = useState("");
+  const [saveNotice, setSaveNotice] = useState("");
+  const editInputRef = useRef<HTMLInputElement | null>(null);
 
   const [showSource, setShowSource] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -210,6 +238,25 @@ function FieldRow({
     FieldAuditEntry[] | null
   >(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+
+  const extracted =
+    (field.extracted_value && String(field.extracted_value)) ||
+    field.original_value ||
+    field.value;
+  const hasEvidence = Boolean(
+    field.evidence?.source_text?.trim() ||
+      (field.evidence?.page_number != null && field.evidence.page_number > 0),
+  );
+
+  useEffect(() => {
+    if (!editing) return;
+    function onBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [editing]);
 
   async function toggleHistory() {
     if (showHistory) {
@@ -223,10 +270,10 @@ function FieldRow({
       setHistoryLoading(true);
 
       try {
-        const entries = await getFieldAuditLog(
-          documentId,
-          field.field_key,
-        );
+        const entries =
+          field.id != null
+            ? await getFieldAuditLogById(documentId, field.id)
+            : await getFieldAuditLog(documentId, field.field_key);
         setHistory(entries);
       } catch {
         setHistory([]);
@@ -237,12 +284,35 @@ function FieldRow({
   }
 
   async function submitEdit() {
-    if (!draftValue.trim()) return;
-
-    await onReview(field.field_key, "edit", draftValue.trim());
-    setEditing(false);
-    setHistory(null);
+    if (!draftValue.trim()) {
+      setSaveError("A corrected value is required.");
+      return;
+    }
+    setSaveError("");
+    try {
+      await onReview(field, "edit", draftValue.trim());
+      setEditing(false);
+      setHistory(null);
+      setSaveNotice("Correction saved");
+      window.setTimeout(() => setSaveNotice(""), 2500);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Could not save correction.");
+    }
   }
+
+  async function runAction(action: ReviewAction) {
+    setSaveError("");
+    try {
+      await onReview(field, action);
+      setHistory(null);
+      setSaveNotice(ACTION_LABELS[action]);
+      window.setTimeout(() => setSaveNotice(""), 2500);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Review action failed.");
+    }
+  }
+
+  const extractionLabel = sourceLabel(field.extraction_source);
 
   return (
     <>
@@ -254,28 +324,61 @@ function FieldRow({
         ].join(" ")}
       >
         <td className="px-5 py-4 text-sm text-text-secondary">
-          {field.label}
+          <span className="font-medium text-foreground">{field.label}</span>
+          {extractionLabel && (
+            <span className="mt-0.5 block text-[11px] text-text-muted">
+              Source: {extractionLabel}
+              {field.id != null ? ` · #${field.id}` : ""}
+            </span>
+          )}
+          {!extractionLabel && field.id != null && (
+            <span className="mt-0.5 block text-[11px] text-text-muted">
+              Field #{field.id}
+            </span>
+          )}
+          {saveNotice && (
+            <span className="mt-1 block text-[11px] font-medium text-success" role="status">
+              {saveNotice}
+            </span>
+          )}
+          {saveError && (
+            <span className="mt-1 block text-[11px] font-medium text-danger" role="alert">
+              {saveError}
+            </span>
+          )}
+        </td>
+
+        <td className="px-5 py-4 text-sm text-text-secondary">
+          <span className="line-clamp-3 whitespace-pre-wrap break-words">{extracted || "—"}</span>
         </td>
 
         <td className="px-5 py-4">
           {editing ? (
             <div
               onClick={(event) => event.stopPropagation()}
-              className="flex items-center gap-1.5"
+              className="flex flex-wrap items-center gap-1.5"
             >
               <input
+                ref={editInputRef}
                 type="text"
                 value={draftValue}
-                onChange={(event) =>
-                  setDraftValue(event.target.value)
-                }
+                onChange={(event) => setDraftValue(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void submitEdit();
+                  if (event.key === "Escape") {
+                    setEditing(false);
+                    setDraftValue(field.value);
+                    setSaveError("");
+                  }
+                }}
+                aria-label={`Corrected value for ${field.label}`}
                 className="min-w-0 flex-1 rounded-lg border border-border px-2 py-1 text-xs outline-none focus:border-primary/30"
                 autoFocus
               />
 
               <button
                 type="button"
-                onClick={submitEdit}
+                onClick={() => void submitEdit()}
                 disabled={busy}
                 className="rounded-lg bg-primary px-2 py-1 text-xs font-medium text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
               >
@@ -287,6 +390,7 @@ function FieldRow({
                 onClick={() => {
                   setEditing(false);
                   setDraftValue(field.value);
+                  setSaveError("");
                 }}
                 className="rounded-lg border border-border px-2 py-1 text-xs text-text-secondary hover:bg-surface-soft"
               >
@@ -303,16 +407,15 @@ function FieldRow({
         </td>
 
         <td className="px-4 py-2.5">
-          <ConfidenceBadge confidence={field.confidence} />
+          {typeof field.confidence === "number" && field.confidence > 0 ? (
+            <ConfidenceBadge confidence={field.confidence} />
+          ) : (
+            <span className="text-xs text-text-muted">—</span>
+          )}
         </td>
 
         <td className="px-4 py-2.5">
-          <StatusBadge
-            kind="field"
-            status={field.review_status}
-            verified={field.verified}
-            size="sm"
-          />
+          <StatusBadge kind="field" status={field.review_status} size="sm" />
         </td>
 
         <td className="px-4 py-2.5">
@@ -325,22 +428,23 @@ function FieldRow({
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => onReview(field.field_key, "accept")}
-                  className="rounded-md bg-brand-blue px-2 py-1 text-[11px] font-semibold text-white hover:bg-brand-blue/90 disabled:opacity-60"
+                  onClick={() => void runAction("accept")}
+                  className="rounded-md bg-primary px-2 py-1 text-[11px] font-semibold text-white hover:bg-primary-hover disabled:opacity-60"
                 >
                   Accept
                 </button>
               )}
               <FieldActionsMenu
                 busy={busy}
-                onEdit={() => setEditing(true)}
-                onReject={() => onReview(field.field_key, "reject")}
-                onMarkUnknown={() =>
-                  onReview(field.field_key, "mark_unknown")
-                }
-                onToggleSource={() =>
-                  setShowSource((current) => !current)
-                }
+                onEdit={() => {
+                  setEditing(true);
+                  setDraftValue(field.value);
+                  setSaveError("");
+                  requestAnimationFrame(() => editInputRef.current?.focus());
+                }}
+                onReject={() => void runAction("reject")}
+                onMarkUnknown={() => void runAction("mark_unknown")}
+                onToggleSource={() => setShowSource((current) => !current)}
                 onToggleHistory={toggleHistory}
               />
             </div>
@@ -349,66 +453,74 @@ function FieldRow({
       </tr>
 
       {showSource && (
-        <tr className="border-t border-slate-100 bg-slate-50">
-          <td colSpan={5} className="px-4 py-2.5">
-            <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-2.5 text-xs">
-              <div className="flex flex-wrap items-center gap-3 text-slate-500">
-                <span>
-                  Page{" "}
-                  <span className="font-medium text-slate-800">
-                    {field.evidence.page_number}
-                  </span>
-                </span>
-
-                {field.evidence.section && (
-                  <span>
-                    Section{" "}
-                    <span className="font-medium text-slate-800">
-                      {field.evidence.section}
-                    </span>
-                  </span>
-                )}
-              </div>
-
-              <p className="rounded-md bg-slate-50 p-2 italic text-slate-700">
-                &ldquo;{field.evidence.source_text}&rdquo;
-              </p>
-
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onSelect();
-                }}
-                className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:text-blue-800"
-              >
-                <ExternalLink className="h-3 w-3" />
-                Open Source
-              </button>
+        <tr className="border-t border-border bg-surface-soft/60">
+          <td colSpan={6} className="px-4 py-2.5">
+            <div className="space-y-2 rounded-lg border border-border bg-surface p-2.5 text-xs">
+              {hasEvidence ? (
+                <>
+                  <div className="flex flex-wrap items-center gap-3 text-text-secondary">
+                    {field.evidence.page_number > 0 && (
+                      <span>
+                        Page{" "}
+                        <span className="font-medium text-foreground">{field.evidence.page_number}</span>
+                      </span>
+                    )}
+                    {field.evidence.section && (
+                      <span>
+                        Section{" "}
+                        <span className="font-medium text-foreground">{field.evidence.section}</span>
+                      </span>
+                    )}
+                    {field.evidence.source_reference && (
+                      <span className="text-text-muted">{field.evidence.source_reference}</span>
+                    )}
+                  </div>
+                  {field.evidence.source_text?.trim() ? (
+                    <p className="rounded-md bg-surface-soft p-2 italic text-foreground">
+                      &ldquo;{field.evidence.source_text}&rdquo;
+                    </p>
+                  ) : (
+                    <p className="text-text-muted">No source text snippet is available for this field.</p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSelect();
+                    }}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline"
+                  >
+                    <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                    Open source evidence
+                  </button>
+                </>
+              ) : (
+                <p className="text-text-muted">
+                  Source evidence is unavailable for this field. The extracted value is still shown above.
+                </p>
+              )}
             </div>
           </td>
         </tr>
       )}
 
       {showHistory && (
-        <tr className="border-t border-slate-100 bg-slate-50">
-          <td colSpan={5} className="px-4 py-2.5">
-            <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-2.5 text-xs">
+        <tr className="border-t border-border bg-surface-soft/60">
+          <td colSpan={6} className="px-4 py-2.5">
+            <div className="space-y-2 rounded-lg border border-border bg-surface p-2.5 text-xs">
               <div>
-                <span className="text-slate-400">AI extracted</span>
-                <p className="font-medium text-slate-800">
-                  {field.original_value}
-                </p>
+                <span className="text-text-muted">Machine extracted</span>
+                <p className="font-medium text-foreground">{extracted || "—"}</p>
               </div>
 
               {historyLoading && (
-                <p className="text-slate-400">Loading history...</p>
+                <p className="text-text-muted">Loading history…</p>
               )}
 
               {!historyLoading &&
                 history !== null &&
                 history.length === 0 && (
-                  <p className="text-slate-400">
+                  <p className="text-text-muted">
                     No reviewer actions yet.
                   </p>
                 )}
@@ -417,9 +529,9 @@ function FieldRow({
                 history?.map((entry, index) => (
                   <div
                     key={index}
-                    className="border-t border-slate-100 pt-2"
+                    className="border-t border-border pt-2"
                   >
-                    <span className="text-slate-400">
+                    <span className="text-text-muted">
                       Reviewer{" "}
                       {ACTION_LABELS[entry.action].toLowerCase()}
                       {entry.new_value &&
@@ -430,15 +542,15 @@ function FieldRow({
 
                     {entry.new_value &&
                       entry.new_value !== entry.previous_value && (
-                        <p className="font-medium text-slate-800">
+                        <p className="font-medium text-foreground">
                           {entry.new_value}
                         </p>
                       )}
 
-                    <p className="mt-1 text-slate-500">
+                    <p className="mt-1 text-text-secondary">
                       Changed by: {entry.changed_by}
                     </p>
-                    <p className="text-slate-400">
+                    <p className="text-text-muted">
                       {new Date(entry.changed_at).toLocaleString()}
                     </p>
                   </div>

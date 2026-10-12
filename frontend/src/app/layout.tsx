@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Outfit } from "next/font/google";
 import "./globals.css";
 
 import AppShell from "@/components/layout/AppShell";
@@ -14,13 +14,19 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const outfit = Outfit({
+  variable: "--font-outfit",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+});
+
 export const metadata: Metadata = {
-  title: "Data Agent — Consult America",
+  title: "Data Agent",
   description:
-    "Enterprise AI contract intelligence workspace for Consult America.",
+    "Enterprise document intelligence — extract, verify, review, and export with source-grounded evidence.",
   icons: {
-    icon: "/consult-america-logo.jpg",
-    apple: "/consult-america-logo.jpg",
+    icon: "/data-agent-logo.svg",
+    apple: "/data-agent-logo.svg",
   },
 };
 
@@ -28,7 +34,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${outfit.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <body className="h-full overflow-hidden" suppressHydrationWarning>

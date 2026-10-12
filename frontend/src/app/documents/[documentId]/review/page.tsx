@@ -14,6 +14,7 @@ import ContractTabs, { type ContractTab } from "@/components/contract-tabs";
 import DocumentProfileCard from "@/components/document-profile-card";
 import ExportMenu from "@/components/export-menu";
 import ExtractionWorkspace from "@/components/extraction-workspace";
+import { useDocumentChrome } from "@/components/layout/document-chrome-context";
 import PdfPageViewer from "@/components/pdf-page-viewer";
 import PdfToolbar, { type SearchMatch } from "@/components/pdf-toolbar";
 import PipelineStrip from "@/components/pipeline-strip";
@@ -37,6 +38,7 @@ import {
   getSignatures,
   promoteDocument,
   reviewMetadataField,
+  reviewMetadataFieldById,
 } from "@/lib/documents";
 import type {
   ChildRelationship,
@@ -62,6 +64,7 @@ export default function ReviewWorkspacePage({
   params,
 }: ReviewPageProps) {
   const { documentId } = use(params);
+  const { setDocumentTitle } = useDocumentChrome();
 
   const [document, setDocument] =
     useState<UploadedDocument | null>(null);
@@ -73,10 +76,9 @@ export default function ReviewWorkspacePage({
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState("");
 
-  const [reviewerName, setReviewerName] = useState("Consult America");
+  const [reviewerName, setReviewerName] = useState("Data Agent");
 
-  const [activeFieldKey, setActiveFieldKey] =
-    useState<string | null>(null);
+  const [activeFieldId, setActiveFieldId] = useState<number | null>(null);
 
   const [currentPage, setCurrentPage] = useState(1);
   const [highlightText, setHighlightText] = useState<string | null>(
@@ -99,8 +101,9 @@ export default function ReviewWorkspacePage({
   >(null);
   const [lastQuery, setLastQuery] = useState("");
 
-  const [reviewingKey, setReviewingKey] =
-    useState<string | null>(null);
+  const [reviewingFieldId, setReviewingFieldId] = useState<number | null>(
+    null,
+  );
   const [acceptingAll, setAcceptingAll] = useState(false);
 
   const [relationshipBusy, setRelationshipBusy] = useState(false);
@@ -132,6 +135,11 @@ export default function ReviewWorkspacePage({
   const [mobilePanel, setMobilePanel] = useState<"document" | "data">(
     "document",
   );
+
+  useEffect(() => {
+    setDocumentTitle(document?.original_filename ?? null);
+    return () => setDocumentTitle(null);
+  }, [document?.original_filename, setDocumentTitle]);
 
   useEffect(() => {
     let active = true;
@@ -206,7 +214,7 @@ export default function ReviewWorkspacePage({
       const firstField = analysisResult.metadata_fields[0];
 
       if (firstField) {
-        setActiveFieldKey(firstField.field_key);
+        setActiveFieldId(firstField.id ?? null);
         setCurrentPage(firstField.evidence.page_number);
         setHighlightText(firstField.evidence.source_text);
       }
@@ -259,19 +267,19 @@ export default function ReviewWorkspacePage({
   }, [currentPage, highlightText, documentId]);
 
   function handleSelectField(field: MetadataField) {
-    setActiveFieldKey(field.field_key);
+    setActiveFieldId(field.id ?? null);
     setCurrentPage(field.evidence.page_number);
     setHighlightText(field.evidence.source_text);
   }
 
   function handleViewClauseSource(clause: ClauseResult) {
-    setActiveFieldKey(null);
+    setActiveFieldId(null);
     setCurrentPage(clause.evidence.page_number);
     setHighlightText(clause.evidence.source_text);
   }
 
   function handleViewSignatureSource(signature: SignatureResult) {
-    setActiveFieldKey(null);
+    setActiveFieldId(null);
     setCurrentPage(signature.evidence.page_number);
     setHighlightText(signature.evidence.source_text);
   }
@@ -281,7 +289,7 @@ export default function ReviewWorkspacePage({
       return;
     }
 
-    setActiveFieldKey(null);
+    setActiveFieldId(null);
     setHighlightText(null);
     setCurrentPage(page);
   }
@@ -330,13 +338,13 @@ export default function ReviewWorkspacePage({
   }
 
   function handleJumpToResult(pageNumber: number) {
-    setActiveFieldKey(null);
+    setActiveFieldId(null);
     setCurrentPage(pageNumber);
     setHighlightText(lastQuery);
   }
 
   async function handleReviewField(
-    fieldKey: string,
+    field: MetadataField,
     action: ReviewAction,
     value?: string,
   ) {
@@ -344,32 +352,46 @@ export default function ReviewWorkspacePage({
       return;
     }
 
-    setReviewingKey(fieldKey);
+    setReviewingFieldId(field.id ?? null);
 
     try {
-      const updated = await reviewMetadataField(
-        documentId,
-        fieldKey,
-        action,
-        reviewerName.trim(),
-        value,
-      );
+      const updated =
+        field.id != null
+          ? await reviewMetadataFieldById(
+              documentId,
+              field.id,
+              action,
+              reviewerName.trim(),
+              value,
+            )
+          : await reviewMetadataField(
+              documentId,
+              field.field_key,
+              action,
+              reviewerName.trim(),
+              value,
+            );
 
       setAnalysis((current) => {
         if (!current) return current;
 
         return {
           ...current,
-          metadata_fields: current.metadata_fields.map(
-            (field) =>
-              field.field_key === fieldKey ? updated : field,
-          ),
+          metadata_fields: current.metadata_fields.map((row) => {
+            if (updated.id != null && row.id === updated.id) return updated;
+            if (updated.id == null && row.field_key === field.field_key) {
+              return updated;
+            }
+            return row;
+          }),
         };
       });
-    } catch {
-      // Non-fatal; the row simply stays actionable for retry.
+    } catch (error) {
+      throw error instanceof Error
+        ? error
+        : new Error("Review action failed.");
     } finally {
-      setReviewingKey(null);
+      setReviewingFieldId(null);
     }
   }
 
@@ -385,8 +407,10 @@ export default function ReviewWorkspacePage({
         documentId,
         reviewerName.trim(),
       );
-      const byKey = new Map(
-        updated.map((field) => [field.field_key, field]),
+      const byId = new Map(
+        updated
+          .filter((field) => field.id != null)
+          .map((field) => [field.id as number, field]),
       );
 
       setAnalysis((current) => {
@@ -395,7 +419,8 @@ export default function ReviewWorkspacePage({
         return {
           ...current,
           metadata_fields: current.metadata_fields.map(
-            (field) => byKey.get(field.field_key) ?? field,
+            (field) =>
+              (field.id != null ? byId.get(field.id) : undefined) ?? field,
           ),
         };
       });
@@ -537,7 +562,7 @@ export default function ReviewWorkspacePage({
       const firstField = result.metadata_fields[0];
 
       if (firstField) {
-        setActiveFieldKey(firstField.field_key);
+        setActiveFieldId(firstField.id ?? null);
         setCurrentPage(firstField.evidence.page_number);
         setHighlightText(firstField.evidence.source_text);
       }
@@ -941,11 +966,11 @@ export default function ReviewWorkspacePage({
               <ReviewFieldList
                 documentId={documentId}
                 fields={analysis.metadata_fields}
-                activeFieldKey={activeFieldKey}
+                activeFieldId={activeFieldId}
                 onSelectField={handleSelectField}
                 onReviewField={handleReviewField}
                 onAcceptAll={handleAcceptAll}
-                reviewingKey={reviewingKey}
+                reviewingFieldId={reviewingFieldId}
                 acceptingAll={acceptingAll}
               />
             </div>

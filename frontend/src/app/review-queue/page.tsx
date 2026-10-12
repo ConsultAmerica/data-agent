@@ -23,7 +23,7 @@ import {
   type ReviewQueueFieldItem,
 } from "@/types/document";
 
-const DEFAULT_REVIEWER = "Consult America";
+const DEFAULT_REVIEWER = "Data Agent";
 
 function issueKind(
   item: ReviewQueueFieldItem,

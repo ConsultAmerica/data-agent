@@ -19,13 +19,15 @@ from __future__ import annotations
 
 import re
 
-from sqlalchemy import delete
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.document import Document
 from app.models.document_metadata_field import DocumentMetadataField
 from app.schemas.candidate_classification import ClassifiedCandidate
 from app.services.evidence_geometry import evidence_bbox
+
+_HUMAN_LOCKED = frozenset({"edited", "accepted", "rejected"})
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 # Form chrome and leftover instructions are not business values. Kept
@@ -158,11 +160,61 @@ def build_all_fields(
 def persist_all_fields(
     *, database: Session, document_id: str, rows: list[DocumentMetadataField]
 ) -> None:
-    database.execute(
-        delete(DocumentMetadataField).where(
-            DocumentMetadataField.document_id == document_id,
-            DocumentMetadataField.extraction_source == "v3",
+    """Upsert V3 all-fields rows without wiping human review decisions."""
+
+    existing_rows = list(
+        database.scalars(
+            select(DocumentMetadataField).where(
+                DocumentMetadataField.document_id == document_id,
+                DocumentMetadataField.extraction_source == "v3",
+            )
         )
     )
+    by_key = {row.field_key: row for row in existing_rows}
+    seen: set[str] = set()
+
     for row in rows:
-        database.add(row)
+        seen.add(row.field_key)
+        evidence = dict(row.evidence_json) if isinstance(row.evidence_json, dict) else {}
+        evidence["machine_value"] = row.value
+        existing = by_key.get(row.field_key)
+
+        if existing is None:
+            row.evidence_json = evidence
+            database.add(row)
+            continue
+
+        prior_status = existing.review_status
+        human_locked = prior_status in _HUMAN_LOCKED
+        reviewed_value = existing.value
+
+        existing.label = row.label
+        existing.field_group = row.field_group
+        existing.confidence = row.confidence
+        existing.extraction_method = row.extraction_method
+        existing.extracted_at = row.extracted_at
+
+        if not human_locked:
+            existing.value = row.value
+            if not existing.original_value:
+                existing.original_value = row.value
+            existing.evidence_json = evidence
+            existing.review_status = "pending"
+            existing.human_approved = False
+        else:
+            evidence["reviewed_value"] = reviewed_value
+            evidence["prior_review_status"] = prior_status
+            if str(reviewed_value or "").strip() != str(row.value or "").strip():
+                existing.review_status = "pending"
+                existing.human_approved = False
+            else:
+                existing.review_status = prior_status
+                existing.human_approved = prior_status in {"accepted", "edited"}
+            existing.evidence_json = evidence
+            if not existing.original_value:
+                existing.original_value = row.value
+
+    for key, row in by_key.items():
+        if key in seen or row.review_status in _HUMAN_LOCKED:
+            continue
+        database.delete(row)

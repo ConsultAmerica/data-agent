@@ -17,10 +17,19 @@ const MARK: Record<ReviewStatus, string> = {
 
 export function ReviewStatusBadge({ status }: { status: ReviewStatus | null }) {
   if (!status) return null;
+  const label =
+    status === "Verified"
+      ? "Staging Verified"
+      : status === "Needs Review"
+        ? "Staging Needs Review"
+        : status;
   return (
-    <span className={`inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium ${TONE[status]}`}>
+    <span
+      className={`inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium ${TONE[status]}`}
+      title="Staging QA status — not metadata Accept/Edit/Reject"
+    >
       <span aria-hidden="true">{MARK[status]}</span>
-      {status}
+      {label}
     </span>
   );
 }

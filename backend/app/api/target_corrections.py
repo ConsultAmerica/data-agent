@@ -52,6 +52,9 @@ async def create_target_correction(
     database: Session = Depends(get_database),
     actor: ActorContext = Depends(get_current_actor),
 ) -> TargetCorrection:
+    from app.core.feature_gates import require_metadata_review_mutations_enabled
+
+    require_metadata_review_mutations_enabled()
     _load_document_or_404(database, document_id)
 
     permission = _ACTION_PERMISSION[request.action]

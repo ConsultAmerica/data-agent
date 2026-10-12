@@ -101,6 +101,7 @@ METADATA_FIELD_AUDIT_LOG_COLUMNS: dict[str, str | dict[str, str]] = {
     "actor_id": "VARCHAR(64)",
     "actor_type": "VARCHAR(20)",
     "actor_role": "VARCHAR(32)",
+    "metadata_field_id": "INTEGER",
 }
 
 

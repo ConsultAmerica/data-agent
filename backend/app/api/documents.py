@@ -1194,6 +1194,9 @@ def search_documents(
     confidence_max: float | None = None,
     repository_status: str | None = None,
     family: str | None = None,
+    profile_id: str | None = None,
+    sort_by: str = "uploaded_at",
+    sort_dir: str = "desc",
     limit: int = 25,
     offset: int = 0,
     database: Session = Depends(get_database),
@@ -1204,6 +1207,8 @@ def search_documents(
     scan_cap = max(50, int(settings.search_scan_cap))
     page_limit = max(1, min(limit, 100))
     page_offset = max(0, offset)
+    sort_key = sort_by if sort_by in {"uploaded_at", "updated_at"} else "uploaded_at"
+    descending = sort_dir != "asc"
 
     matching_ids: set[str] | None = None
 
@@ -1261,14 +1266,21 @@ def search_documents(
     if family:
         base_query = _filter_by_family(base_query, family)
 
+    if profile_id:
+        base_query = _filter_by_profile(base_query, profile_id)
+
     needs_computed_filter = bool(
         status
         or confidence_min is not None
         or confidence_max is not None
         or repository_status
+        or sort_key == "updated_at"
     )
 
-    ordered = base_query.order_by(Document.uploaded_at.desc())
+    # uploaded_at is persisted; updated_at is computed on the summary and
+    # requires the materialize path below.
+    order_column = Document.uploaded_at.desc() if descending else Document.uploaded_at.asc()
+    ordered = base_query.order_by(order_column)
 
     if not needs_computed_filter:
         # Fast path: push pagination into SQL — no full-table materialize.
@@ -1291,8 +1303,8 @@ def search_documents(
         ]
         return DocumentSearchResponse(documents=summaries, total=total)
 
-    # Status / confidence / repository filters depend on computed summary
-    # fields — scan a capped window instead of the entire repository.
+    # Status / confidence / repository filters (and updated_at sort) depend
+    # on computed summary fields — scan a capped window.
     candidates = list(database.scalars(ordered.limit(scan_cap)))
     summaries = [
         _build_document_summary(database, document)
@@ -1327,6 +1339,12 @@ def search_documents(
             if summary.repository_status == repository_status
         ]
 
+    if sort_key == "updated_at":
+        summaries.sort(
+            key=lambda item: item.last_updated,
+            reverse=descending,
+        )
+
     total = len(summaries)
     page = summaries[page_offset : page_offset + page_limit]
 
@@ -1340,6 +1358,16 @@ def _filter_by_family(query, family: str):
         Document.id.in_(
             select(DocumentStagingWorkbook.document_id).where(
                 DocumentStagingWorkbook.document_family == family
+            )
+        )
+    )
+
+
+def _filter_by_profile(query, profile_id: str):
+    return query.where(
+        Document.id.in_(
+            select(DocumentStagingWorkbook.document_id).where(
+                DocumentStagingWorkbook.profile_id == profile_id
             )
         )
     )
@@ -1437,22 +1465,58 @@ async def get_document_hierarchy(
     response_model=GlobalAuditLogResponse,
 )
 async def get_global_audit_log(
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    document_id: str | None = Query(None),
+    actor_id: str | None = Query(None),
+    changed_by: str | None = Query(None),
+    action: str | None = Query(None),
+    request_id: str | None = Query(None),
+    outcome: str | None = Query(
+        None,
+        description="Filter by new_status (pending|accepted|edited|rejected|unknown).",
+    ),
+    from_time: datetime | None = Query(None, alias="from"),
+    to_time: datetime | None = Query(None, alias="to"),
     database: Session = Depends(get_database),
     actor: ActorContext = Depends(get_current_actor),
 ) -> GlobalAuditLogResponse:
+    """Paged metadata-field review audit for documents visible to the actor.
+
+    Optional filters are applied server-side. This is not a federation of
+    Oracle/classification/relationship audits — those remain on their own APIs.
+    """
+
     visible = scope_documents(select(Document.id), actor)
-    total = database.scalar(
-        select(func.count(MetadataFieldAuditLog.id)).where(
-            MetadataFieldAuditLog.document_id.in_(visible)
+    conditions = [MetadataFieldAuditLog.document_id.in_(visible)]
+
+    if document_id:
+        conditions.append(MetadataFieldAuditLog.document_id == document_id)
+    if actor_id:
+        conditions.append(MetadataFieldAuditLog.actor_id == actor_id)
+    if changed_by:
+        conditions.append(
+            MetadataFieldAuditLog.changed_by.ilike(f"%{changed_by.strip()}%")
         )
+    if action:
+        conditions.append(MetadataFieldAuditLog.action == action)
+    if request_id:
+        conditions.append(MetadataFieldAuditLog.request_id == request_id)
+    if outcome:
+        conditions.append(MetadataFieldAuditLog.new_status == outcome)
+    if from_time is not None:
+        conditions.append(MetadataFieldAuditLog.changed_at >= from_time)
+    if to_time is not None:
+        conditions.append(MetadataFieldAuditLog.changed_at <= to_time)
+
+    total = database.scalar(
+        select(func.count(MetadataFieldAuditLog.id)).where(*conditions)
     ) or 0
 
     rows = list(
         database.scalars(
             select(MetadataFieldAuditLog)
-            .where(MetadataFieldAuditLog.document_id.in_(visible))
+            .where(*conditions)
             .order_by(MetadataFieldAuditLog.changed_at.desc())
             .offset(offset)
             .limit(limit)

@@ -1,37 +1,41 @@
+import {
+  EXTRACTION_WORKFLOW_STEPS,
+  type ExtractionWorkflowStep,
+  workflowStepIndex,
+} from "@/lib/extraction-workflow";
+
 interface WorkflowBreadcrumbProps {
-  activeStep: "upload" | "extract" | "review" | "repository";
+  activeStep: ExtractionWorkflowStep;
 }
 
-const STEPS = [
-  { id: "upload" as const, label: "Upload" },
-  { id: "extract" as const, label: "Extract" },
-  { id: "review" as const, label: "Review" },
-  { id: "repository" as const, label: "Repository" },
-];
-
-export default function WorkflowBreadcrumb({
-  activeStep,
-}: WorkflowBreadcrumbProps) {
-  const activeIndex = STEPS.findIndex((s) => s.id === activeStep);
+export default function WorkflowBreadcrumb({ activeStep }: WorkflowBreadcrumbProps) {
+  const activeIndex = workflowStepIndex(activeStep);
 
   return (
     <nav aria-label="Extraction workflow" className="workflow-steps">
-      {STEPS.map((step, index) => (
-        <span key={step.id} className="inline-flex items-center gap-3">
-          {index > 0 && <span className="workflow-separator">/</span>}
-          <span
-            className={
-              index < activeIndex
-                ? "step-done"
-                : index === activeIndex
-                  ? "step-active"
-                  : ""
-            }
-          >
-            {step.label}
-          </span>
-        </span>
-      ))}
+      <ol className="flex flex-wrap items-center gap-x-1 gap-y-1">
+        {EXTRACTION_WORKFLOW_STEPS.map((step, index) => (
+          <li key={step.id} className="inline-flex items-center gap-1 sm:gap-2">
+            {index > 0 && (
+              <span className="workflow-separator text-text-muted" aria-hidden="true">
+                /
+              </span>
+            )}
+            <span
+              className={
+                index < activeIndex
+                  ? "step-done"
+                  : index === activeIndex
+                    ? "step-active"
+                    : "text-text-muted"
+              }
+              aria-current={index === activeIndex ? "step" : undefined}
+            >
+              {step.label}
+            </span>
+          </li>
+        ))}
+      </ol>
     </nav>
   );
 }

@@ -12,7 +12,21 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => search,
 }));
 vi.mock("@/lib/documents", () => ({
-  getDocument: vi.fn(() => Promise.resolve({ original_filename: "part_52.html" })),
+  getDocument: vi.fn(() =>
+    Promise.resolve({
+      document_id: "d1",
+      original_filename: "part_52.html",
+      status: "completed",
+      content_type: "application/pdf",
+      size_bytes: 1,
+      checksum_sha256: null,
+      page_count: 1,
+      encrypted: false,
+      uploaded_at: "2026-10-01T00:00:00Z",
+      message: "",
+    }),
+  ),
+  startProcessingJob: vi.fn(() => Promise.resolve({ id: 1, document_id: "d1", status: "queued" })),
 }));
 vi.mock("@/components/staging/source-transcription", () => ({
   default: () => <p>Source transcription</p>,
@@ -117,21 +131,27 @@ describe("DocumentWorkspace with a profile-declared presentation", () => {
     expect(replace).toHaveBeenCalledWith("/documents/d1?view=oracle_output");
   });
 
-  it("Export menu: Export All as before; Export Selected disabled until something is selected", async () => {
+  it("Export menu: scope summary, Export Selected disabled until selection, Oracle toggle", async () => {
     render(<DocumentWorkspace documentId="d1" />);
     await screen.findAllByRole("tab");
-    fireEvent.click(screen.getByRole("button", { name: "Export" }));
-    expect(screen.getByText("Export All")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("export-menu-trigger"));
+    const menu = screen.getByTestId("export-menu");
+    expect(within(menu).getByText(/Staging — Export All/i)).toBeTruthy();
+    expect(within(menu).getByText(/No staging cells selected/i)).toBeTruthy();
+    expect(within(menu).getByText(/Metadata export/i)).toBeTruthy();
     for (const label of ["Excel", "CSV", "JSON"]) {
-      expect((screen.getByRole("menuitem", { name: label }) as HTMLButtonElement).disabled).toBe(true);
+      expect((within(menu).getByRole("menuitem", { name: label }) as HTMLButtonElement).disabled).toBe(true);
     }
-    fireEvent.click(screen.getByRole("button", { name: "Export" }));
-    // Select one record's row in the FAR grid; the menu now names it.
+    fireEvent.click(screen.getByTestId("export-menu-trigger"));
     fireEvent.click(screen.getByRole("checkbox", { name: "Select record 52.202-1" }));
-    fireEvent.click(screen.getByRole("button", { name: "Export" }));
-    const menu = screen.getByRole("menu");
-    expect(within(menu).getByText(/FAR Clauses & Provisions, \d+ cells/)).toBeTruthy();
-    expect((within(menu).getByRole("menuitem", { name: "Excel" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByTestId("export-menu-trigger"));
+    const openMenu = screen.getByTestId("export-menu");
+    expect(within(openMenu).getByText(/Selection:/)).toBeTruthy();
+    expect(within(openMenu).getByText(/\d+ cell/)).toBeTruthy();
+    expect((within(openMenu).getByRole("menuitem", { name: "Excel" }) as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(screen.getByTestId("toggle-oracle-panel"));
+    expect(screen.getByTestId("oracle-integration-panel")).toBeTruthy();
   });
 
   it("names a records tab after its dataset (a FAR Part's table is its FAR Data)", async () => {
@@ -157,6 +177,30 @@ describe("DocumentWorkspace with a profile-declared presentation", () => {
     expect(within(row).getByText("Alternate I")).toBeTruthy();
     fireEvent.click(within(filters).getByRole("button", { name: /Clause/ }));
     expect(screen.queryByRole("row", { name: /52\.215-1/ })).toBeNull();
+  });
+
+  it("shows compact type/profile/status and returns to Documents with preserved filters", async () => {
+    search = new URLSearchParams("return=filter%3Dreview%26q%3DSF1442");
+    render(<DocumentWorkspace documentId="d1" />);
+    await screen.findByRole("heading", { name: "part_52.html" });
+    expect(screen.getByTestId("workspace-profile").textContent).toBe("FAR Part 52");
+    expect(screen.getByTestId("workspace-type").textContent).toBeTruthy();
+    const status = screen.getByTestId("workspace-status");
+    expect(within(status).getByText("Complete")).toBeTruthy();
+    expect(within(status).getByText(/Staging Verified/)).toBeTruthy();
+    expect(screen.getByTestId("return-to-documents")).toHaveAttribute(
+      "href",
+      "/documents?filter=review&q=SF1442",
+    );
+    expect(screen.getByRole("button", { name: "Reprocess document" })).toBeTruthy();
+  });
+
+  it("preserves the return query when switching tabs", async () => {
+    search = new URLSearchParams("return=family%3Dinvoice");
+    render(<DocumentWorkspace documentId="d1" />);
+    const tabs = await screen.findAllByRole("tab");
+    fireEvent.click(tabs[1]);
+    expect(replace).toHaveBeenCalledWith("/documents/d1?view=oracle_output&return=family%3Dinvoice");
   });
 
   it("opens the source tab with the source datasets and transcription", async () => {

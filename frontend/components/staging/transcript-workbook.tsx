@@ -118,6 +118,7 @@ export default function TranscriptPanes({ workbook, onViewInDocument }: Transcri
                 }
               : undefined
           }
+          metadataReviewHref={`/documents/${workbook.document_id}/review`}
         />
       )}
     </div>
