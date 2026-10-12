@@ -14,9 +14,8 @@ import {
 import AnimatedWorkflowDiagram from "@/components/illustrations/animated-workflow-diagram";
 import CapabilitySection from "@/components/capability-section";
 import DocumentResultsTable from "@/components/document-results-table";
-import HeroExtractionPreview from "@/components/illustrations/hero-extraction-preview";
+import HeroShowcase from "@/components/illustrations/hero-showcase";
 import ContentSection from "@/components/layout/ContentSection";
-import PageHero from "@/components/layout/PageHero";
 import { getDashboardStats, listDocuments } from "@/lib/documents";
 import type { DashboardStats, DocumentSummary } from "@/types/document";
 
@@ -69,8 +68,7 @@ export default function HomePage() {
 
   return (
     <>
-      <PageHero
-        marketing
+      <HeroShowcase
         brand={
           <p className="page-hero-brand-name">
             Data<span>Agent</span>
@@ -84,20 +82,6 @@ export default function HomePage() {
           </>
         }
         description="Contracts and complex records become structured, reviewable intelligence — grounded in source evidence."
-        actions={
-          <>
-            <Link href="/extraction/new" className="btn-hero-primary">
-              <Upload className="h-4 w-4 shrink-0" />
-              <span className="whitespace-nowrap">Start extraction</span>
-            </Link>
-            <Link href="/ask" className="btn-hero-secondary">
-              <Sparkles className="h-4 w-4 shrink-0" />
-              <span className="whitespace-nowrap">Ask Data Agent</span>
-              <ArrowRight className="h-4 w-4 shrink-0" />
-            </Link>
-          </>
-        }
-        visual={<HeroExtractionPreview />}
       />
 
       <section className="marketing-band marketing-band-light">
