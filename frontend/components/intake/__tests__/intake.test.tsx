@@ -87,11 +87,11 @@ async function settle(queue: BatchQueue, predicate: (items: QueueItem[]) => bool
 }
 
 describe("BatchQueue", () => {
-  it("uploads each file with the batch tags, then processes it", async () => {
+  it("uploads each file with the batch tags, then processes and extracts it", async () => {
     const d = deps();
     const queue = new BatchQueue(() => fields, d);
     queue.addFiles([new File(["a"], "a.pdf"), new File(["b"], "b.pdf")]);
-    await settle(queue, (items) => items.every((item) => item.status === "processed"));
+    await settle(queue, (items) => items.every((item) => item.status === "extracted"));
 
     expect(d.upload).toHaveBeenCalledTimes(2);
     expect((d.upload as ReturnType<typeof vi.fn>).mock.calls[0][1]).toEqual({
@@ -130,9 +130,10 @@ describe("BatchQueue", () => {
     await act(() => queue.resolveDuplicate(queue.getSnapshot()[0].id, "use_existing"));
     expect(d.resolveDuplicate).toHaveBeenCalledWith("staged-1", "use_existing", "staged-1.pdf", "existing-1");
     expect(d.tagDocument).toHaveBeenCalledWith("existing-1", fields);
-    // Reused with a discovered schema: no reprocessing.
+    // Reused with a discovered schema: no reprocessing, straight to extraction.
     expect(d.process).not.toHaveBeenCalled();
-    expect(queue.getSnapshot()[0].status).toBe("processed");
+    await settle(queue, (items) => items[0].status === "extracted");
+    expect(d.extract).toHaveBeenCalledWith("existing-1", ["t1"], expect.any(Function));
   });
 
   it("reports a failed upload per file and can retry it", async () => {
@@ -143,20 +144,37 @@ describe("BatchQueue", () => {
     expect(queue.getSnapshot()[0].error).toBe("File too large");
 
     queue.retry(queue.getSnapshot()[0].id);
-    await settle(queue, (items) => items[0].status === "processed");
+    await settle(queue, (items) => items[0].status === "extracted");
   });
 
-  it("runs full extraction on every processed file with its extractable targets", async () => {
+  it("extracts each processed file automatically with its extractable targets", async () => {
     const d = deps();
     const queue = new BatchQueue(() => fields, d);
     queue.addFiles([new File(["a"], "a.pdf")]);
-    await settle(queue, (items) => items[0].status === "processed");
+    await settle(queue, (items) => items[0].status === "extracted");
 
-    await act(() => queue.runFullExtraction());
+    expect(d.extract).toHaveBeenCalledTimes(1);
     expect(d.extract).toHaveBeenCalledWith("doc-a.pdf", ["t1"], expect.any(Function));
     const [item] = queue.getSnapshot();
     expect(item.status).toBe("extracted");
     expect(item.fieldsExtracted).toBe(2);
+  });
+  it("never shows an extracting file back at OCR", async () => {
+    const extract = vi.fn(async (_doc: string, _ids: string[], onStage: (job: { stage: string | null; status: string }) => void) => {
+      onStage({ stage: null, status: "queued" });
+      onStage({ stage: "source_structure", status: "processing" });
+      return { scalars: [{}], tables: [], unresolved_targets: [], warnings: [] };
+    });
+    const queue = new BatchQueue(() => fields, deps({ extract: extract as never }));
+    const seen: (string | null)[] = [];
+    queue.subscribe(() => {
+      const [item] = queue.getSnapshot();
+      if (item?.status === "extracting") seen.push(item.pipelineStage);
+    });
+    queue.addFiles([new File(["a"], "a.pdf")]);
+    await settle(queue, (items) => items[0].status === "extracted");
+    expect(seen.length).toBeGreaterThan(0);
+    expect(new Set(seen)).toEqual(new Set(["extracting_data"]));
   });
 });
 

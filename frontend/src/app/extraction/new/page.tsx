@@ -1119,15 +1119,16 @@ function NewExtractionPageContent() {
     [queue, batchStatus],
   );
 
-  // A single dropped file opens in the review workspace once processed,
-  // as the one-file upload always did.
+  // A single dropped file opens in the review workspace once its automatic
+  // extraction is done (or failed), so the extracted fields show at once.
   const autoOpenedRef = useRef(false);
   useEffect(() => {
     if (autoOpenedRef.current || document || reopenDocumentId) return;
     const live = queueItems.filter((item) => item.file != null);
     if (queueItems.length !== 1 || live.length !== 1) return;
     const [only] = live;
-    if (only.status === "processed" && only.documentId) {
+    const settled = only.status === "extracted" || (only.status === "failed" && only.failedPhase === "extraction");
+    if (settled && only.documentId) {
       autoOpenedRef.current = true;
       const params = new URLSearchParams({ batch: intakeFieldsRef.current.batch_id, documentId: only.documentId });
       router.replace(`/extraction/new?${params.toString()}`, { scroll: false });

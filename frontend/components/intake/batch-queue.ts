@@ -13,6 +13,7 @@ import {
 } from "@/lib/documents";
 import {
   extractableTargets,
+  fileStageFromPipeline,
   intakeFormFields,
   putDocumentIntake,
   type IntakeBatch,
@@ -162,6 +163,14 @@ function newItem(file: File | null, name: string, size: number): QueueItem {
     fieldsExtracted: null,
     note: null,
   };
+}
+
+/** An extraction job's stage, never earlier than extraction itself: the
+ * job also reports "queued" and stage names the queue doesn't chart, which
+ * would otherwise show the file going back to OCR. */
+function extractionPhaseStage(stage: string | null | undefined): string {
+  const fileStage = fileStageFromPipeline(stage);
+  return stage && (fileStage === "extraction" || fileStage === "indexing") ? stage : "extracting_data";
 }
 
 export class BatchQueue {
@@ -338,6 +347,7 @@ export class BatchQueue {
       try {
         await this.deps.targets(documentId);
         this.patch(id, { status: "processed", pipelineStage: null });
+        void this.runFullExtraction();
         return;
       } catch {
         // No discovered schema yet — process it like a new upload.
@@ -368,7 +378,11 @@ export class BatchQueue {
       this.patch(id, { status: "processed", pipelineStage: null });
     } catch (error) {
       this.patch(id, { status: "failed", failedPhase: "processing", error: message(error, "Processing failed.") });
+      return;
     }
+    // Extraction starts on its own once a file is processed, so its data
+    // shows without a second click.
+    void this.runFullExtraction();
   }
 
   async resolveDuplicate(id: string, action: "use_existing" | "upload_anyway") {
@@ -418,14 +432,23 @@ export class BatchQueue {
     }
   }
 
+  private nextToExtract(): QueueItem | undefined {
+    return this.items.find((entry) => entry.status === "processed" && entry.documentId);
+  }
+
   /** Extracts every discovered field of each processed file, one file at
-   * a time. Resolves when all are done. */
+   * a time, including files that finish processing while it runs. Called
+   * automatically as files are processed; resolves when none are left. */
   async runFullExtraction() {
     if (this.extracting) return;
     this.extracting = true;
     this.emit();
     try {
-      for (const item of this.items.filter((entry) => entry.status === "processed" && entry.documentId)) {
+      for (
+        let item = this.nextToExtract();
+        item;
+        item = this.nextToExtract()
+      ) {
         const documentId = item.documentId!;
         this.patch(item.id, { status: "extracting", pipelineStage: "extracting_data", error: null });
         try {
@@ -441,7 +464,7 @@ export class BatchQueue {
             continue;
           }
           const result = await this.deps.extract(documentId, ids, (job) =>
-            this.patch(item.id, { pipelineStage: job.stage || job.status }),
+            this.patch(item.id, { pipelineStage: extractionPhaseStage(job.stage || job.status) }),
           );
           this.patch(item.id, {
             status: "extracted",

@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     # When true, discover-schema may ask the AI provider to refine
     # display names / groups for generic heuristic targets only.
     ai_schema_enrichment_enabled: bool = True
+    # Processing waits at most this long for that refinement; past it the
+    # heuristic labels stand (it only polishes names, so it never blocks).
+    ai_schema_enrichment_budget_seconds: float = 5.0
 
     # development | local | production
     # "development" shows the Gemini free-tier privacy notice in the UI.

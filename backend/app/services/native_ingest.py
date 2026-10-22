@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
+from sqlalchemy import insert
 from sqlalchemy.orm import Session
 
 from app.models.document_page import DocumentPage
@@ -205,17 +206,23 @@ def _store_page(
     database.add(page_record)
     database.flush()
 
-    for index, paragraph in enumerate(paragraphs):
-        database.add(
-            PageTextBlock(
-                document_page_id=page_record.id,
-                block_index=index,
-                block_type="text",
-                text=paragraph,
-                x0=0.0,
-                y0=0.0,
-                x1=0.0,
-                y1=0.0,
-                extraction_method=extraction_method,
-            )
+    if paragraphs:
+        # One bulk INSERT: a long HTML or Office file has tens of thousands
+        # of paragraphs, and building an ORM object for each took seconds.
+        database.execute(
+            insert(PageTextBlock),
+            [
+                {
+                    "document_page_id": page_record.id,
+                    "block_index": index,
+                    "block_type": "text",
+                    "text": paragraph,
+                    "x0": 0.0,
+                    "y0": 0.0,
+                    "x1": 0.0,
+                    "y1": 0.0,
+                    "extraction_method": extraction_method,
+                }
+                for index, paragraph in enumerate(paragraphs)
+            ],
         )

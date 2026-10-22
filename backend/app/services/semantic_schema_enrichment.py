@@ -6,9 +6,11 @@ it never invents keys or replaces selectable evidence-backed schema.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
+from app.core.config import get_settings
 from app.models.document_page import DocumentPage
 from app.schemas.document_target import DocumentTarget
 from app.schemas.schema_enrichment import SchemaEnrichmentResult, SchemaTargetEnrichment
@@ -147,12 +149,22 @@ async def enrich_targets_semantically(
         pages[:5],
         maximum_characters=_MAX_CONTEXT_CHARS,
     )
+    budget = get_settings().ai_schema_enrichment_budget_seconds
     try:
-        raw = await ai_provider.enrich_schema(
-            targets_json=_targets_payload(candidates),
-            page_context=page_context,
+        raw = await asyncio.wait_for(
+            ai_provider.enrich_schema(
+                targets_json=_targets_payload(candidates),
+                page_context=page_context,
+            ),
+            timeout=budget,
         )
         result = SchemaEnrichmentResult.model_validate(raw)
+    except TimeoutError:
+        logger.info("Semantic schema enrichment skipped: no answer within %ss", budget)
+        warnings.append(
+            f"Semantic schema enrichment took longer than {budget:g}s; using heuristic labels."
+        )
+        return targets, warnings
     except (AIProviderError, Exception) as exc:
         logger.info("Semantic schema enrichment skipped: %s", exc)
         warnings.append("Semantic schema enrichment unavailable; using heuristic labels.")

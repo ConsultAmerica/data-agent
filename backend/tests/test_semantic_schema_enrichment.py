@@ -1,4 +1,5 @@
 import asyncio
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -119,3 +120,27 @@ def test_enrich_targets_noop_when_ai_disabled() -> None:
     )
     assert enriched[0].display_name == "obscure field"
     assert warnings == []
+
+
+class SlowEnrichingProvider(StubEnrichingProvider):
+    async def enrich_schema(self, *, targets_json: str, page_context: str) -> dict[str, Any]:
+        await asyncio.sleep(5)
+        return await super().enrich_schema(targets_json=targets_json, page_context=page_context)
+
+
+def test_slow_enrichment_keeps_heuristic_labels_within_budget(monkeypatch) -> None:
+    from app.core.config import get_settings
+    from app.services import semantic_schema_enrichment
+
+    settings = get_settings().model_copy(update={"ai_schema_enrichment_budget_seconds": 0.05})
+    monkeypatch.setattr(semantic_schema_enrichment, "get_settings", lambda: settings)
+    pages = [SimpleNamespace(page_number=1, final_text="Termination notice: 30 days", form_fields_json={}, tables_json=[])]
+
+    t0 = time.perf_counter()
+    enriched, warnings = asyncio.run(
+        enrich_targets_semantically(targets=[_target()], pages=pages, ai_provider=SlowEnrichingProvider())
+    )
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 2
+    assert enriched[0].display_name == "obscure field"
+    assert any("took longer than" in warning for warning in warnings)
