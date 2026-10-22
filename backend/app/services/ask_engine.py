@@ -1,4 +1,4 @@
-"""Ask Dataomatix: grounded question answering over the caller's documents.
+"""DataoAI: grounded question answering over the caller's documents.
 
 No model writes the answer. A question is routed to what extraction already
 stored and verified, and every sentence in the answer cites a page:

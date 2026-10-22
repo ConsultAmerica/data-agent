@@ -9,6 +9,8 @@ Per page, the best available geometry is used:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import time
 from collections import Counter
@@ -390,6 +392,55 @@ def _compact(structure: StructuredSourceDocument) -> dict:
     return compact.model_dump(mode="json")
 
 
+# Stored beside the structure: what it was built from (see
+# source_structure_inputs_fingerprint).
+_FINGERPRINT_KEY = "_input_fingerprint"
+
+
+def source_structure_inputs_fingerprint(database: Session, document: Document) -> str:
+    """Everything build_source_structure reads: the stored file, each page's
+    size and OCR layout, the OCR DPI and the extractor version. Equal
+    fingerprints mean a rebuild would produce the same structure."""
+
+    digest = hashlib.sha256()
+    for part in (
+        EXTRACTOR_VERSION,
+        document.checksum_sha256,
+        document.stored_filename,
+        document.content_type,
+        get_settings().ocr_dpi,
+    ):
+        digest.update(f"{part}\x1f".encode())
+    rows = database.execute(
+        select(
+            DocumentPage.page_number,
+            DocumentPage.page_width,
+            DocumentPage.page_height,
+            DocumentPage.ocr_layout_json,
+        )
+        .where(DocumentPage.document_id == document.id)
+        .order_by(DocumentPage.page_number)
+    )
+    for number, width, height, layout in rows:
+        digest.update(f"{number}|{width}|{height}|".encode())
+        digest.update(json.dumps(layout, sort_keys=True, default=str).encode())
+        digest.update(b"\x1e")
+    return digest.hexdigest()
+
+
+def stored_source_structure_is_current(database: Session, document: Document) -> bool:
+    """True when the stored structure was built by this extractor from the
+    document's current inputs, so rebuilding it would change nothing."""
+
+    record = database.scalars(
+        select(DocumentSourceStructure).where(DocumentSourceStructure.document_id == document.id)
+    ).first()
+    if record is None or record.extractor_version != EXTRACTOR_VERSION:
+        return False
+    stored = (record.payload_json or {}).get(_FINGERPRINT_KEY)
+    return bool(stored) and stored == source_structure_inputs_fingerprint(database, document)
+
+
 def build_and_persist_source_structure(
     database: Session, document: Document
 ) -> StructuredSourceDocument:
@@ -402,7 +453,10 @@ def build_and_persist_source_structure(
         database.add(record)
     record.extractor_version = EXTRACTOR_VERSION
     record.source_type = structure.source_type
-    record.payload_json = _compact(structure)
+    record.payload_json = {
+        **_compact(structure),
+        _FINGERPRINT_KEY: source_structure_inputs_fingerprint(database, document),
+    }
     database.commit()
     return structure
 

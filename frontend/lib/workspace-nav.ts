@@ -55,7 +55,7 @@ export const WORKSPACE_NAV: WorkspaceNavItem[] = [
   { id: "extraction", label: "Extraction", href: "/extraction/new", match: ["/extraction"] },
   { id: "review", label: "Review queue", href: "/review-queue", match: ["/review-queue", "/review"] },
   // Intelligence & AI: asking, finding and comparing what the documents say.
-  { id: "ask", label: "Ask Dataomatix", href: "/ask", group: "Intelligence & AI" },
+  { id: "ask", label: "DataoAI", href: "/ask", group: "Intelligence & AI" },
   { id: "search", label: "Search", href: "/search" },
   { id: "clauses", label: "FAR / DFARS", href: "/clauses", match: ["/clauses"] },
   { id: "explorer", label: "Field Explorer", href: "/explorer" },
@@ -197,7 +197,7 @@ export function breadcrumbsForPath(
     "/review-queue": [...crumbs, { label: "Review queue" }],
     "/review": [...crumbs, { label: "Review" }],
     "/explorer": [...crumbs, { label: "Field Explorer" }],
-    "/ask": [...crumbs, { label: "Ask Dataomatix" }],
+    "/ask": [...crumbs, { label: "DataoAI" }],
     "/search": [...crumbs, { label: "Search" }],
     "/clauses": [...crumbs, { label: "FAR / DFARS" }],
     "/obligations": [...crumbs, { label: "Obligations" }],

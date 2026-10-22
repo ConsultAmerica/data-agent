@@ -54,9 +54,9 @@ export default function GlobalHeader({ onOpenSearch }: GlobalHeaderProps) {
             <span className="header-action-label whitespace-nowrap">New Document</span>
           </Link>
 
-          <Link href="/ask" className="btn-ask-agent shrink-0" title="Ask Dataomatix">
+          <Link href="/ask" className="btn-ask-agent shrink-0" title="DataoAI">
             <Sparkles className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-            <span className="header-action-label whitespace-nowrap">Ask Dataomatix</span>
+            <span className="header-action-label whitespace-nowrap">DataoAI</span>
           </Link>
 
           <CommandTrigger onOpen={onOpenSearch} kbdClassName="hidden xl:inline" labelClassName="hidden 2xl:inline" />

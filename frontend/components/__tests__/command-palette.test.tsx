@@ -79,7 +79,7 @@ describe("command palette", () => {
     render(<GlobalSearch open onClose={onClose} />);
     await typeQuery("termination");
     const input = screen.getByRole("combobox");
-    // First option: Ask Dataomatix; ArrowDown -> Search everything.
+    // First option: DataoAI; ArrowDown -> Search everything.
     fireEvent.keyDown(input, { key: "ArrowDown" });
     const selected = screen.getAllByRole("option").find((option) => option.getAttribute("aria-selected") === "true")!;
     expect(selected.textContent).toContain("Search everything");

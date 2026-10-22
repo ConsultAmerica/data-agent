@@ -17,28 +17,28 @@ describe("AssistantWidget", () => {
 
   it("opens from the pill and sends a typed question to /ask", async () => {
     render(<AssistantWidget />);
-    fireEvent.click(await screen.findByRole("button", { name: "Ask Dataomatix" }));
-    fireEvent.change(screen.getByLabelText("Ask Dataomatix a question"), { target: { value: "Who is the contractor?" } });
+    fireEvent.click(await screen.findByRole("button", { name: "DataoAI" }));
+    fireEvent.change(screen.getByLabelText("Ask DataoAI a question"), { target: { value: "Who is the contractor?" } });
     fireEvent.click(screen.getByRole("button", { name: "Ask" }));
     expect(push).toHaveBeenCalledWith("/ask?q=Who%20is%20the%20contractor%3F");
   });
 
   it("runs a quick question", async () => {
     render(<AssistantWidget />);
-    fireEvent.click(await screen.findByRole("button", { name: "Ask Dataomatix" }));
+    fireEvent.click(await screen.findByRole("button", { name: "DataoAI" }));
     fireEvent.click(screen.getByRole("button", { name: /DFARS 252\.204-7012/ }));
     expect(push).toHaveBeenCalledWith(`/ask?q=${encodeURIComponent("Which contracts include DFARS 252.204-7012?")}`);
   });
 
   it("stays dismissed once closed", async () => {
     const { unmount } = render(<AssistantWidget />);
-    fireEvent.click(await screen.findByRole("button", { name: "Ask Dataomatix" }));
+    fireEvent.click(await screen.findByRole("button", { name: "DataoAI" }));
     fireEvent.click(screen.getByRole("button", { name: "Close assistant" }));
-    expect(screen.queryByRole("button", { name: "Ask Dataomatix" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "DataoAI" })).toBeNull();
     unmount();
     render(<AssistantWidget />);
     await Promise.resolve();
-    expect(screen.queryByRole("button", { name: "Ask Dataomatix" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "DataoAI" })).toBeNull();
   });
 });
 

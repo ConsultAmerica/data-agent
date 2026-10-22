@@ -10,7 +10,7 @@ export default function AskPage() {
     <Suspense
       fallback={
         <LoadingState
-          title="Loading Ask Dataomatix..."
+          title="Loading DataoAI..."
           description="Connecting to extracted data and source pages."
         />
       }

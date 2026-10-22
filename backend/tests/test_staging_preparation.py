@@ -128,6 +128,41 @@ def test_unconfident_resolution_does_not_skip_structure(monkeypatch):
     assert stored is True
 
 
+def test_unchanged_document_reuses_its_stored_structure(monkeypatch):
+    """Re-extracting an unchanged document skips the rebuild; a changed
+    page, or an unconfident resolution, still rebuilds."""
+
+    document_id = _uploaded_processed_document()
+    builds: list[str] = []
+    real_build = preparation.build_and_persist_source_structure
+
+    def counting_build(database, document):
+        builds.append(document.id)
+        return real_build(database, document)
+
+    monkeypatch.setattr(preparation, "build_and_persist_source_structure", counting_build)
+    confident = lambda: ProfileResolution(GENERIC, "generic_business", "Generic", [], True)  # noqa: E731
+
+    first, _, _ = _run_prepare(document_id, confident, monkeypatch)
+    second, _, _ = _run_prepare(document_id, confident, monkeypatch)
+    assert len(builds) == 1
+    assert first.structure_built and second.structure_built
+    assert "stored structure is current" in second.structure_reason
+
+    database = SessionLocal()
+    try:
+        page = database.scalars(select(DocumentPage).where(DocumentPage.document_id == document_id)).first()
+        page.ocr_layout_json = {"changed": str(uuid4())}
+        database.commit()
+    finally:
+        database.close()
+    _run_prepare(document_id, confident, monkeypatch)
+    assert len(builds) == 2
+
+    _run_prepare(document_id, lambda: ProfileResolution(GENERIC, "unknown", "Unknown", [], False), monkeypatch)
+    assert len(builds) == 3
+
+
 def test_real_resolution_of_generic_document_builds_structure():
     document_id = _uploaded_processed_document()
     result, stored, profile_id = _run_prepare(document_id, None)

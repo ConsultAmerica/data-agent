@@ -1,6 +1,6 @@
 """Contract Insights Search: full-text search across every visible document.
 
-The question is read the same way Ask Dataomatix reads it (terms, FAR/DFARS
+The question is read the same way DataoAI reads it (terms, FAR/DFARS
 shorthand, clause numbers), the page text is searched passage by passage
 (clause-bounded chunks, BM25 with an exact clause-number boost), and each
 matching document comes back with its best passages highlighted, the clauses

@@ -49,7 +49,7 @@ const FEATURES: Feature[] = [
   },
   {
     id: "ask",
-    eyebrow: "Ask Dataomatix",
+    eyebrow: "DataoAI",
     title: "Answers that cite the page they came from.",
     body: "Ask in plain English across one contract or the whole repository. Answers come from extracted fields, clause references and the contract text, and each citation opens the source page with the passage highlighted.",
     points: [

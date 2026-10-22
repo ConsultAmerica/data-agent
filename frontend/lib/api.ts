@@ -39,6 +39,13 @@ function renderServiceName(): string {
   }
 }
 
+function outdatedBackendMessage(): string {
+  return isRenderBackend()
+    ? `The Dataomatix API at ${API_URL} doesn't have this feature yet — it is running an older version. ` +
+        `Redeploy the ${renderServiceName()} service on Render with the latest commit.`
+    : `The Dataomatix API at ${API_URL} doesn't have this feature yet — restart it on the latest code.`;
+}
+
 function unreachableBackendMessage(): string {
   if (isRenderBackend()) {
     return (
@@ -171,7 +178,13 @@ export async function apiFetch<T = unknown>(
   }
 
   if (!response.ok) {
-    throw new ApiError(await extractErrorMessage(response), response.status);
+    const message = await extractErrorMessage(response);
+    // FastAPI's bare "Not Found" means the route itself doesn't exist (missing
+    // records say what is missing), i.e. the API is older than this app.
+    if (response.status === 404 && message.trim() === "Not Found") {
+      throw new ApiError(outdatedBackendMessage(), 404);
+    }
+    throw new ApiError(message, response.status);
   }
 
   const text = await response.text();

@@ -23,7 +23,10 @@ from sqlalchemy.orm import Session
 
 from app.models.document import Document
 from app.models.document_staging_workbook import DocumentStagingWorkbook
-from app.source_structure.service import build_and_persist_source_structure
+from app.source_structure.service import (
+    build_and_persist_source_structure,
+    stored_source_structure_is_current,
+)
 from app.staging import registry
 from app.staging.profile import StagingProfile
 from app.staging.resolver import persist_resolution, refine_with_structure, resolve_profile
@@ -54,7 +57,12 @@ def prepare_staging(database: Session, document: Document) -> StagingPreparation
 
     needed, reason = source_structure_needed(resolution.profile, confident=resolution.confident)
     structure_ms = 0
-    if needed:
+    if needed and resolution.confident and stored_source_structure_is_current(database, document):
+        # Re-extracting an unchanged document: the stored structure is what a
+        # rebuild would produce. (An unconfident resolution still rebuilds —
+        # refinement reads the full, uncompacted structure.)
+        reason += "; stored structure is current"
+    elif needed:
         structure_started = time.perf_counter()
         structure = build_and_persist_source_structure(database, document)
         structure_ms = int((time.perf_counter() - structure_started) * 1000)

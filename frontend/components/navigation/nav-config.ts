@@ -98,7 +98,7 @@ export const PLATFORM_SECTIONS: MegaMenuSection[] = [
   {
     title: "Intelligence",
     tiles: [
-      { label: "Ask Dataomatix", description: "Query document data", href: "/ask", icon: Sparkles },
+      { label: "DataoAI", description: "Query document data", href: "/ask", icon: Sparkles },
       { label: "Search", description: "Search documents and fields", href: "/search", icon: Search },
       { label: "Analytics", description: "Portfolio insights", href: "/analytics", icon: BarChart3 },
       { label: "FAR / DFARS", description: "Contract intelligence", href: "/clauses", icon: ScrollText },
@@ -119,7 +119,7 @@ export const INTELLIGENCE_SECTIONS: MegaMenuSection[] = [
         icon: Compass,
       },
       {
-        label: "Ask Dataomatix",
+        label: "DataoAI",
         description: "Query document data",
         href: "/ask",
         icon: Sparkles,

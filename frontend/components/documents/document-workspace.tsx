@@ -123,7 +123,7 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
   const [activeDataset, setActiveDataset] = useState("");
   // A value opened from the Data tab ("View in document"), shown in Source.
   // A link can open the same way: ?view=source&page=12&hl=quoted%20text
-  // (Ask Dataomatix citations land on the cited page, highlighted).
+  // (DataoAI citations land on the cited page, highlighted).
   const linkedPage = Number(searchParams.get("page"));
   const linkedHighlight = searchParams.get("hl");
   const [sourceFocus, setSourceFocus] = useState<SourceViewRequest | null>(() =>

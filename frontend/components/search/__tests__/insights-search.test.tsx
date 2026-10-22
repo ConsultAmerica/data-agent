@@ -140,7 +140,7 @@ describe("InsightsSearch", () => {
     render(<InsightsSearch />);
     const chip = await screen.findByRole("link", { name: "Citation 1" });
     expect(chip.getAttribute("href")).toBe("/documents/c1?view=source&page=11");
-    expect(screen.getByText(/Answer from Ask Dataomatix · cited/)).toBeTruthy();
+    expect(screen.getByText(/Answer from DataoAI · cited/)).toBeTruthy();
     expect(askQuestion).toHaveBeenCalledWith("cyber");
   });
 

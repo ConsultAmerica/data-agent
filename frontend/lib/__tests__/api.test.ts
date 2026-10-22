@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { probeBackend } from "@/lib/api";
+import { ApiError, apiFetch, probeBackend } from "@/lib/api";
 
 describe("probeBackend", () => {
   let originalFetch: typeof fetch;
@@ -72,5 +72,34 @@ describe("probeBackend", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     vi.unstubAllEnvs();
+  });
+});
+
+describe("apiFetch 404s", () => {
+  let originalFetch: typeof fetch;
+  beforeEach(() => {
+    originalFetch = global.fetch;
+  });
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  function respond(status: number, detail: string) {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail }), { status, headers: { "Content-Type": "application/json" } }),
+    );
+  }
+
+  it("explains a missing route as an out-of-date API", async () => {
+    respond(404, "Not Found");
+    const error = await apiFetch("/api/intake/config").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(404);
+    expect((error as Error).message).toMatch(/doesn't have this feature yet/);
+  });
+
+  it("keeps a specific not-found message as is", async () => {
+    respond(404, "Document not found.");
+    await expect(apiFetch("/api/documents/x")).rejects.toThrow("Document not found.");
   });
 });

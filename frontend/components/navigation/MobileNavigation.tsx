@@ -92,7 +92,7 @@ function Drawer({ onClose }: { onClose: () => void }) {
               className="flex items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-2.5 text-sm font-semibold text-white"
             >
               <Sparkles className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-              <span className="truncate">Ask Dataomatix</span>
+              <span className="truncate">DataoAI</span>
             </Link>
           </div>
 

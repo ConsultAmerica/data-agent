@@ -17,7 +17,7 @@ class PlaybookSavedQuery(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_workspace: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
-    # "ask" (an Ask Dataomatix prompt) | "clause_search" (FAR/DFARS search) |
+    # "ask" (a DataoAI prompt) | "clause_search" (FAR/DFARS search) |
     # "extraction" (custom extraction criteria)
     kind: Mapped[str] = mapped_column(String(20), nullable=False)
     query: Mapped[str] = mapped_column(Text, nullable=False)

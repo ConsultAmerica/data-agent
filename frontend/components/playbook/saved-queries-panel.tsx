@@ -54,7 +54,7 @@ export default function SavedQueriesPanel() {
     <div id="saved-queries" className="scroll-mt-24">
       <Panel
         title="Saved queries"
-        description="Prompts and extraction criteria your team reuses. Ask prompts show as Team prompts in Ask Dataomatix, clause searches on FAR / DFARS, and extraction criteria under Saved criteria in an extraction's custom instruction."
+        description="Prompts and extraction criteria your team reuses. Ask prompts show as Team prompts in DataoAI, clause searches on FAR / DFARS, and extraction criteria under Saved criteria in an extraction's custom instruction."
         action={
           <button type="button" onClick={() => setEditing("new")} className="btn-primary">
             Add query
@@ -87,7 +87,7 @@ export default function SavedQueriesPanel() {
           <p className="text-sm text-text-secondary">Loading saved queries…</p>
         ) : queries.length === 0 ? (
           <EmptyNote>
-            No saved queries yet. Use “Save to playbook” in Ask Dataomatix, on FAR / DFARS, or next to an
+            No saved queries yet. Use “Save to playbook” in DataoAI, on FAR / DFARS, or next to an
             extraction&apos;s custom instruction — or add one here.
           </EmptyNote>
         ) : (

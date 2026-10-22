@@ -10,7 +10,8 @@ class DocumentSourceStructure(Base):
     """The schema-neutral structural extraction of one document (regions,
     label/value candidates, table candidates) — an intermediate source
     artifact that staging profiles interpret. Rebuilt when extraction runs
-    or when `extractor_version` changes."""
+    unless its stored input fingerprint shows the document is unchanged,
+    and whenever `extractor_version` changes."""
 
     __tablename__ = "document_source_structures"
 

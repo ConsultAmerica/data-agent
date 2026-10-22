@@ -1,4 +1,4 @@
-"""Ask Dataomatix (mounted at /api/ask)."""
+"""DataoAI (mounted at /api/ask)."""
 
 from __future__ import annotations
 

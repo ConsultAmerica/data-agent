@@ -6,7 +6,7 @@ import { ChevronDown, Loader2, Sparkles } from "lucide-react";
 
 import { askQuestion, splitCitations, type AskResponse } from "@/lib/ask";
 
-/** Ask Dataomatix's cited answer for the same query, above the results. */
+/** DataoAI's cited answer for the same query, above the results. */
 export default function AiAnswerCard({ query }: { query: string }) {
   const [outcome, setOutcome] = useState<{ query: string; response: AskResponse | null; error: string }>({
     query: "",
@@ -45,7 +45,7 @@ export default function AiAnswerCard({ query }: { query: string }) {
       >
         <Sparkles className="h-4 w-4 text-primary" />
         <span className="text-xs font-semibold uppercase tracking-wider text-primary">
-          Answer from Ask Dataomatix · cited
+          Answer from DataoAI · cited
         </span>
         <ChevronDown className={`ml-auto h-4 w-4 text-text-muted transition-transform ${open ? "" : "-rotate-90"}`} />
       </button>
@@ -77,7 +77,7 @@ export default function AiAnswerCard({ query }: { query: string }) {
                   })}
                 </p>
                 <Link href={`/ask?q=${encodeURIComponent(query)}`} className="mt-3 inline-block text-xs font-medium text-primary hover:underline">
-                  Continue in Ask Dataomatix →
+                  Continue in DataoAI →
                 </Link>
               </>
             )

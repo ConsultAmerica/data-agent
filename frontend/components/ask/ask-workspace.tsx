@@ -205,7 +205,7 @@ export default function AskWorkspace() {
         <div className="text-center">
           <p className="inline-flex items-center gap-2 text-sm font-medium text-primary-deep">
             <Sparkles className="h-4 w-4" />
-            Ask Dataomatix
+            DataoAI
           </p>
           <h1 className="headline-editorial mt-3">What would you like to know?</h1>
           {!started && (

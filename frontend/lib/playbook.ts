@@ -220,7 +220,7 @@ export interface SavedQuery {
 export type SavedQueryInput = Pick<SavedQuery, "name" | "kind" | "query"> & { description?: string };
 
 export const SAVED_QUERY_KIND_LABELS: Record<SavedQueryKind, string> = {
-  ask: "Ask Dataomatix prompt",
+  ask: "DataoAI prompt",
   clause_search: "FAR / DFARS search",
   extraction: "Extraction criteria",
 };

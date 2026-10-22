@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 
 import PdfPageViewer from "@/components/pdf-page-viewer";
 import PdfToolbar, { type SearchMatch } from "@/components/pdf-toolbar";
+import { ApiError } from "@/lib/api";
 import { getDocumentPages, getPageRender } from "@/lib/documents";
 import type { DocumentPage, PageRender } from "@/types/document";
 
@@ -67,6 +68,10 @@ export default function SourceVerificationPanel({
   const [pageRender, setPageRender] = useState<PageRender | null>(null);
   const [renderLoading, setRenderLoading] = useState(false);
   const [renderError, setRenderError] = useState("");
+  // Office, text and XML files have no page images; the server says so
+  // with a 422 and the viewer shows each page's extracted text instead.
+  const [textOnlyDocument, setTextOnlyDocument] = useState<string | null>(null);
+  const textOnly = textOnlyDocument === documentId;
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState<0 | 90 | 180 | 270>(0);
 
@@ -136,6 +141,14 @@ export default function SourceVerificationPanel({
           }
         }
       } catch (error) {
+        if (active && error instanceof ApiError && error.status === 422) {
+          setTextOnlyDocument(documentId);
+          if (!documentPages) {
+            const pages = await getDocumentPages(documentId).catch(() => null);
+            if (active && pages) setDocumentPages(pages);
+          }
+          return;
+        }
         if (active && !cached) {
           setRenderError(
             error instanceof Error
@@ -273,15 +286,77 @@ export default function SourceVerificationPanel({
       />
 
       <div ref={viewerRef} className="min-h-0 flex-1">
-        <PdfPageViewer
-          render={pageRender}
-          loading={renderLoading}
-          error={renderError}
-          zoom={zoom}
-          rotation={rotation}
-          hideHeader
-        />
+        {textOnly ? (
+          <PageTextView
+            page={documentPages?.find((page) => page.page_number === currentPage) ?? null}
+            loading={documentPages === null}
+            highlight={highlight.text}
+            zoom={zoom}
+          />
+        ) : (
+          <PdfPageViewer
+            render={pageRender}
+            loading={renderLoading}
+            error={renderError}
+            zoom={zoom}
+            rotation={rotation}
+            hideHeader
+          />
+        )}
       </div>
+    </div>
+  );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** A page of a document that has no page image (Office, text, XML): its
+ * extracted text, with the selected value highlighted. */
+function PageTextView({
+  page,
+  loading,
+  highlight,
+  zoom,
+}: {
+  page: DocumentPage | null;
+  loading: boolean;
+  highlight: string | null;
+  zoom: number;
+}) {
+  if (loading) {
+    return (
+      <p className="flex h-full items-center justify-center gap-2 text-sm text-text-secondary">
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+        Loading the document text…
+      </p>
+    );
+  }
+  if (!page || !page.final_text.trim()) {
+    return <p className="p-6 text-center text-sm text-text-secondary">No text was extracted for this page.</p>;
+  }
+  const needle = highlight?.trim();
+  const parts = needle ? page.final_text.split(new RegExp(`(${escapeRegExp(needle)})`, "i")) : [page.final_text];
+  return (
+    <div className="h-full overflow-auto bg-surface p-5" data-testid="page-text-view">
+      <p className="mb-3 text-[11px] text-text-muted">
+        Extracted text — this file type has no page image.
+      </p>
+      <pre
+        className="whitespace-pre-wrap break-words font-sans leading-6 text-foreground"
+        style={{ fontSize: `${Math.round(13 * zoom)}px` }}
+      >
+        {parts.map((part, index) =>
+          index % 2 === 1 ? (
+            <mark key={index} className="rounded bg-warning/25 px-0.5 text-foreground">
+              {part}
+            </mark>
+          ) : (
+            <span key={index}>{part}</span>
+          ),
+        )}
+      </pre>
     </div>
   );
 }

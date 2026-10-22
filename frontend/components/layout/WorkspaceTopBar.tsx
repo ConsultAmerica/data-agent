@@ -27,7 +27,7 @@ export default function WorkspaceTopBar({ onOpenSearch, onOpenMobileNav }: Works
         >
           <Menu className="h-4 w-4" strokeWidth={1.75} />
         </button>
-        <Link href="/documents" className="header-brand-link" aria-label="Dataomatix documents">
+        <Link href="/" className="header-brand-link" aria-label="Dataomatix home">
           <DataAgentLogo variant="wordmark" tone="onDark" size={36} />
         </Link>
       </div>
@@ -37,7 +37,7 @@ export default function WorkspaceTopBar({ onOpenSearch, onOpenMobileNav }: Works
           <Plus className="h-4 w-4 shrink-0" strokeWidth={2} />
           <span className="header-action-label whitespace-nowrap">New Document</span>
         </Link>
-        <Link href="/ask" className="btn-ask-agent shrink-0" title="Ask Dataomatix">
+        <Link href="/ask" className="btn-ask-agent shrink-0" title="DataoAI">
           <Sparkles className="h-4 w-4 shrink-0" strokeWidth={1.75} />
           <span className="header-action-label whitespace-nowrap">Ask</span>
         </Link>

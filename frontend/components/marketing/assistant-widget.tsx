@@ -24,7 +24,7 @@ function subscribeToStorage(onChange: () => void) {
   return () => window.removeEventListener("storage", onChange);
 }
 
-/** Floating "Ask Dataomatix" helper on marketing pages: a pill that opens a
+/** Floating "DataoAI" helper on marketing pages: a pill that opens a
  * small card; questions go to /ask. Dismissal is remembered per browser. */
 export default function AssistantWidget() {
   const router = useRouter();
@@ -60,10 +60,10 @@ export default function AssistantWidget() {
           onClick={() => setOpen(true)}
           className="assistant-pill"
           aria-expanded={false}
-          aria-label="Ask Dataomatix"
+          aria-label="DataoAI"
         >
           <Sparkles className="h-4 w-4" />
-          <span className="hidden sm:inline">Ask Dataomatix</span>
+          <span className="hidden sm:inline">DataoAI</span>
         </button>
       </div>
     );
@@ -71,10 +71,10 @@ export default function AssistantWidget() {
 
   return (
     <div className="assistant-widget">
-      <section className="assistant-card" aria-label="Ask Dataomatix">
+      <section className="assistant-card" aria-label="DataoAI">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-[var(--text-dark)]">Ask Dataomatix</p>
+            <p className="text-sm font-semibold text-[var(--text-dark)]">DataoAI</p>
             <p className="text-xs text-[var(--text-muted)]">Answers cite the source page</p>
           </div>
           <div className="flex items-center gap-1">
@@ -126,7 +126,7 @@ export default function AssistantWidget() {
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
             placeholder="Ask a question"
-            aria-label="Ask Dataomatix a question"
+            aria-label="Ask DataoAI a question"
             className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[var(--text-muted)]"
           />
           <button

@@ -206,7 +206,7 @@ function CommandPalette({ onClose }: { onClose: () => void }) {
         {
           id: "cmd-ask",
           section: "Commands",
-          title: `Ask Dataomatix: “${trimmed}”`,
+          title: `Ask DataoAI: “${trimmed}”`,
           subtitle: "Cited answer from your documents",
           icon: Sparkles,
           href: `/ask?q=${encodeURIComponent(trimmed)}`,
