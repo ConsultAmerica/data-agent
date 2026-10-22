@@ -19,7 +19,7 @@ export default function InsightsPage() {
     <>
       <PageHero
         compact
-        eyebrow="Intelligence / Contract Insights"
+        eyebrow="Intelligence & AI"
         title="Contract insights"
         description="Who you contract with, which vehicles and clauses recur, and which periods of performance end soon."
       />

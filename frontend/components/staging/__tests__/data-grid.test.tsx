@@ -224,15 +224,15 @@ describe("compact data grid", () => {
 
 describe("document workspace", () => {
   it(
-    "uses the full width, names the document by filename and opens on its data",
+    "uses the full width, names the document by filename and opens on its summary",
     async () => {
       search = new URLSearchParams();
       const { unmount } = render(<DocumentWorkspace documentId="x1" />);
-      // Documents open on the business Data view; technical stages follow.
+      // Documents open on the staged Summary; technical stages follow, Transform last.
       const views = await screen.findByRole("tablist", { name: "Document views" });
       const names = within(views).getAllByRole("tab").map((tab) => tab.textContent);
-      expect(names.slice(0, 3)).toEqual(["Data", "Source", "Overview"]);
-      expect(within(views).getByRole("tab", { name: "Data" }).getAttribute("aria-selected")).toBe("true");
+      expect(names).toEqual(["Summary", "Overview", "Source", "Canonical", "Transform"]);
+      expect(within(views).getByRole("tab", { name: "Summary" }).getAttribute("aria-selected")).toBe("true");
       unmount();
 
       search = new URLSearchParams("view=staging");

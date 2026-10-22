@@ -6,7 +6,7 @@ import re
 from typing import Any, Literal
 
 from app.schemas.extraction_intelligence import ValidationCheck, ValidationResult
-from app.services.label_rejection import reject_as_field_value
+from app.services.label_rejection import is_word_not_identifier, reject_as_field_value
 from app.services.source_validator import validate_source_value
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -64,6 +64,9 @@ def build_validation_result(
     ):
         type_status = "failed"
         warnings.append("Identifier is not a compact ID pattern.")
+    elif value_type in _IDENTIFIER_TYPES and is_word_not_identifier(text):
+        type_status = "failed"
+        warnings.append("Identifier has no digits; it reads as a word, not an ID.")
     checks.append(ValidationCheck(type="data_type", status=type_status))
 
     format_status: CheckStatus = "passed" if text else "failed"

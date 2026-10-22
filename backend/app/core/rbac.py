@@ -1,4 +1,4 @@
-"""RBAC roles and permission matrix for Data Agent.
+"""RBAC roles and permission matrix for Dataomatix.
 
 Roles
 -----

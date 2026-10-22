@@ -1,11 +1,11 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 
-import { ArrowRight, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, Play, Sparkles } from "lucide-react";
 
 import ContentSection from "@/components/layout/ContentSection";
 import PageHero from "@/components/layout/PageHero";
@@ -17,9 +17,27 @@ import AnalysisRequest from "@/components/analysis-request";
 import UniversalResults from "@/components/universal-results";
 import type { SourceViewRequest } from "@/components/source-verification-panel";
 import DocumentOverview from "@/components/document-overview";
-import DocumentUploader from "@/components/document-uploader";
 import BackendStatusBanner from "@/components/backend-status-banner";
 import ImportSourceTabs from "@/components/import-source-tabs";
+import BackendStatusPill from "@/components/navigation/BackendStatusPill";
+import BatchFooter from "@/components/intake/batch-footer";
+import BatchIntakePortal from "@/components/intake/batch-intake-portal";
+import { useBatchQueue, type QueueItem } from "@/components/intake/batch-queue";
+import IntakeProgressTracker from "@/components/intake/intake-progress-tracker";
+import ProcessingQueue from "@/components/intake/processing-queue";
+import UcfFieldReview from "@/components/intake/ucf-field-review";
+import {
+  batchIntakeStep,
+  extractableTargets,
+  getDocumentIntake,
+  getIntakeBatch,
+  getIntakeConfig,
+  newBatchId,
+  type IntakeConfig,
+  type IntakeFields,
+  type IntakeStatus,
+} from "@/lib/intake";
+import { recordRecentDocument } from "@/lib/recent-documents";
 import {
   markExtractionCompleted,
   markProcessingStarted,
@@ -46,6 +64,7 @@ import {
 } from "@/lib/documents";
 import {
   actionableWorkflowError,
+  intakeStepForWorkflowStep,
   resolveClassificationDisplay,
   resolveWorkflowStep,
 } from "@/lib/extraction-workflow";
@@ -89,8 +108,77 @@ export default function NewExtractionPage() {
 
 function NewExtractionPageContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const reopenDocumentId = searchParams.get("documentId");
   const focusFieldKey = searchParams.get("focus");
+  const reopenBatchId = searchParams.get("batch");
+
+  // Batch intake: tags sent with each upload, the per-file queue, and the
+  // batch's draft / submitted / rejected decision.
+  const [intakeConfig, setIntakeConfig] = useState<IntakeConfig | null>(null);
+  const [intakeConfigError, setIntakeConfigError] = useState(false);
+  const [intakeFields, setIntakeFields] = useState<IntakeFields>(() => ({
+    batch_id: reopenBatchId || newBatchId(),
+    agency: "",
+    contracting_officer: "",
+    extraction_profile: "auto",
+  }));
+  const intakeFieldsRef = useRef(intakeFields);
+  useEffect(() => {
+    intakeFieldsRef.current = intakeFields;
+  }, [intakeFields]);
+  const { queue, items: queueItems } = useBatchQueue(() => intakeFieldsRef.current);
+  const queueItemsRef = useRef<QueueItem[]>(queueItems);
+  useEffect(() => {
+    queueItemsRef.current = queueItems;
+  }, [queueItems]);
+  const [batchStatus, setBatchStatus] = useState<IntakeStatus | "mixed" | null>(null);
+  const adoptedBatchRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    getIntakeConfig()
+      .then((config) => {
+        if (active) setIntakeConfig(config);
+      })
+      .catch(() => {
+        if (active) setIntakeConfigError(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  /** Loads a saved batch into the queue (files restored from the server). */
+  const adoptBatch = useCallback(
+    (batchId: string) => {
+      if (adoptedBatchRef.current === batchId) return;
+      adoptedBatchRef.current = batchId;
+      getIntakeBatch(batchId)
+        .then((batch) => {
+          queue.restore(batch);
+          setBatchStatus(batch.intake_status);
+          const first = batch.documents[0];
+          setIntakeFields((current) => ({
+            ...current,
+            batch_id: batchId,
+            agency: current.agency || first?.agency || "",
+            contracting_officer: current.contracting_officer || first?.contracting_officer || "",
+            extraction_profile:
+              current.extraction_profile !== "auto" ? current.extraction_profile : first?.extraction_profile || "auto",
+          }));
+        })
+        .catch(() => {
+          // Unknown / unreachable batch: the page still works as a new batch.
+          adoptedBatchRef.current = null;
+        });
+    },
+    [queue],
+  );
+
+  useEffect(() => {
+    if (reopenBatchId) adoptBatch(reopenBatchId);
+  }, [reopenBatchId, adoptBatch]);
 
   const [document, setDocument] =
     useState<UploadedDocument | null>(null);
@@ -129,20 +217,28 @@ function NewExtractionPageContent() {
   const processInFlightRef = useRef(false);
   const extractInFlightRef = useRef(false);
 
+  // The staging profile loaded for a document; it applies only while
+  // that document is open with its pages extracted.
+  const [loadedProfile, setLoadedProfile] = useState<{
+    documentId: string;
+    profile: ProfileDescriptor | null;
+  } | null>(null);
+  const stagingProfile =
+    document && extraction && loadedProfile?.documentId === document.document_id
+      ? loadedProfile.profile
+      : null;
+
   // Overlap Render cold-start with browsing/file pick — upload auto-starts when healthy.
   useEffect(() => {
     const documentId = document?.document_id;
-    if (!documentId || !extraction) {
-      setStagingProfile(null);
-      return;
-    }
+    if (!documentId || !extraction) return;
     let active = true;
     getStagingProfile(documentId)
       .then((profile) => {
-        if (active) setStagingProfile(profile);
+        if (active) setLoadedProfile({ documentId, profile });
       })
       .catch(() => {
-        if (active) setStagingProfile(null);
+        if (active) setLoadedProfile({ documentId, profile: null });
       });
     return () => {
       active = false;
@@ -188,8 +284,6 @@ function NewExtractionPageContent() {
 
   // A profile that declares its own presentation (e.g. FAR Part 52) is
   // reviewed in its document workspace, not the generic analysis tabs.
-  const [stagingProfile, setStagingProfile] =
-    useState<ProfileDescriptor | null>(null);
   const presentedProfile = stagingProfile?.views?.length ? stagingProfile : null;
   // Once a specific profile is resolved (XML Document, FAR Part 52,
   // Contract…), it — not incidental keyword hits such as "Amount Due" —
@@ -256,6 +350,15 @@ function NewExtractionPageContent() {
         if (!active) return;
 
         setDocument(doc);
+        recordRecentDocument(doc.document_id, doc.original_filename);
+        if (!reopenBatchId && queueItemsRef.current.length === 0) {
+          // Opened on its own: bring in the batch it was uploaded with.
+          getDocumentIntake(doc.document_id)
+            .then((intake) => {
+              if (active && intake.batch_id) adoptBatch(intake.batch_id);
+            })
+            .catch(() => undefined);
+        }
         setPages(pagesResult);
         setExtraction({
           document_id: doc.document_id,
@@ -328,7 +431,7 @@ function NewExtractionPageContent() {
     return () => {
       active = false;
     };
-  }, [reopenDocumentId, document, focusFieldKey]);
+  }, [reopenDocumentId, document, focusFieldKey, reopenBatchId, adoptBatch]);
 
   useEffect(() => {
     if (!extracting || !document) {
@@ -942,7 +1045,7 @@ function NewExtractionPageContent() {
       const result = await confirmRelationship(
         document.document_id,
         action,
-        "Data Agent",
+        "Dataomatix",
       );
 
       setContractAnalysis({
@@ -959,6 +1062,101 @@ function NewExtractionPageContent() {
       setRelationshipBusy(false);
     }
   }
+
+  function resetDocumentState() {
+    processInFlightRef.current = false;
+    extractInFlightRef.current = false;
+    setDocument(null);
+    setExtraction(null);
+    setPages([]);
+    setUniversalResult(null);
+    setTargetResult(null);
+    setTargetResultDurationMs(null);
+    setContractAnalysis(null);
+    setStructuredOutput(null);
+    setStructureDetection(null);
+    setSchemaDiscovery(null);
+    setSchemaDiscoveryError("");
+    setWorkflowError("");
+    setContractAnalysisError("");
+    setLoadedProfile(null);
+    setSourceRequest(null);
+    setPipelineStage(null);
+  }
+
+  const batchHasFiles = queueItems.length > 0 || batchStatus != null;
+
+  function extractionUrl(documentId?: string): string {
+    const params = new URLSearchParams();
+    if (batchHasFiles) params.set("batch", intakeFields.batch_id);
+    if (documentId) params.set("documentId", documentId);
+    const query = params.toString();
+    return query ? `/extraction/new?${query}` : "/extraction/new";
+  }
+
+  /** Opens a processed file of the batch in the review workspace (the
+   * same persisted-record path as ?documentId=). */
+  function openQueueItem(item: QueueItem) {
+    if (!item.documentId) return;
+    resetDocumentState();
+    router.replace(extractionUrl(item.documentId), { scroll: false });
+  }
+
+  /** Back to the batch (upload portal + queue). */
+  function closeDocument() {
+    resetDocumentState();
+    router.replace(extractionUrl(), { scroll: false });
+  }
+
+  const handleBatchFiles = useCallback(
+    (files: File[]) => {
+      if (files.length === 0) return;
+      // A live batch: never re-load it from the server over the queue.
+      adoptedBatchRef.current = intakeFieldsRef.current.batch_id;
+      if (batchStatus === "submitted" || batchStatus === "rejected") setBatchStatus("mixed");
+      queue.addFiles(files);
+    },
+    [queue, batchStatus],
+  );
+
+  // A single dropped file opens in the review workspace once processed,
+  // as the one-file upload always did.
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (autoOpenedRef.current || document || reopenDocumentId) return;
+    const live = queueItems.filter((item) => item.file != null);
+    if (queueItems.length !== 1 || live.length !== 1) return;
+    const [only] = live;
+    if (only.status === "processed" && only.documentId) {
+      autoOpenedRef.current = true;
+      const params = new URLSearchParams({ batch: intakeFieldsRef.current.batch_id, documentId: only.documentId });
+      router.replace(`/extraction/new?${params.toString()}`, { scroll: false });
+    }
+  }, [queueItems, document, reopenDocumentId, router]);
+
+  const focusedExtractable = extractableTargets(schemaDiscovery?.targets ?? []);
+  const queueExtractable = queueItems.some((item) => item.status === "processed");
+  const runFullExtractionDisabled = document
+    ? !extraction || extracting || Boolean(targetExtractionJob) || focusedExtractable.length === 0
+    : queue.extractionRunning || !queueExtractable;
+  const fullExtractionRunning = document ? Boolean(targetExtractionJob) : queue.extractionRunning;
+
+  async function handleRunFullExtraction() {
+    if (document) {
+      try {
+        await handleExtractTargets(focusedExtractable.map((target) => target.id));
+      } catch (error) {
+        setWorkflowError(error instanceof Error ? error.message : "Extraction failed.");
+      }
+      return;
+    }
+    await queue.runFullExtraction();
+  }
+
+  const batchDocumentCount = queueItems.filter((item) => item.documentId != null).length;
+  const batchBusyCount = queueItems.filter((item) =>
+    ["waiting", "uploading", "processing", "extracting"].includes(item.status),
+  ).length;
 
   const classificationBase = resolveClassificationDisplay({
     persistedFamilyKey: stagingProfile?.document_families?.[0] ?? null,
@@ -993,14 +1191,30 @@ function NewExtractionPageContent() {
 
   const workflowErrorInfo = workflowError ? actionableWorkflowError(workflowError) : null;
 
+  const headerStep = document
+    ? {
+        step: intakeStepForWorkflowStep(workflowStep),
+        complete: batchStatus === "submitted" && intakeStepForWorkflowStep(workflowStep) === "review",
+      }
+    : batchIntakeStep(
+        queueItems.map((item) => ({
+          uploaded: item.documentId != null,
+          uploading: item.status === "uploading",
+          processed: item.status === "processed" || item.status === "extracting",
+          extracted: item.status === "extracted",
+          failed: item.status === "failed",
+        })),
+        batchStatus,
+      );
+
   return (
     <>
       {!document ? (
         <PageHero
           compact
-          eyebrow="Store / Extraction"
-          title={<>Turn documents into verified structured data</>}
-          description="Contracts, invoices, regulatory documents, spreadsheets, scans, images, and business records. Data Agent detects the type and staging profile."
+          eyebrow="Document Processing"
+          title="New batch"
+          description="Upload federal contracts, SF 1442 awards and modification packages — or any invoice, regulation, spreadsheet, scan or image. Dataomatix classifies each file, extracts its fields and stages them for review."
         />
       ) : (
         <div className="extraction-bar-inner border-b border-border bg-surface py-3" data-testid="extraction-page-header">
@@ -1013,61 +1227,92 @@ function NewExtractionPageContent() {
                 {document.original_filename}
               </h1>
             </div>
-            <Link
-              href={document ? `/documents/${document.document_id}` : "/documents"}
-              className="btn-secondary shrink-0 text-sm"
-            >
-              Open workspace
-              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-            </Link>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {batchHasFiles && (
+                <button type="button" onClick={closeDocument} className="btn-secondary text-sm">
+                  <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                  Back to batch
+                </button>
+              )}
+              <Link
+                href={`/documents/${document.document_id}`}
+                className="btn-secondary text-sm"
+              >
+                Open workspace
+                <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+              </Link>
+            </div>
           </div>
         </div>
       )}
 
+      <IntakeProgressTracker
+        activeStep={headerStep.step}
+        complete={headerStep.complete}
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={() => void handleRunFullExtraction()}
+              disabled={runFullExtractionDisabled}
+              className="btn-primary text-sm disabled:cursor-not-allowed disabled:opacity-60"
+              title={
+                document
+                  ? "Extract every field discovered in this document"
+                  : "Extract every discovered field of each processed file in the batch"
+              }
+              data-testid="run-full-extraction"
+            >
+              {fullExtractionRunning ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Play className="h-4 w-4" aria-hidden="true" />
+              )}
+              {fullExtractionRunning ? "Extracting…" : "Run full extraction"}
+            </button>
+            {batchHasFiles && (
+              <span className="text-xs text-text-secondary" data-testid="batch-status">
+                {batchDocumentCount} of {queueItems.length} {queueItems.length === 1 ? "file" : "files"} uploaded
+                {batchBusyCount > 0 ? ` · ${batchBusyCount} in progress` : ""}
+              </span>
+            )}
+            <span className="inline-flex rounded-full bg-slate-900">
+              <BackendStatusPill />
+            </span>
+          </>
+        }
+      />
+
       <ContentSection wide>
         <BackendStatusBanner />
-        <div className="mb-6">
-          <WorkflowBreadcrumb activeStep={workflowStep} />
-        </div>
+        {document && (
+          <div className="mb-6">
+            <WorkflowBreadcrumb activeStep={workflowStep} />
+          </div>
+        )}
 
         <div className="extraction-workspace">
           <div className="extraction-bar-inner">
             {!document ? (
-              <div className="grid gap-6 lg:grid-cols-[minmax(0,0.48fr)_minmax(0,0.52fr)]">
+              <div className="grid gap-6 xl:grid-cols-2">
                 <section className="space-y-4">
-                  <DocumentUploader onUploadComplete={handleUploadComplete} />
+                  <BatchIntakePortal
+                    config={intakeConfig}
+                    configError={intakeConfigError}
+                    fields={intakeFields}
+                    onFieldsChange={setIntakeFields}
+                    onFiles={handleBatchFiles}
+                  />
                   <ImportSourceTabs />
                 </section>
-                <section className="editorial-card flex flex-col p-6 sm:p-8">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-teal">
-                    Workflow
-                  </p>
-                  <h2 className="mt-2 text-lg font-medium text-foreground">
-                    Upload → Understand → Discover Schema → Extract → Validate → Prepare Staging
-                  </h2>
-                  <ol className="mt-6 space-y-5">
-                    {[
-                      ["Upload", "Add a supported document. Processing starts when the file is ready."],
-                      ["Understand", "Read pages and detect structure from the source — not the filename."],
-                      ["Discover Schema", "Inspect fields and tables found in this document."],
-                      ["Extract", "Choose relevant fields and run extraction."],
-                      ["Validate", "Confirm results against source evidence."],
-                      ["Prepare Staging", "Open the document workspace for review and export."],
-                    ].map(([title, body], i) => (
-                      <li key={title} className="flex gap-4">
-                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-soft text-sm font-semibold text-primary tabular-nums">
-                          {i + 1}
-                        </span>
-                        <div className="pt-1">
-                          <p className="text-sm font-medium text-foreground">{title}</p>
-                          <p className="mt-0.5 text-sm leading-6 text-text-secondary">
-                            {body}
-                          </p>
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                </section>
+                <ProcessingQueue
+                  items={queueItems}
+                  onOpen={openQueueItem}
+                  onRetry={(id) => queue.retry(id)}
+                  onRemove={(id) => queue.remove(id)}
+                  onResolveDuplicate={(id, action) => void queue.resolveDuplicate(id, action)}
+                  onSelectPortfolioFile={(id, filename) => void queue.selectPortfolio(id, filename)}
+                />
               </div>
             ) : (
               <div
@@ -1093,24 +1338,7 @@ function NewExtractionPageContent() {
                     workflowFailed={Boolean(workflowError)}
                     documentHref={`/documents/${document.document_id}`}
                     onOpenProcessingDetails={() => setProcessingDrawerOpen(true)}
-                    onReplaceDocument={() => {
-                      processInFlightRef.current = false;
-                      extractInFlightRef.current = false;
-                      setDocument(null);
-                      setExtraction(null);
-                      setPages([]);
-                      setUniversalResult(null);
-                      setTargetResult(null);
-                      setTargetResultDurationMs(null);
-                      setContractAnalysis(null);
-                      setStructuredOutput(null);
-                      setStructureDetection(null);
-                      setSchemaDiscovery(null);
-                      setSchemaDiscoveryError("");
-                      setWorkflowError("");
-                      setContractAnalysisError("");
-                      setStagingProfile(null);
-                    }}
+                    onReplaceDocument={closeDocument}
                     onViewResults={
                       contractAnalysis || universalResult || targetResult
                         ? () =>
@@ -1137,15 +1365,7 @@ function NewExtractionPageContent() {
                       onAddCustomField={handleAddCustomField}
                       onRenameCustomField={handleRenameCustomField}
                       onDeleteCustomField={handleDeleteCustomField}
-                      targets={(schemaDiscovery?.targets ?? []).filter(
-                        (target) =>
-                          target.source !== "template" &&
-                          target.source_examples.length > 0 &&
-                          target.target_type !== "clause" &&
-                          target.target_type !== "section" &&
-                          target.target_type !== "obligation" &&
-                          !target.key.startsWith("table_p"),
-                      )}
+                      targets={focusedExtractable}
                       documentFamily={classification.familyKey}
                       documentFamilyLabel={
                         classification.unresolved ? null : classification.familyLabel
@@ -1327,11 +1547,7 @@ function NewExtractionPageContent() {
                         )}
                         <button
                           type="button"
-                          onClick={() => {
-                            processInFlightRef.current = false;
-                            setDocument(null);
-                            setWorkflowError("");
-                          }}
+                          onClick={closeDocument}
                           className="text-sm font-medium text-danger/80 underline decoration-dotted underline-offset-4"
                         >
                           Replace document
@@ -1345,6 +1561,19 @@ function NewExtractionPageContent() {
           </div>
         </div>
 
+        {document && targetResult && targetResult.scalars.length > 0 && (
+          <div className="mt-8">
+            <UcfFieldReview
+              documentId={document.document_id}
+              documentName={document.original_filename}
+              pageCount={document.page_count}
+              result={targetResult}
+              sourceRequest={sourceRequest}
+              onViewSource={handleViewSource}
+            />
+          </div>
+        )}
+
         {document && targetResult && !contractAnalysis && !presentedProfile && (
           <div className="extraction-workspace -mx-[max(1.5rem,3vw)] mt-8">
             <div
@@ -1354,15 +1583,7 @@ function NewExtractionPageContent() {
               <div className="min-w-0">
                 <TargetResults
                   result={targetResult}
-                  targets={(schemaDiscovery?.targets ?? []).filter(
-                    (target) =>
-                      target.source !== "template" &&
-                      target.source_examples.length > 0 &&
-                      target.target_type !== "clause" &&
-                      target.target_type !== "section" &&
-                      target.target_type !== "obligation" &&
-                      !target.key.startsWith("table_p"),
-                  )}
+                  targets={extractableTargets(schemaDiscovery?.targets ?? [])}
                   documentId={document.document_id}
                   documentName={document.original_filename}
                   pageCount={document.page_count}
@@ -1412,6 +1633,16 @@ function NewExtractionPageContent() {
               }
             />
           </div>
+        )}
+
+        {batchHasFiles && (
+          <BatchFooter
+            batchId={intakeFields.batch_id}
+            documentCount={batchDocumentCount}
+            busyCount={batchBusyCount}
+            status={batchStatus}
+            onStatusChange={setBatchStatus}
+          />
         )}
       </ContentSection>
 

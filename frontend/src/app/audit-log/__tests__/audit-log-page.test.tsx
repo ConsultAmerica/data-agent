@@ -1,8 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getGlobalAuditLogMock } = vi.hoisted(() => ({
+const { getGlobalAuditLogMock, searchParams } = vi.hoisted(() => ({
   getGlobalAuditLogMock: vi.fn(),
+  searchParams: { current: new URLSearchParams() },
+}));
+
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => searchParams.current,
 }));
 
 vi.mock("@/lib/documents", () => ({
@@ -109,5 +114,17 @@ describe("AuditLogPage", () => {
     await waitFor(() =>
       expect(screen.getByText(/No audit actions match/i)).toBeTruthy(),
     );
+  });
+
+  it("opens filtered to the document a link came from", async () => {
+    searchParams.current = new URLSearchParams("document_id=doc-42");
+    try {
+      getGlobalAuditLogMock.mockResolvedValue({ entries: [], total: 0, limit: 50, offset: 0 });
+      render(<AuditLogPage />);
+      await waitFor(() => expect(getGlobalAuditLogMock).toHaveBeenCalled());
+      expect(getGlobalAuditLogMock.mock.calls[0][2]).toEqual({ documentId: "doc-42" });
+    } finally {
+      searchParams.current = new URLSearchParams();
+    }
   });
 });

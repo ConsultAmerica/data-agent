@@ -1,6 +1,6 @@
 """Optional AI enrichment around deterministic extraction.
 
-Data Agent is deterministic-first: native text / OCR → reading order →
+Dataomatix is deterministic-first: native text / OCR → reading order →
 source structure → staging workbook works with zero AI quota. AI is an
 optional rescue, and this module makes sure it stays optional:
 

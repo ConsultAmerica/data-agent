@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import DocumentWorkspace from "@/components/documents/document-workspace";
@@ -27,6 +27,15 @@ vi.mock("@/lib/documents", () => ({
     }),
   ),
   startProcessingJob: vi.fn(() => Promise.resolve({ id: 1, document_id: "d1", status: "queued" })),
+  getDocumentHierarchy: vi.fn(() => Promise.resolve({ roots: [] })),
+  getChildRelationships: vi.fn(() => Promise.resolve({ parent_document_id: "d1", children: [] })),
+  getGlobalAuditLog: vi.fn(() => Promise.resolve({ entries: [], total: 0 })),
+}));
+// The split pane's viewer: shows which page/value it was asked to open.
+vi.mock("@/components/source-verification-panel", () => ({
+  default: ({ request }: { request: { pageNumber: number; label?: string } | null }) => (
+    <p data-testid="split-viewer-request">{request ? `page ${request.pageNumber}: ${request.label ?? ""}` : "page 1"}</p>
+  ),
 }));
 vi.mock("@/components/staging/source-transcription", () => ({
   default: () => <p>Source transcription</p>,
@@ -281,6 +290,70 @@ describe("DocumentWorkspace for a contract", () => {
     expect(screen.queryByRole("table")).toBeNull();
   });
 
+  it("split view keeps the document open on the left and a value's source jumps it to the page", async () => {
+    window.localStorage.removeItem("dx-workspace-split");
+    const staging = await import("@/lib/staging-workbook");
+    const base = contractWorkbook();
+    const gratuities = base.datasets[0].records[2].cells["contract.data.title"];
+    gratuities.provenance = {
+      source_document_id: "d1",
+      source_filename: "award.pdf",
+      source_type: "pdf",
+      source_page: 7,
+      source_bbox: null,
+      evidence_text: "Gratuities",
+      extraction_method: "text",
+      source_locator: null,
+      source_region_id: null,
+      anchor_text: null,
+      highlight_text: "Gratuities",
+    };
+    vi.mocked(staging.getStagingWorkbook).mockResolvedValue(base);
+    render(<DocumentWorkspace documentId="d1" />);
+    const toggle = await screen.findByTestId("toggle-split-view");
+    expect(screen.queryByTestId("workspace-split-viewer")).toBeNull();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(window.localStorage.getItem("dx-workspace-split")).toBe("on");
+    expect(screen.getByTestId("split-viewer-request").textContent).toBe("page 1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Gratuities" }));
+    expect(screen.getByTestId("split-viewer-request").textContent).toMatch(/^page 7/);
+    // The structured data stays put: no jump to the Source tab.
+    expect(replace).not.toHaveBeenCalledWith(expect.stringContaining("view=source"));
+    window.localStorage.removeItem("dx-workspace-split");
+  });
+
+  it("shows an agency tag (— when unknown) and a related-documents switcher only when links exist", async () => {
+    render(<DocumentWorkspace documentId="d1" />);
+    expect((await screen.findByTestId("workspace-agency")).textContent).toBe("—");
+    await waitFor(() => expect(screen.queryByTestId("related-documents-switcher")).toBeNull());
+
+    const documents = await import("@/lib/documents");
+    vi.mocked(documents.getDocumentHierarchy).mockResolvedValueOnce({
+      roots: [
+        {
+          document_id: "base",
+          title: "Base award",
+          document_number: "N40192-23-D-2803",
+          document_type: null,
+          relationship_type: null,
+          relationship_status: null,
+          children: [
+            { document_id: "d1", title: "Mod 1", document_number: null, document_type: null, relationship_type: "modification", relationship_status: "confirmed", children: [] },
+            { document_id: "m2", title: "Mod 2", document_number: "P00002", document_type: null, relationship_type: "modification", relationship_status: "confirmed", children: [] },
+          ],
+        },
+      ],
+    });
+    render(<DocumentWorkspace documentId="d1" />);
+    const switcher = await screen.findByTestId("related-documents-switcher");
+    fireEvent.click(within(switcher).getByRole("button", { name: /Related documents \(2\)/ }));
+    const items = within(switcher).getAllByRole("menuitem");
+    expect(items.map((item) => item.getAttribute("href"))).toEqual(["/documents/base", "/documents/m2"]);
+    expect(items[0].textContent).toMatch(/Base award.*Parent.*N40192-23-D-2803/);
+  });
+
   it("selects Contract Summary lines for export without touching their review state", async () => {
     search = new URLSearchParams("view=contract_summary");
     render(<DocumentWorkspace documentId="d1" />);
@@ -294,7 +367,7 @@ describe("DocumentWorkspace for a contract", () => {
 });
 
 describe("DocumentWorkspace combines small dataset tabs", () => {
-  // The Staging tab (documents open on Data).
+  // The Summary tab (?view=staging; documents open on it).
   function rows(prefix: string, field: string, label: string, n: number) {
     return Array.from({ length: n }, (_, i) => ({
       record_id: `${prefix}:${i}`,
@@ -326,6 +399,16 @@ describe("DocumentWorkspace combines small dataset tabs", () => {
     search = new URLSearchParams("view=staging");
     const staging = await import("@/lib/staging-workbook");
     vi.mocked(staging.getStagingWorkbook).mockResolvedValue(invoiceWorkbook());
+  });
+
+  it("orders generic tabs Summary, Overview, Source, Canonical, Transform; Data and QA live under More", async () => {
+    search = new URLSearchParams();
+    render(<DocumentWorkspace documentId="d1" />);
+    const views = within(await screen.findByRole("tablist", { name: "Document views" })).getAllByRole("tab");
+    expect(views.map((tab) => tab.textContent)).toEqual(["Summary", "Overview", "Source", "Canonical", "Transform"]);
+    expect(views[0].getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "QA" }));
+    expect(replace).toHaveBeenCalledWith("/documents/d1?view=qa");
   });
 
   it("puts datasets of 5 records or fewer on one tab, each as its own section; larger ones keep their tab", async () => {

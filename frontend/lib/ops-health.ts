@@ -59,11 +59,11 @@ export async function probeOpsHealth(
     if (!readyResponse.ok) {
       return {
         kind: "degraded",
-        label: "Application available — readiness incomplete",
+        label: "Running with problems",
         detail:
           status === "not_ready"
-            ? "Readiness checks failed. Processing or integrations may be unavailable."
-            : `Ready check returned HTTP ${readyResponse.status}.`,
+            ? "Some services aren't ready. Processing or integrations may be unavailable."
+            : `The service check didn't complete (error ${readyResponse.status}).`,
         readyStatus: status,
         oracleDryRun: Boolean(body.oracle_dry_run),
         rbacEnforced: Boolean(body.rbac_enforced),
@@ -75,7 +75,7 @@ export async function probeOpsHealth(
     return {
       kind: "available",
       label: "Application available",
-      detail: "Liveness and readiness probes succeeded.",
+      detail: "All services are up and accepting work.",
       readyStatus: status ?? "ready",
       oracleDryRun: Boolean(body.oracle_dry_run),
       rbacEnforced: Boolean(body.rbac_enforced),
@@ -86,9 +86,9 @@ export async function probeOpsHealth(
   } catch {
     return {
       kind: "unknown",
-      label: "Readiness unknown",
+      label: "Status unknown",
       detail:
-        "/health succeeded but /ready could not be completed. Treat integration status as unknown.",
+        "The application responded, but its services couldn't be checked. Integration status is unknown.",
     };
   }
 }

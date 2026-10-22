@@ -207,7 +207,7 @@ describe("StagingWorkbook load failures", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     getWorkbook
       .mockRejectedValueOnce(new ApiError("Bad Gateway", 502))
-      .mockRejectedValueOnce(new Error("Cannot reach the Data Agent API"))
+      .mockRejectedValueOnce(new Error("Cannot reach the Dataomatix API"))
       .mockRejectedValueOnce(new ApiError("Service Unavailable", 503))
       .mockRejectedValueOnce(new ApiError("Service Unavailable", 503))
       .mockResolvedValue(contractWorkbook());

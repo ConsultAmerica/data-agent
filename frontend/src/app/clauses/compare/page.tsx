@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, Search } from "lucide-react";
 
+import RegulatoryComparator from "@/components/clauses/regulatory-comparator";
 import ConfidenceIndicator from "@/components/confidence-indicator";
 import PageHeader from "@/components/page-header";
 import { getClauses, searchDocuments } from "@/lib/documents";
@@ -15,7 +17,58 @@ interface ComparedClause {
   clause: ClauseResult | null;
 }
 
+type CompareMode = "regulatory" | "contracts";
+
 export default function ClauseComparePage() {
+  return (
+    <Suspense>
+      <ClauseCompareContent />
+    </Suspense>
+  );
+}
+
+/** Two comparisons: ingested regulation texts (two versions of a clause, or
+ * a FAR clause and its DFARS counterpart), and one clause across contracts. */
+function ClauseCompareContent() {
+  const router = useRouter();
+  const params = useSearchParams();
+  const mode: CompareMode = params.get("mode") === "contracts" ? "contracts" : "regulatory";
+  const clause = params.get("clause")?.trim() ?? "";
+
+  return (
+    <div className="page-container-wide">
+      <PageHeader
+        title="Compare clauses"
+        description="Compare ingested FAR / DFARS regulation texts word by word, or the same clause provision across your contracts."
+      />
+      <div className="mb-6 flex gap-1 rounded-lg border border-border p-0.5 sm:w-fit" role="tablist" aria-label="Comparison">
+        {(
+          [
+            ["regulatory", "Regulation texts"],
+            ["contracts", "Across contracts"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={mode === id}
+            onClick={() => router.replace(id === "contracts" ? "/clauses/compare?mode=contracts" : "/clauses/compare", { scroll: false })}
+            className={[
+              "rounded-md px-3 py-1.5 text-sm font-medium",
+              mode === id ? "bg-primary-soft text-primary" : "text-text-secondary hover:text-foreground",
+            ].join(" ")}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {mode === "regulatory" ? <RegulatoryComparator key={clause} initialClause={clause} /> : <CrossContractCompare />}
+    </div>
+  );
+}
+
+function CrossContractCompare() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -70,12 +123,8 @@ export default function ClauseComparePage() {
   }
 
   return (
-    <div className="page-container-wide">
-      <PageHeader
-        title="Compare Clause"
-        description="Compare the same clause provision across multiple contracts."
-      />
-
+    <div>
+      <p className="mb-4 text-sm text-text-secondary">Compare the same clause provision across multiple contracts.</p>
       <form onSubmit={handleCompare} className="max-w-2xl">
         <div className="relative">
           <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary" />

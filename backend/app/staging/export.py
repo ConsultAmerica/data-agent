@@ -351,7 +351,7 @@ def _source_rows(workbook: StagingWorkbook, labels: dict | None) -> list[list[ob
                 cell = record.cells.get(column.canonical_field)
                 if cell is not None and cell.value not in (None, ""):
                     rows.append([column.display_label, cell.value])
-    rows.append(["Traceability", "Every value in this workbook is the staged value shown in Data Agent, with its source evidence there."])
+    rows.append(["Traceability", "Every value in this workbook is the staged value shown in Dataomatix, with its source evidence there."])
     return rows
 
 

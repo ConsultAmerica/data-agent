@@ -3,12 +3,23 @@
 import Link from "next/link";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown, RefreshCw } from "lucide-react";
+import { ChevronDown, Columns2, RefreshCw } from "lucide-react";
 
 import { useDocumentChrome } from "@/components/layout/document-chrome-context";
 import OracleIntegrationPanel from "@/components/oracle-integration-panel";
+import RelatedDocumentsSwitcher from "@/components/documents/related-documents-switcher";
+import DocumentAuditTrail from "@/components/review/document-audit-trail";
+import SourceVerificationPanel from "@/components/source-verification-panel";
+import FieldToneLegend from "@/components/ui/field-tone-legend";
+import { fieldToneClass, toneFromStagingCell } from "@/lib/field-tone";
+import { useBrowserPreference } from "@/lib/browser-preference";
+import { recordRecentDocument } from "@/lib/recent-documents";
 import type { SourceViewRequest } from "@/components/source-verification-panel";
 import type { EvidenceTarget } from "@/components/staging/evidence-drawer";
+import DocumentActionsMenu from "@/components/actions/document-actions-menu";
+import DocumentObligationsPanel from "@/components/obligations/document-obligations-panel";
+import DocumentPlaybookPanel from "@/components/playbook/document-playbook-panel";
+import DocumentValidationPanel from "@/components/validation/document-validation-panel";
 import FarRecordsView from "@/components/staging/far-records-view";
 import PresentationWorkspace from "@/components/staging/presentation-workspace";
 import { cellSourceRequest } from "@/components/staging/review-status";
@@ -51,22 +62,30 @@ import {
 } from "@/lib/table-selection";
 import type { DocumentStatus, UploadedDocument } from "@/types/document";
 
+/** One metadata tag in the workspace's context bar. */
+const TAG = "flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-0.5";
+
 /** Generic tabs, for profiles that don't declare their own presentation:
- * the business view (Data) and the document itself first, then the
- * pipeline's technical stages. */
+ * the staged summary, the overview and the document itself first, then the
+ * pipeline's technical stages with Transform last. The "staging" id is kept
+ * so existing ?view=staging links still land on Summary. */
 const GENERIC_VIEWS = [
-  { id: "data", label: "Data" },
-  { id: "source", label: "Source" },
+  { id: "staging", label: "Summary" },
   { id: "overview", label: "Overview" },
-  { id: "staging", label: "Staging" },
+  { id: "source", label: "Source" },
   { id: "canonical", label: "Canonical" },
   { id: "transform", label: "Transform" },
+] as const;
+
+/** Still addressable by ?view= (review queue links to QA), listed under More. */
+const MORE_VIEWS = [
+  { id: "data", label: "Data" },
   { id: "qa", label: "QA" },
 ] as const;
 
-type GenericViewId = (typeof GENERIC_VIEWS)[number]["id"];
+type GenericViewId = (typeof GENERIC_VIEWS)[number]["id"] | (typeof MORE_VIEWS)[number]["id"];
 /** Tabs from here on are the pipeline's technical stages. */
-const FIRST_TECHNICAL_VIEW: GenericViewId = "staging";
+const FIRST_TECHNICAL_VIEW: GenericViewId = "canonical";
 const DOCUMENT_MODES = { original: "Original", text: "Extracted Text" };
 
 function laneOf(dataset: StagingDataset): GenericViewId | "advanced" {
@@ -103,9 +122,22 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
   const [reprocessing, setReprocessing] = useState(false);
   const [activeDataset, setActiveDataset] = useState("");
   // A value opened from the Data tab ("View in document"), shown in Source.
-  const [sourceFocus, setSourceFocus] = useState<SourceViewRequest | null>(null);
+  // A link can open the same way: ?view=source&page=12&hl=quoted%20text
+  // (Ask Dataomatix citations land on the cited page, highlighted).
+  const linkedPage = Number(searchParams.get("page"));
+  const linkedHighlight = searchParams.get("hl");
+  const [sourceFocus, setSourceFocus] = useState<SourceViewRequest | null>(() =>
+    Number.isInteger(linkedPage) && linkedPage > 0
+      ? { id: `link:${linkedPage}`, pageNumber: linkedPage, highlightText: linkedHighlight, label: `Page ${linkedPage}` }
+      : null,
+  );
   // Grid selections (per dataset) live here, so they survive tab switches,
   // filters and pagination, and the Export menu can export them.
+  // Split view: the original document stays open on the left while the
+  // structured data is read on the right; a value's source jumps it there.
+  const [splitPref, setSplitPref] = useBrowserPreference<"on" | "off">("dx-workspace-split", ["on", "off"], "off");
+  const split = splitPref === "on";
+  const [historyOpen, setHistoryOpen] = useState(false);
   const selectionStore = useSelectionStore();
   const selected = selectionStore.active;
   const exportMenuRef = useRef<HTMLDivElement>(null);
@@ -134,8 +166,9 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
   useEffect(() => {
     const title = filename || workbook?.document_filename || null;
     setDocumentTitle(title);
+    if (title) recordRecentDocument(documentId, title);
     return () => setDocumentTitle(null);
-  }, [filename, workbook?.document_filename, setDocumentTitle]);
+  }, [documentId, filename, workbook?.document_filename, setDocumentTitle]);
 
   useEffect(() => {
     if (searchParams.get("panel") === "oracle") {
@@ -164,8 +197,9 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
   const profileView: ProfileView | undefined = profileViews.length
     ? (profileViews.find((item) => item.view_id === requestedView) ?? profileViews[0])
     : undefined;
-  // Documents open on their business data; the staged records are a tab away.
-  const genericView = (GENERIC_VIEWS.find((item) => item.id === requestedView)?.id ?? "data") as GenericViewId;
+  // Documents open on their staged summary.
+  const genericView = ([...GENERIC_VIEWS, ...MORE_VIEWS].find((item) => item.id === requestedView)?.id ??
+    "staging") as GenericViewId;
 
   const laneDatasets = useMemo(() => {
     if (profileView) {
@@ -209,11 +243,17 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
     }
   }
 
+  /** Show a value's source: in the split pane when it is open, else on
+   * the Source tab. */
+  function openSource(request: SourceViewRequest) {
+    setSourceFocus(request);
+    if (!split) openView("source");
+  }
+
   function viewInDocument(target: EvidenceTarget) {
     const request = cellSourceRequest(target.cell, `${target.fieldId ?? target.cell.canonical_field}:${Date.now()}`);
     if (!request) return;
-    setSourceFocus({ ...request, label: target.field });
-    openView("source");
+    openSource({ ...request, label: target.field });
   }
 
   if (loading) {
@@ -319,6 +359,9 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
   }
 
   const selectedCounts = selected ? selectionCounts(selected.selection) : null;
+  // In split view a value's source opens in the left pane; otherwise the
+  // grids keep their own evidence drawer.
+  const splitSource = split ? openSource : undefined;
 
   const docStatus = (documentMeta?.status ?? "completed") as DocumentStatus;
   const familyId = profile.document_families?.[0] ?? "";
@@ -338,6 +381,8 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
     type_label: typeLabel,
     staging_status: "staged",
   });
+  // Intake agency given at upload (null when none was).
+  const agency = documentMeta?.agency ?? null;
   const processingLabel =
     docStatus === "processing"
       ? "Processing"
@@ -375,39 +420,60 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
             <span className="mx-1.5 text-text-muted">·</span>
             {recordSummary(workbook)}
           </p>
-          <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs" data-testid="workspace-status">
-            <div className="flex items-center gap-1.5">
-              <dt className="text-text-muted">Type</dt>
-              <dd className="font-medium text-foreground" data-testid="workspace-type">
-                {typeLabel}
-              </dd>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <dt className="text-text-muted">Profile</dt>
-              <dd className="font-medium text-foreground" data-testid="workspace-profile">
-                {profile.display_name}
-              </dd>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <dt className="text-text-muted">Processing</dt>
-              <dd className={`font-medium ${docStatus === "failed" ? "text-danger" : "text-foreground"}`}>
-                {processingLabel}
-              </dd>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <dt className="text-text-muted">Review</dt>
-              <dd className={`font-medium ${qa.needs_review > 0 || presentation.status === "review" ? "text-warning" : "text-success"}`}>
-                {statusMark(qa.needs_review > 0 ? "review" : presentation.status)} {reviewLabel}
-                {qa.needs_review > 0 && (
-                  <span className="ml-1 font-normal text-text-secondary">
-                    ({qa.needs_review.toLocaleString()})
-                  </span>
-                )}
-              </dd>
-            </div>
-          </dl>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <dl className="flex flex-wrap items-center gap-1.5 text-xs" data-testid="workspace-status">
+              <div className={TAG}>
+                <dt className="text-text-muted">Type</dt>
+                <dd className="font-medium text-foreground" data-testid="workspace-type">
+                  {typeLabel}
+                </dd>
+              </div>
+              <div className={TAG}>
+                <dt className="text-text-muted">Profile</dt>
+                <dd className="font-medium text-foreground" data-testid="workspace-profile">
+                  {profile.display_name}
+                </dd>
+              </div>
+              <div className={TAG}>
+                <dt className="text-text-muted">Agency</dt>
+                <dd className={agency ? "font-medium text-foreground" : "text-text-muted"} data-testid="workspace-agency">
+                  {agency || "—"}
+                </dd>
+              </div>
+              <div className={TAG}>
+                <dt className="text-text-muted">Processing</dt>
+                <dd className={`font-medium ${docStatus === "failed" ? "text-danger" : "text-foreground"}`}>
+                  {processingLabel}
+                </dd>
+              </div>
+              <div className={TAG}>
+                <dt className="text-text-muted">Review</dt>
+                <dd className={`font-medium ${qa.needs_review > 0 || presentation.status === "review" ? "text-warning" : "text-success"}`}>
+                  {statusMark(qa.needs_review > 0 ? "review" : presentation.status)} {reviewLabel}
+                  {qa.needs_review > 0 && (
+                    <span className="ml-1 font-normal text-text-secondary">
+                      · {qa.needs_review.toLocaleString()} of {qa.record_count.toLocaleString()} records
+                    </span>
+                  )}
+                </dd>
+              </div>
+            </dl>
+            <RelatedDocumentsSwitcher documentId={documentId} returnQs={returnQs} />
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="btn-secondary px-3 py-2 text-sm"
+            aria-pressed={split}
+            onClick={() => setSplitPref(split ? "off" : "on")}
+            title="Keep the original document open beside the structured data"
+            data-testid="toggle-split-view"
+          >
+            <Columns2 className="h-3.5 w-3.5" aria-hidden="true" />
+            Split view
+          </button>
+          <DocumentActionsMenu documentId={documentId} />
           <Link
             href={`/documents/${documentId}/review`}
             className="btn-secondary px-3 py-2 text-sm"
@@ -592,125 +658,196 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
         </div>
       )}
 
-      <div className="mt-4 flex items-end gap-1 border-b border-border">
-        {/* One row that scrolls sideways on narrow screens, never wraps. */}
-        <div className="scrollbar-none -mb-px flex min-w-0 flex-1 items-end gap-1 overflow-x-auto" role="tablist" aria-label="Document views">
-          {tabs.map((item) => (
-            <Fragment key={item.id}>
-              {!profileView && item.id === FIRST_TECHNICAL_VIEW && (
-                <span className="mx-1 mb-2.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
-              )}
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeTab === item.id}
-                onClick={() => openView(item.id)}
+      <div
+        className={split ? "mt-4 grid gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]" : ""}
+        data-split={split ? "on" : "off"}
+      >
+        {split && (
+          <aside
+            className="h-[70vh] lg:sticky lg:top-4 lg:h-[calc(100vh-6rem)]"
+            aria-label="Original document"
+            data-testid="workspace-split-viewer"
+          >
+            <SourceVerificationPanel
+              documentId={documentId}
+              documentName={filename || workbook.document_filename}
+              pageCount={Math.max(1, documentMeta?.page_count ?? 1)}
+              request={sourceFocus}
+            />
+          </aside>
+        )}
+        <div className="min-w-0">
+        <div className="mt-4 flex items-end gap-1 border-b border-border">
+          {/* One row that scrolls sideways on narrow screens, never wraps. */}
+          <div className="scrollbar-none -mb-px flex min-w-0 flex-1 items-end gap-1 overflow-x-auto" role="tablist" aria-label="Document views">
+            {tabs.map((item) => (
+              <Fragment key={item.id}>
+                {!profileView && item.id === FIRST_TECHNICAL_VIEW && (
+                  <span className="mx-1 mb-2.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
+                )}
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === item.id}
+                  onClick={() => openView(item.id)}
+                  className={[
+                    "shrink-0 whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors",
+                    activeTab === item.id
+                      ? "border-primary font-medium text-foreground"
+                      : "border-transparent text-text-secondary hover:text-foreground",
+                  ].join(" ")}
+                >
+                  {item.label}
+                </button>
+              </Fragment>
+            ))}
+          </div>
+          {!profileView && (
+            <details className="relative shrink-0">
+              <summary
                 className={[
-                  "shrink-0 whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors",
-                  activeTab === item.id
+                  "-mb-px cursor-pointer list-none border-b-2 px-3 py-2 text-sm",
+                  MORE_VIEWS.some((item) => item.id === activeTab)
                     ? "border-primary font-medium text-foreground"
                     : "border-transparent text-text-secondary hover:text-foreground",
                 ].join(" ")}
               >
-                {item.label}
-              </button>
-            </Fragment>
-          ))}
+                {MORE_VIEWS.find((item) => item.id === activeTab)?.label ?? "More"}
+              </summary>
+              <div className="absolute right-0 z-20 mt-1 min-w-[12rem] rounded-lg border border-border bg-surface py-1 shadow-sm">
+                {MORE_VIEWS.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface-soft"
+                    onClick={(event) => {
+                      event.currentTarget.closest("details")?.removeAttribute("open");
+                      openView(item.id);
+                    }}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+                {advanced.length > 0 && <div className="my-1 border-t border-border" />}
+                {advanced.map((dataset) => (
+                  <button
+                    key={dataset.dataset_id}
+                    type="button"
+                    className="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface-soft"
+                    onClick={() => {
+                      openView("source");
+                      setActiveDataset(dataset.dataset_id);
+                    }}
+                  >
+                    {dataset.display_name}
+                  </button>
+                ))}
+              </div>
+            </details>
+          )}
         </div>
-        {advanced.length > 0 && (
-          <details className="relative shrink-0">
-            <summary className="cursor-pointer list-none px-3 py-2 text-sm text-text-secondary hover:text-foreground">
-              More
-            </summary>
-            <div className="absolute right-0 z-20 mt-1 min-w-[12rem] rounded-lg border border-border bg-surface py-1 shadow-sm">
-              {advanced.map((dataset) => (
-                <button
-                  key={dataset.dataset_id}
-                  type="button"
-                  className="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface-soft"
-                  onClick={() => {
-                    openView("source");
-                    setActiveDataset(dataset.dataset_id);
-                  }}
-                >
-                  {dataset.display_name}
-                </button>
-              ))}
-            </div>
-          </details>
-        )}
+
+        <div className="mt-5">
+          {profileView ? (
+            <ProfileViewBody
+              documentId={documentId}
+              filename={filename || workbook.document_filename}
+              view={profileView}
+              datasets={laneDatasets}
+              allDatasets={datasets}
+              focus={sourceFocus}
+              onOpenSource={splitSource}
+            />
+          ) : (
+            <>
+              {genericView === "data" && (
+                <PresentationWorkspace
+                  workbook={workbook}
+                  documentId={documentId}
+                  onViewInDocument={viewInDocument}
+                  showHeading={false}
+                  showTechnical={false}
+                />
+              )}
+              {genericView === "overview" && (
+                <div className="space-y-8">
+                  <Overview workbook={workbook} verified={verified} oracle={oracle} />
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <DocumentObligationsPanel documentId={documentId} />
+                    <DocumentPlaybookPanel documentId={documentId} />
+                    <DocumentValidationPanel documentId={documentId} />
+                  </div>
+                </div>
+              )}
+              {genericView === "source" && (
+                <div className="space-y-4">
+                  <SourceTranscription
+                    documentId={documentId}
+                    documentName={filename}
+                    modes
+                    modeLabels={DOCUMENT_MODES}
+                    focus={sourceFocus}
+                  />
+                  {current && laneOf(current) === "source" && (
+                    <DatasetBody documentId={documentId} dataset={current} onOpenSource={splitSource} />
+                  )}
+                </div>
+              )}
+              {genericView === "staging" && (
+                <DatasetWorkspace
+                  documentId={documentId}
+                  datasets={laneDatasets}
+                  active={current?.dataset_id ?? ""}
+                  onSelect={setActiveDataset}
+                  onOpenSource={splitSource}
+                />
+              )}
+              {(genericView === "canonical" || genericView === "transform" || genericView === "qa") && (
+                <div className="space-y-4">
+                  {genericView === "transform" && (
+                    <p className="text-sm text-text-secondary">
+                      Source → {profile.display_name} canonical → destination adapter.{" "}
+                      {oracle === "none"
+                        ? "No destination adapter is configured."
+                        : oracle === "planned"
+                          ? "Adapter mapping is partially configured. This is not a final import file."
+                          : "Adapter mapping is available."}
+                    </p>
+                  )}
+                  {current ? (
+                    <DatasetWorkspace
+                      documentId={documentId}
+                      datasets={laneDatasets}
+                      active={current.dataset_id}
+                      onSelect={setActiveDataset}
+                      onOpenSource={splitSource}
+                    />
+                  ) : (
+                    <p className="text-sm text-text-secondary">This profile has no records in this stage yet.</p>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        </div>
       </div>
 
-      <div className="mt-5">
-        {profileView ? (
-          <ProfileViewBody
-            documentId={documentId}
-            filename={filename || workbook.document_filename}
-            view={profileView}
-            datasets={laneDatasets}
-            allDatasets={datasets}
-          />
-        ) : (
-          <>
-            {genericView === "data" && (
-              <PresentationWorkspace
-                workbook={workbook}
-                documentId={documentId}
-                onViewInDocument={viewInDocument}
-                showHeading={false}
-                showTechnical={false}
-              />
-            )}
-            {genericView === "overview" && <Overview workbook={workbook} verified={verified} oracle={oracle} />}
-            {genericView === "source" && (
-              <div className="space-y-4">
-                <SourceTranscription
-                  documentId={documentId}
-                  documentName={filename}
-                  modes
-                  modeLabels={DOCUMENT_MODES}
-                  focus={sourceFocus}
-                />
-                {current && laneOf(current) === "source" && (
-                  <DatasetBody documentId={documentId} dataset={current} />
-                )}
-              </div>
-            )}
-            {genericView === "staging" && (
-              <DatasetWorkspace
-                documentId={documentId}
-                datasets={laneDatasets}
-                active={current?.dataset_id ?? ""}
-                onSelect={setActiveDataset}
-              />
-            )}
-            {(genericView === "canonical" || genericView === "transform" || genericView === "qa") && (
-              <div className="space-y-4">
-                {genericView === "transform" && (
-                  <p className="text-sm text-text-secondary">
-                    Source → {profile.display_name} canonical → destination adapter.{" "}
-                    {oracle === "none"
-                      ? "No destination adapter is configured."
-                      : oracle === "planned"
-                        ? "Adapter mapping is partially configured. This is not a final import file."
-                        : "Adapter mapping is available."}
-                  </p>
-                )}
-                {current ? (
-                  <DatasetWorkspace
-                    documentId={documentId}
-                    datasets={laneDatasets}
-                    active={current.dataset_id}
-                    onSelect={setActiveDataset}
-                  />
-                ) : (
-                  <p className="text-sm text-text-secondary">This profile has no records in this stage yet.</p>
-                )}
-              </div>
-            )}
-          </>
+      <details
+        className="mt-6 rounded-xl border border-border bg-surface"
+        onToggle={(event) => setHistoryOpen((event.currentTarget as HTMLDetailsElement).open)}
+        data-testid="workspace-review-history"
+      >
+        <summary className="cursor-pointer px-4 py-2.5 text-sm font-medium text-foreground">
+          Review history
+          <span className="ml-2 text-xs font-normal text-text-muted">Who accepted, corrected or rejected values, and when</span>
+        </summary>
+        {historyOpen && (
+          <div className="max-h-96 overflow-y-auto border-t border-border">
+            <DocumentAuditTrail documentId={documentId} />
+          </div>
         )}
-      </div>
+      </details>
 
       <ol className="mt-6 flex flex-wrap gap-6 border-t border-border pt-3 text-xs text-text-secondary">
         <Readiness label="Extracted" ok={outcome.record_count > 0} />
@@ -738,26 +875,35 @@ function ProfileViewBody({
   view,
   datasets,
   allDatasets,
+  focus = null,
+  onOpenSource,
 }: {
   documentId: string;
   filename: string;
   view: ProfileView;
   datasets: StagingDataset[];
   allDatasets: StagingDataset[];
+  focus?: SourceViewRequest | null;
+  onOpenSource?: (request: SourceViewRequest) => void;
 }) {
   if (view.kind === "source") {
+    const transcription = (
+      <section>
+        <h2 className="mb-2 text-sm font-medium text-foreground">Source Text</h2>
+        <SourceTranscription documentId={documentId} documentName={filename} focus={focus} />
+      </section>
+    );
     return (
       <div className="space-y-6">
+        {/* A linked page (a citation) leads with the document itself. */}
+        {focus && transcription}
         {datasets.map((dataset) => (
           <section key={dataset.dataset_id}>
             <h2 className="mb-2 text-sm font-medium text-foreground">{dataset.display_name}</h2>
-            <DatasetBody documentId={documentId} dataset={dataset} />
+            <DatasetBody documentId={documentId} dataset={dataset} onOpenSource={onOpenSource} />
           </section>
         ))}
-        <section>
-          <h2 className="mb-2 text-sm font-medium text-foreground">Source Text</h2>
-          <SourceTranscription documentId={documentId} documentName={filename} />
-        </section>
+        {!focus && transcription}
       </div>
     );
   }
@@ -778,9 +924,9 @@ function ProfileViewBody({
           {datasets.length > 1 && <h2 className="mb-2 text-sm font-medium text-foreground">{dataset.display_name}</h2>}
           {dataset.description && <p className="mb-3 max-w-3xl text-xs text-text-secondary">{dataset.description}</p>}
           {dataset.dataset_id.startsWith("far_") ? (
-            <FilteredRecords documentId={documentId} dataset={withoutBlankColumns(dataset)} dense />
+            <FilteredRecords documentId={documentId} dataset={withoutBlankColumns(dataset)} dense onOpenSource={onOpenSource} />
           ) : (
-            <FilteredRecords documentId={documentId} dataset={dataset} />
+            <FilteredRecords documentId={documentId} dataset={dataset} onOpenSource={onOpenSource} />
           )}
         </section>
         ),
@@ -801,10 +947,12 @@ function FilteredRecords({
   documentId,
   dataset,
   dense = false,
+  onOpenSource,
 }: {
   documentId: string;
   dataset: StagingDataset;
   dense?: boolean;
+  onOpenSource?: (request: SourceViewRequest) => void;
 }) {
   const [query, setQuery] = useState("");
   const [type, setType] = useState("all");
@@ -856,7 +1004,7 @@ function FilteredRecords({
     return { ...dataset, records };
   }, [dataset, query, type, section, typeField, sectionField, alternateField]);
 
-  if (dataset.cardinality === "single") return <DatasetBody documentId={documentId} dataset={dataset} />;
+  if (dataset.cardinality === "single") return <DatasetBody documentId={documentId} dataset={dataset} onOpenSource={onOpenSource} />;
   const summaryFields = summaryColumns(dataset);
   if (summaryFields) return <SummaryCards documentId={documentId} dataset={dataset} fields={summaryFields} />;
   return (
@@ -903,7 +1051,7 @@ function FilteredRecords({
           </div>
         )}
       </div>
-      <DatasetBody documentId={documentId} dataset={filtered} dense={dense} />
+      <DatasetBody documentId={documentId} dataset={filtered} dense={dense} onOpenSource={onOpenSource} />
     </div>
   );
 }
@@ -948,6 +1096,7 @@ function SummaryCards({
       onClear={() => setSelection(new Map())}
       onSelectVisible={() => setSelection((current) => setCells(current, allIds, lineFields, true))}
     />
+    <FieldToneLegend />
     <div className="grid gap-4 md:grid-cols-2">
       {[...groups.entries()].map(([name, records]) => (
         <section key={name} className="rounded-xl border border-border bg-surface p-4">
@@ -974,7 +1123,7 @@ function SummaryCards({
                     <span>{String(record.cells[fields.label]?.value ?? "")}</span>
                   </dt>
                   <dd className="whitespace-pre-wrap break-words font-medium text-foreground">
-                    {String(cell?.value ?? "—")}
+                    <span className={fieldToneClass(toneFromStagingCell(cell))}>{String(cell?.value ?? "—")}</span>
                     {review && <span className="ml-2 text-xs font-normal text-warning">Needs review</span>}
                   </dd>
                 </div>
@@ -1104,11 +1253,13 @@ function DatasetWorkspace({
   datasets,
   active,
   onSelect,
+  onOpenSource,
 }: {
   documentId: string;
   datasets: StagingDataset[];
   active: string;
   onSelect: (id: string) => void;
+  onOpenSource?: (request: SourceViewRequest) => void;
 }) {
   const [query, setQuery] = useState("");
   const useful = datasets.filter((dataset) => dataset.records.length > 0);
@@ -1171,13 +1322,13 @@ function DatasetWorkspace({
                   {dataset.records.length.toLocaleString()}
                 </span>
               </h2>
-              <DatasetBody documentId={documentId} dataset={dataset} />
+              <DatasetBody documentId={documentId} dataset={dataset} onOpenSource={onOpenSource} />
             </section>
           ))}
           {sections.length === 0 && <p className="text-sm text-text-secondary">No records match this search.</p>}
         </div>
       ) : (
-        <DatasetBody documentId={documentId} dataset={sections[0] ?? current.datasets[0]} />
+        <DatasetBody documentId={documentId} dataset={sections[0] ?? current.datasets[0]} onOpenSource={onOpenSource} />
       )}
     </div>
   );
@@ -1187,15 +1338,17 @@ function DatasetBody({
   documentId,
   dataset,
   dense = true,
+  onOpenSource,
 }: {
   documentId: string;
   dataset: StagingDataset;
   dense?: boolean;
+  onOpenSource?: (request: SourceViewRequest) => void;
 }) {
   if (dataset.cardinality === "single") {
-    return <StagingFieldList dataset={dataset} documentId={documentId} />;
+    return <StagingFieldList dataset={dataset} documentId={documentId} onOpenSource={onOpenSource} />;
   }
-  return <StagingDatasetTable documentId={documentId} dataset={dataset} dense={dense} />;
+  return <StagingDatasetTable documentId={documentId} dataset={dataset} dense={dense} onOpenSource={onOpenSource} />;
 }
 
 /** The page's shape while the document loads: header, tabs, a table. */

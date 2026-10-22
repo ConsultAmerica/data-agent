@@ -10,7 +10,7 @@ _BACKEND_ENV = Path(__file__).resolve().parents[2] / ".env"
 class Settings(BaseSettings):
     """Application configuration loaded from environment variables."""
 
-    app_name: str = "Enterprise Financial Data Agent"
+    app_name: str = "Dataomatix"
     app_env: str = "development"
     debug: bool = True
 

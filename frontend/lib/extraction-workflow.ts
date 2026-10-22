@@ -83,6 +83,30 @@ export function resolveWorkflowStep(input: {
   return "understand";
 }
 
+/**
+ * The batch header's four steps (Upload → Auto-classification → Entity
+ * extraction → Human-in-the-loop review, lib/intake.ts) for a single
+ * document's workflow step: Understand / Discover Schema are the
+ * classification step, Extract / Validate the extraction step, and
+ * Prepare Staging hands over to review.
+ */
+export function intakeStepForWorkflowStep(
+  step: ExtractionWorkflowStep,
+): "upload" | "classification" | "extraction" | "review" {
+  switch (step) {
+    case "upload":
+      return "upload";
+    case "understand":
+    case "discover_schema":
+      return "classification";
+    case "extract":
+    case "validate":
+      return "extraction";
+    case "prepare_staging":
+      return "review";
+  }
+}
+
 /** Human file-type label from MIME / filename — not classification. */
 export function fileTypeLabel(contentType: string, filename: string): string {
   const mime = (contentType || "").toLowerCase();

@@ -1,4 +1,7 @@
 import { useEffect, useState } from "react";
+import { Check } from "lucide-react";
+
+import { Skeleton, SkeletonTable } from "@/components/ui/skeleton";
 
 import {
   EXTRACTION_WORKFLOW_STEPS,
@@ -39,6 +42,38 @@ export const PIPELINE_STAGE_LABELS: Record<string, string> = {
 };
 
 const PIPELINE_ORDER = EXTRACTION_WORKFLOW_STEPS.map((step) => step.label);
+
+/** The stages each backend job really runs, in order (extraction_job_runner:
+ * run_processing_job / run_extraction_job), with what each one is doing. */
+const PROCESSING_STAGES = ["reading_document", "rendering_ocr", "indexing", "discovering_fields"] as const;
+const EXTRACTION_STAGES = ["extracting_data", "validating_results", "v3_classification"] as const;
+export const STAGE_ACTIVITY: Record<string, string> = {
+  reading_document: "Reading pages and form blocks",
+  rendering_ocr: "Running OCR on scanned pages",
+  indexing: "Indexing text and layout",
+  discovering_fields: "Discovering fields, CLIN schedules and tables",
+  extracting_data: "Extracting values",
+  validating_results: "Validating values against the page",
+  v3_classification: "Classifying records for staging",
+};
+
+export function stageChecklist(pipelineStage: string | null, stageHistory: ProcessingStageEntry[] | null) {
+  const seen = new Set((stageHistory ?? []).map((entry) => entry.stage));
+  const isExtraction = EXTRACTION_STAGES.some((stage) => stage === pipelineStage || seen.has(stage));
+  const order: readonly string[] = isExtraction ? EXTRACTION_STAGES : PROCESSING_STAGES;
+  const finished = pipelineStage === "complete" || seen.has("complete");
+  const currentIndex = pipelineStage ? order.indexOf(pipelineStage) : -1;
+  return order.map((stage, index) => ({
+    stage,
+    label: STAGE_ACTIVITY[stage],
+    status:
+      finished || (currentIndex >= 0 ? index < currentIndex : seen.has(stage))
+        ? ("done" as const)
+        : index === currentIndex
+          ? ("current" as const)
+          : ("pending" as const),
+  }));
+}
 
 const TIMING_LABELS: Record<string, string> = {
   source_retrieval_ms: "Source retrieval",
@@ -254,28 +289,47 @@ export default function ExtractionLiveProgress({
         )}
       </div>
 
-      {stageHistory && stageHistory.length > 0 && (
+      {(pipelineStage || (stageHistory && stageHistory.length > 0)) && (
         <div>
-          <p className="text-xs font-medium text-text-muted">
-            Processing stages
-          </p>
-          <ul className="mt-2 space-y-1">
-            {stageHistory.map((entry, index) => (
+          <p className="text-xs font-medium text-text-muted">Pipeline</p>
+          <ol className="mt-2 space-y-1.5" aria-label="Pipeline stages">
+            {stageChecklist(pipelineStage, stageHistory).map((item) => (
               <li
-                key={`${entry.stage}-${entry.at}-${index}`}
-                className="flex justify-between gap-3 text-xs text-text-secondary"
+                key={item.stage}
+                aria-current={item.status === "current" ? "step" : undefined}
+                className="flex items-center gap-2.5 text-xs"
               >
-                <span>
-                  {PIPELINE_STAGE_LABELS[entry.stage] ?? entry.stage}
+                <span
+                  className={[
+                    "flex h-5 w-5 shrink-0 items-center justify-center rounded-full",
+                    item.status === "done"
+                      ? "bg-success text-white"
+                      : item.status === "current"
+                        ? "border-2 border-primary"
+                        : "border border-border",
+                  ].join(" ")}
+                  aria-hidden="true"
+                >
+                  {item.status === "done" && <Check className="h-3 w-3" strokeWidth={3} />}
+                  {item.status === "current" && <span className="h-1.5 w-1.5 rounded-full bg-primary motion-safe:animate-pulse" />}
                 </span>
-                <span className="font-medium text-foreground tabular-nums">
-                  {typeof entry.duration_ms === "number"
-                    ? formatDurationMs(entry.duration_ms)
-                    : "—"}
-                </span>
+                {item.status === "current" ? (
+                  <span className="relative overflow-hidden rounded font-medium text-foreground">
+                    {item.label}…
+                  </span>
+                ) : (
+                  <span className={item.status === "done" ? "text-text-secondary" : "text-text-muted"}>{item.label}</span>
+                )}
+                <span className="sr-only">{item.status}</span>
               </li>
             ))}
-          </ul>
+          </ol>
+          {!stageChecklist(pipelineStage, stageHistory).every((item) => item.status === "done") && (
+            <div className="mt-4" aria-hidden="true">
+              <Skeleton className="mb-2 h-3 w-40" />
+              <SkeletonTable rows={3} columns={4} />
+            </div>
+          )}
         </div>
       )}
 

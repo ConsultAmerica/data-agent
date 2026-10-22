@@ -20,6 +20,9 @@ import PdfToolbar, { type SearchMatch } from "@/components/pdf-toolbar";
 import PipelineStrip from "@/components/pipeline-strip";
 import RelationshipCard from "@/components/relationship-card";
 import ReviewFieldList from "@/components/review-field-list";
+import DocumentAuditTrail from "@/components/review/document-audit-trail";
+import ResizableSplit from "@/components/ui/resizable-split";
+import { Skeleton, SkeletonTable } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api";
 import {
   acceptAllMetadataFields,
@@ -76,9 +79,13 @@ export default function ReviewWorkspacePage({
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState("");
 
-  const [reviewerName, setReviewerName] = useState("Data Agent");
+  const [reviewerName, setReviewerName] = useState("Dataomatix");
 
   const [activeFieldId, setActiveFieldId] = useState<number | null>(null);
+  // Bumped on every field pick so the viewer re-scrolls and pulses its box.
+  const [focusNonce, setFocusNonce] = useState(0);
+  // Why the page shows no box for the picked value (none recorded / not found).
+  const [locateHint, setLocateHint] = useState<string | null>(null);
 
   const [currentPage, setCurrentPage] = useState(1);
   const [highlightText, setHighlightText] = useState<string | null>(
@@ -243,6 +250,9 @@ export default function ReviewWorkspacePage({
 
         if (active) {
           setPageRender(render);
+          if (highlightText && !render.highlight) {
+            setLocateHint(`This value couldn't be boxed on page ${render.page_number}; the whole page is shown.`);
+          }
         }
       } catch (error) {
         if (active) {
@@ -268,8 +278,25 @@ export default function ReviewWorkspacePage({
 
   function handleSelectField(field: MetadataField) {
     setActiveFieldId(field.id ?? null);
-    setCurrentPage(field.evidence.page_number);
+    setFocusNonce((value) => value + 1);
+    const page = field.evidence?.page_number;
+    if (!page) {
+      // Missing values (and some derived ones) were never located on a page.
+      setLocateHint(`No location on the page is recorded for ${field.label}.`);
+      setHighlightText(null);
+      return;
+    }
+    setLocateHint(null);
+    setCurrentPage(page);
     setHighlightText(field.evidence.source_text);
+  }
+
+  /** The reviewer clicked the box on the page: bring its field into view. */
+  function revealActiveField() {
+    const row = window.document.querySelector<HTMLElement>(
+      "[data-testid='metadata-review-list'] .field-row-selected",
+    );
+    row?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
   function handleViewClauseSource(clause: ClauseResult) {
@@ -291,6 +318,7 @@ export default function ReviewWorkspacePage({
 
     setActiveFieldId(null);
     setHighlightText(null);
+    setLocateHint(null);
     setCurrentPage(page);
   }
 
@@ -684,24 +712,40 @@ export default function ReviewWorkspacePage({
 
   if (!document || !analysis) {
     return (
-      <div className="flex h-[calc(100vh-4rem)] items-center justify-center text-sm text-slate-500">
-        Loading review workspace...
+      <div className="flex h-[calc(100vh-4rem)] flex-col" role="status" aria-busy="true" aria-live="polite">
+        <span className="sr-only">Loading review workspace…</span>
+        <div className="space-y-2 border-b border-border px-6 py-4">
+          <Skeleton className="h-5 w-72 max-w-full" />
+          <Skeleton className="h-3 w-48" />
+        </div>
+        <div className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-2">
+          <div className="hidden rounded-xl border border-border bg-surface-soft p-6 lg:block">
+            <Skeleton className="h-full min-h-[24rem] w-full rounded-lg" />
+          </div>
+          <SkeletonTable rows={8} columns={4} />
+        </div>
       </div>
     );
   }
 
-  const contractNumber = analysis.metadata_fields.find(
-    (field) => field.field_key === "contract_number",
-  )?.value;
+  // The reviewable values first; the staging workbook (what the document
+  // page shows) when they don't carry the identity.
+  const contractNumber =
+    analysis.metadata_fields.find((field) => field.field_key === "contract_number")?.value ??
+    analysis.staged_contract_number ??
+    undefined;
 
   const contractTitle = analysis.metadata_fields.find(
     (field) => field.field_key === "contract_title",
   )?.value;
 
-  const counterparty = analysis.metadata_fields.find(
-    (field) =>
-      field.field_key === "counterparty" || field.field_key === "supplier",
-  )?.value;
+  const counterparty =
+    analysis.metadata_fields.find(
+      (field) =>
+        field.field_key === "counterparty" || field.field_key === "supplier",
+    )?.value ??
+    analysis.staged_contractor ??
+    undefined;
 
   const effectiveDate = analysis.metadata_fields.find(
     (field) => field.field_key === "effective_date",
@@ -873,13 +917,19 @@ export default function ReviewWorkspacePage({
         </p>
       )}
 
-      <div className="grid flex-1 overflow-hidden lg:grid-cols-2">
-        <div
-          className={[
-            "flex flex-col overflow-hidden border-r border-border",
-            mobilePanel === "document" ? "flex" : "hidden lg:flex",
-          ].join(" ")}
-        >
+      <ResizableSplit
+        storageKey="dataomatix-review-split"
+        label="Resize document and data panels"
+        leftClassName={[
+          "flex-col overflow-hidden",
+          mobilePanel === "document" ? "flex" : "hidden lg:flex",
+        ].join(" ")}
+        rightClassName={[
+          "h-full flex-col overflow-hidden",
+          mobilePanel === "data" ? "flex" : "hidden lg:flex",
+        ].join(" ")}
+        left={
+        <>
           <PdfToolbar
             currentPage={currentPage}
             pageCount={document.page_count}
@@ -893,6 +943,12 @@ export default function ReviewWorkspacePage({
             onJumpToResult={handleJumpToResult}
           />
 
+          {locateHint && (
+            <p className="shrink-0 border-b border-warning/30 bg-warning/10 px-4 py-1.5 text-xs text-text-secondary" role="status">
+              {locateHint}
+            </p>
+          )}
+
           <div className="flex-1 overflow-hidden">
             <PdfPageViewer
               render={pageRender}
@@ -900,6 +956,8 @@ export default function ReviewWorkspacePage({
               error={renderError}
               zoom={zoom}
               rotation={rotation}
+              focusKey={focusNonce}
+              onHighlightClick={activeFieldId != null ? revealActiveField : undefined}
             />
           </div>
 
@@ -923,14 +981,10 @@ export default function ReviewWorkspacePage({
               />
             </div>
           )}
-        </div>
-
-        <div
-          className={[
-            "flex h-full flex-col overflow-hidden",
-            mobilePanel === "data" ? "flex" : "hidden lg:flex",
-          ].join(" ")}
-        >
+        </>
+        }
+        right={
+        <>
           {activeTab === "Overview" && (
             <div className="space-y-4 overflow-y-auto p-4">
               <DocumentProfileCard
@@ -1026,17 +1080,13 @@ export default function ReviewWorkspacePage({
           )}
 
           {activeTab === "Activity" && (
-            <div className="p-4 text-sm text-text-secondary">
-              Field-level activity is available from each field&apos;s action
-              menu. Portfolio-wide activity is on the{" "}
-              <Link href="/activity" className="text-brand-blue hover:underline">
-                Activity
-              </Link>{" "}
-              page.
+            <div className="min-h-0 flex-1">
+              <DocumentAuditTrail documentId={documentId} refreshKey={analysis.metadata_fields.filter((field) => field.review_status !== "pending").length} />
             </div>
           )}
-        </div>
-      </div>
+        </>
+        }
+      />
     </div>
   );
 }

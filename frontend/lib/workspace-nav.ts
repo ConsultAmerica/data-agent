@@ -10,7 +10,13 @@ export type WorkspaceNavId =
   | "review"
   | "explorer"
   | "ask"
+  | "search"
+  | "analytics"
   | "clauses"
+  | "obligations"
+  | "compare"
+  | "actions"
+  | "playbook"
   | "integrations"
   | "governance"
   | "settings";
@@ -25,38 +31,61 @@ export type WorkspaceNavItem = {
   group?: string;
 };
 
+/** Sidebar group labels, in order. Items are grouped by the job a person
+ * is doing, not by how the backend is built. */
+export const WORKSPACE_NAV_GROUPS = [
+  "Workspace",
+  "Document Processing",
+  "Intelligence & AI",
+  "Compliance & Controls",
+  "Administration",
+] as const;
+
 /** Primary sidebar destinations — keep compact; specialized tools follow. */
 export const WORKSPACE_NAV: WorkspaceNavItem[] = [
   { id: "overview", label: "Overview", href: "/platform", group: "Workspace" },
+  // Document Processing: getting documents in, extracted and reviewed.
   {
     id: "documents",
     label: "Documents",
     href: "/documents",
     match: ["/documents", "/repository"],
+    group: "Document Processing",
   },
   { id: "extraction", label: "Extraction", href: "/extraction/new", match: ["/extraction"] },
-  { id: "review", label: "Review Queue", href: "/review-queue", match: ["/review-queue", "/review"] },
-  { id: "explorer", label: "Explorer", href: "/explorer" },
-  { id: "ask", label: "Ask Data Agent", href: "/ask", group: "Intelligence" },
+  { id: "review", label: "Review queue", href: "/review-queue", match: ["/review-queue", "/review"] },
+  // Intelligence & AI: asking, finding and comparing what the documents say.
+  { id: "ask", label: "Ask Dataomatix", href: "/ask", group: "Intelligence & AI" },
+  { id: "search", label: "Search", href: "/search" },
   { id: "clauses", label: "FAR / DFARS", href: "/clauses", match: ["/clauses"] },
+  { id: "explorer", label: "Field Explorer", href: "/explorer" },
+  { id: "compare", label: "Compare", href: "/compare" },
+  { id: "actions", label: "Agent actions", href: "/actions" },
   {
-    id: "integrations",
-    label: "Exports & Oracle",
-    href: "/integrations",
-    group: "Governance",
+    id: "analytics",
+    label: "Analytics",
+    href: "/analytics",
+    match: ["/analytics", "/insights", "/relationships"],
   },
+  // Compliance & Controls: what contracts owe, the rules they are held to,
+  // and what leaves the system.
+  { id: "obligations", label: "Obligations", href: "/obligations", group: "Compliance & Controls" },
+  { id: "playbook", label: "Clause playbook", href: "/playbook" },
+  { id: "integrations", label: "Exports & Oracle", href: "/integrations" },
+  // Administration: audit, access and configuration.
   {
     id: "governance",
     label: "Governance",
     href: "/governance",
-    match: ["/governance", "/architecture", "/audit-log", "/activity", "/risk", "/analytics", "/insights", "/relationships"],
+    match: ["/governance", "/architecture", "/audit-log", "/activity", "/risk"],
+    group: "Administration",
   },
   { id: "settings", label: "Settings", href: "/settings", match: ["/settings", "/api-keys"] },
 ];
 
-const MARKETING_PATHS = new Set(["/"]);
+const MARKETING_PATHS = new Set(["/", "/sample"]);
 
-/** Homepage keeps the marketing shell; every other route uses the workspace shell. */
+/** Homepage and the public sample keep the marketing shell; every other route uses the workspace shell. */
 export function isMarketingPath(pathname: string | null | undefined): boolean {
   if (!pathname) return true;
   const path = pathname.split(/[?#]/)[0] || "/";
@@ -129,28 +158,52 @@ export function breadcrumbsForPath(
 
   const documentMatch = path.match(/^\/documents\/([^/]+)(?:\/(review))?$/);
   if (documentMatch) {
-    crumbs.push({ label: "Documents", href: "/documents" });
+    // Back to the list the person came from (filters, sort and page kept).
+    const returnQs = params.get("return");
+    crumbs.push({ label: "Documents", href: returnQs ? `/documents?${returnQs}` : "/documents" });
     const title = options?.documentTitle?.trim() || "Document";
     const docHref = `/documents/${documentMatch[1]}`;
-    if (documentMatch[2] === "review") {
+    const subview =
+      documentMatch[2] === "review"
+        ? "Review"
+        : params.get("panel") === "oracle"
+          ? "Oracle"
+          : DOCUMENT_VIEW_CRUMBS[params.get("view") ?? ""];
+    if (subview) {
       crumbs.push({ label: title, href: docHref });
-      crumbs.push({ label: "Review" });
+      crumbs.push({ label: subview });
     } else {
       crumbs.push({ label: title });
     }
     return crumbs;
   }
 
+  if (path === "/integrations" && params.get("documentId")) {
+    return [
+      ...crumbs,
+      { label: "Exports & Oracle", href: "/integrations" },
+      { label: options?.documentTitle?.trim() || "Document" },
+    ];
+  }
+
+  if (path === "/clauses" && params.get("q")?.trim()) {
+    return [...crumbs, { label: "FAR / DFARS", href: "/clauses" }, { label: params.get("q")!.trim() }];
+  }
+
   const staticMap: Record<string, BreadcrumbCrumb[]> = {
     "/platform": [...crumbs, { label: "Overview" }],
     "/extraction": [...crumbs, { label: "Extraction" }],
-    "/extraction/new": [...crumbs, { label: "Extraction" }],
-    "/review-queue": [...crumbs, { label: "Review Queue" }],
+    "/extraction/new": [...crumbs, { label: "Extraction", href: "/extraction" }, { label: "New batch" }],
+    "/review-queue": [...crumbs, { label: "Review queue" }],
     "/review": [...crumbs, { label: "Review" }],
-    "/explorer": [...crumbs, { label: "Explorer" }],
-    "/ask": [...crumbs, { label: "Ask Data Agent" }],
+    "/explorer": [...crumbs, { label: "Field Explorer" }],
+    "/ask": [...crumbs, { label: "Ask Dataomatix" }],
     "/search": [...crumbs, { label: "Search" }],
     "/clauses": [...crumbs, { label: "FAR / DFARS" }],
+    "/obligations": [...crumbs, { label: "Obligations" }],
+    "/compare": [...crumbs, { label: "Compare" }],
+    "/actions": [...crumbs, { label: "Agent actions" }],
+    "/playbook": [...crumbs, { label: "Clause playbook" }],
     "/clauses/compare": [
       ...crumbs,
       { label: "FAR / DFARS", href: "/clauses" },
@@ -191,7 +244,31 @@ export function breadcrumbsForPath(
     "/intelligence": [...crumbs, { label: "Intelligence" }],
   };
 
-  return staticMap[path] ?? [...crumbs, { label: path.split("/").filter(Boolean).pop() || "Page" }];
+  return staticMap[path] ?? [...crumbs, ...fallbackCrumbs(path)];
+}
+
+/** ?view= tabs of the document workspace that deserve their own crumb
+ * (the default Summary tab doesn't). */
+const DOCUMENT_VIEW_CRUMBS: Record<string, string> = {
+  overview: "Overview",
+  source: "Source",
+  canonical: "Canonical",
+  transform: "Transform",
+  data: "Data",
+  qa: "QA",
+};
+
+/** Unmapped routes: one clickable crumb per segment, title-cased. */
+function fallbackCrumbs(path: string): BreadcrumbCrumb[] {
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length === 0) return [{ label: "Page" }];
+  return segments.map((segment, index) => {
+    const label = decodeURIComponent(segment)
+      .replace(/[-_]+/g, " ")
+      .replace(/\b\w/g, (letter) => letter.toUpperCase());
+    const last = index === segments.length - 1;
+    return last ? { label } : { label, href: `/${segments.slice(0, index + 1).join("/")}` };
+  });
 }
 
 export const SIDEBAR_COLLAPSED_KEY = "da-sidebar-collapsed";

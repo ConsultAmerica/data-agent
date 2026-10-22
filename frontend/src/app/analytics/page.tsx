@@ -18,7 +18,7 @@ export default function AnalyticsPage() {
     <>
       <PageHero
         compact
-        eyebrow="Platform / Analytics"
+        eyebrow="Intelligence & AI"
         title="Portfolio analytics"
         description="Volume, document mix, extraction quality and review progress across every document in your workspace."
       />

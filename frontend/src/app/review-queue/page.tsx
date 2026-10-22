@@ -1,21 +1,36 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  CheckCheck,
-  Inbox,
-  RefreshCw,
-  Search,
-  ShieldAlert,
-} from "lucide-react";
+import { CheckCheck, Inbox, RefreshCw } from "lucide-react";
 
 import ContentSection from "@/components/layout/ContentSection";
 import PageHero from "@/components/layout/PageHero";
+import FieldReviewList from "@/components/review-queue/field-review-list";
+import QueueFilterBar from "@/components/review-queue/queue-filter-bar";
+import {
+  DEFAULT_FILTERS,
+  ISSUE_TABS,
+  issueKind,
+  issueLabel,
+  matchesFilters,
+  useSavedFilters,
+  type QueueFilters,
+} from "@/components/review-queue/queue-filters";
+import {
+  getAssignees,
+  normalizeContractType,
+  type AssigneesResult,
+  type Assignment,
+  type ReviewQueueFieldDetail,
+} from "@/lib/assignments";
+import { HIGH_BAND_MIN } from "@/lib/confidence-policy";
 import {
   acceptAllMetadataFields,
+  acceptReviewQueueFields,
   getReviewQueue,
   getReviewQueueFields,
+  isLowRiskQueueField,
 } from "@/lib/documents";
 import {
   DOCUMENT_TYPE_OPTIONS,
@@ -23,39 +38,29 @@ import {
   type ReviewQueueFieldItem,
 } from "@/types/document";
 
-const DEFAULT_REVIEWER = "Data Agent";
+const DEFAULT_REVIEWER = "Dataomatix";
 
-function issueKind(
-  item: ReviewQueueFieldItem,
-): "extraction" | "validation" | "missing" | "conflicts" {
-  const text = [
-    ...(item.reason_labels ?? []),
-    ...(item.reasons ?? []),
-    item.review_status,
-  ]
-    .join(" ")
-    .toLowerCase();
-  if (/missing|unknown|empty|blank|not found/.test(text)) return "missing";
-  if (/conflict|disagree|reject/.test(text)) return "conflicts";
-  if (/validat|type|format|failed|mismatch/.test(text)) return "validation";
-  return "extraction";
+function needsReview(item: ReviewQueueFieldItem): boolean {
+  return item.decision_status === "needs_review" || item.reasons.length > 0;
 }
 
-function issueLabel(item: ReviewQueueFieldItem): string {
-  return item.reason_labels?.[0] || issueKind(item);
+function sameField(a: ReviewQueueFieldItem, b: { document_id: string; metadata_field_id?: number | null; field_key: string }) {
+  if (a.document_id !== b.document_id) return false;
+  return a.metadata_field_id != null && b.metadata_field_id != null
+    ? a.metadata_field_id === b.metadata_field_id
+    : a.field_key === b.field_key;
 }
 
 export default function ReviewQueuePage() {
   const [entries, setEntries] = useState<ReviewQueueEntry[]>([]);
-  const [fieldItems, setFieldItems] = useState<ReviewQueueFieldItem[]>([]);
+  const [fieldItems, setFieldItems] = useState<ReviewQueueFieldDetail[]>([]);
+  const [assigneeInfo, setAssigneeInfo] = useState<AssigneesResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const [query, setQuery] = useState("");
+  const [filters, setFilters] = useState<QueueFilters>(DEFAULT_FILTERS);
+  const [savedFilters, setSavedFilters] = useSavedFilters();
   const [documentType, setDocumentType] = useState("");
-  const [issueFilter, setIssueFilter] = useState<
-    "all" | "extraction" | "validation" | "missing" | "conflicts"
-  >("all");
 
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
@@ -65,13 +70,16 @@ export default function ReviewQueuePage() {
     setError("");
 
     try {
-      const [result, fields] = await Promise.all([
+      const [result, fields, assignees] = await Promise.all([
         getReviewQueue(),
         getReviewQueueFields(),
+        // Suggestions only: the queue still works without them.
+        getAssignees().catch(() => null),
       ]);
       if (active()) {
         setEntries(result);
-        setFieldItems(fields);
+        setFieldItems(fields as ReviewQueueFieldDetail[]);
+        setAssigneeInfo(assignees);
       }
     } catch (err) {
       if (active()) {
@@ -104,7 +112,7 @@ export default function ReviewQueuePage() {
   );
 
   const filteredEntries = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
+    const normalizedQuery = filters.query.trim().toLowerCase();
 
     return entries.filter((entry) => {
       if (
@@ -120,7 +128,7 @@ export default function ReviewQueuePage() {
 
       return true;
     });
-  }, [entries, query, documentType]);
+  }, [entries, filters.query, documentType]);
 
   async function handleAcceptAll(entry: ReviewQueueEntry) {
     setAcceptingId(entry.document_id);
@@ -148,15 +156,86 @@ export default function ReviewQueuePage() {
     }
   }
 
-  const attentionItems = useMemo(() => {
-    return fieldItems.filter((item) => {
-      const needs =
-        item.decision_status === "needs_review" || item.reasons.length > 0;
-      if (!needs) return false;
-      if (issueFilter === "all") return true;
-      return issueKind(item) === issueFilter;
-    });
-  }, [fieldItems, issueFilter]);
+  const flaggedItems = useMemo(() => fieldItems.filter(needsReview), [fieldItems]);
+  // The banner counts by issue tab, as before; the table applies every filter.
+  const attentionItems = useMemo(
+    () => flaggedItems.filter((item) => filters.issue === "all" || issueKind(item) === filters.issue),
+    [flaggedItems, filters.issue],
+  );
+  const tableItems = useMemo(
+    () => flaggedItems.filter((item) => matchesFilters(item, filters)),
+    [flaggedItems, filters],
+  );
+  const issueCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: flaggedItems.length };
+    for (const item of flaggedItems) counts[issueKind(item)] = (counts[issueKind(item)] ?? 0) + 1;
+    return counts;
+  }, [flaggedItems]);
+  const assigneeOptions = useMemo(
+    () =>
+      [...new Set([...(assigneeInfo?.assignees ?? []), ...fieldItems.map((item) => item.assignee ?? "")])]
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b)),
+    [assigneeInfo, fieldItems],
+  );
+  const contractTypes = useMemo(
+    () =>
+      [...new Set(flaggedItems.map((item) => normalizeContractType(item.contract_type)))]
+        .filter((value): value is string => Boolean(value))
+        .sort((a, b) => a.localeCompare(b)),
+    [flaggedItems],
+  );
+
+  // Values waiting with nothing flagged: a reviewer can accept them in bulk.
+  const readyCount = fieldItems.length - flaggedItems.length;
+  // The subset safe for one-click batch approval: unflagged and high confidence.
+  const lowRiskItems = useMemo(() => fieldItems.filter(isLowRiskQueueField), [fieldItems]);
+  const attentionDocuments = new Set(attentionItems.map((item) => item.document_id)).size;
+  const [confirmLowRisk, setConfirmLowRisk] = useState(false);
+  const [acceptingLowRisk, setAcceptingLowRisk] = useState(false);
+  const [batchNotice, setBatchNotice] = useState("");
+
+  async function acceptLowRisk() {
+    setAcceptingLowRisk(true);
+    setBatchNotice("");
+    const { accepted, failed } = await acceptReviewQueueFields(lowRiskItems, DEFAULT_REVIEWER);
+    const done = new Set(accepted);
+    setFieldItems((current) => current.filter((item) => !done.has(item)));
+    setBatchNotice(
+      `Accepted ${accepted.length} low-risk ${accepted.length === 1 ? "value" : "values"}` +
+        (failed.length ? ` · ${failed.length} could not be saved` : "") +
+        ".",
+    );
+    setAcceptingLowRisk(false);
+    setConfirmLowRisk(false);
+  }
+
+  // A saved Approve / Reject / correction leaves the queue (and its counts) for good.
+  const handleDecided = useCallback((decided: ReviewQueueFieldItem) => {
+    setFieldItems((current) => current.filter((item) => !sameField(item, decided)));
+  }, []);
+
+  const handleAssigned = useCallback((changed: ReviewQueueFieldDetail[], saved: Assignment[]) => {
+    setFieldItems((current) =>
+      current.map((item) => {
+        if (!changed.some((candidate) => sameField(item, candidate))) return item;
+        const assignment = saved.find((candidate) => sameField(item, candidate));
+        return {
+          ...item,
+          assignee: assignment?.assignee ?? null,
+          due_date: assignment?.due_date ?? null,
+          assigned_at: assignment?.assigned_at ?? null,
+        };
+      }),
+    );
+    const names = saved.map((assignment) => assignment.assignee);
+    if (names.length) {
+      setAssigneeInfo((current) => ({
+        current_actor: current?.current_actor ?? "",
+        assignees: [...new Set([...(current?.assignees ?? []), ...names])],
+      }));
+    }
+  }, []);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -165,12 +244,13 @@ export default function ReviewQueuePage() {
         target &&
         (target.tagName === "INPUT" ||
           target.tagName === "TEXTAREA" ||
-          target.tagName === "SELECT")
+          target.tagName === "SELECT" ||
+          target.closest('[role="dialog"]'))
       ) {
         return;
       }
       if (event.key === "n" || event.key === "N") {
-        const next = attentionItems[0];
+        const next = tableItems[0];
         if (next) {
           window.location.assign(`/documents/${next.document_id}?view=qa`);
         }
@@ -178,15 +258,15 @@ export default function ReviewQueuePage() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [attentionItems]);
+  }, [tableItems]);
 
   return (
     <>
       <PageHero
         compact
-        eyebrow="Review"
-        title="Review"
-        description="Route machine extraction into human governance — accept, correct, or reject with a durable audit trail."
+        eyebrow="Document Processing"
+        title="Review queue"
+        description="Accept, correct or reject extracted values. Every decision is recorded in the audit trail."
         actions={
           <button
             type="button"
@@ -204,59 +284,96 @@ export default function ReviewQueuePage() {
 
       <ContentSection>
         <p className="mb-3 text-sm text-text-secondary">
-          {attentionItems.length} items need attention
+          <span className="font-medium text-foreground">{attentionItems.length}</span>{" "}
+          {attentionItems.length === 1 ? "value" : "values"} flagged for review
+          {attentionDocuments > 0 && ` in ${attentionDocuments} ${attentionDocuments === 1 ? "document" : "documents"}`}
+          {readyCount > 0 && ` · ${readyCount} more ready to accept`}
         </p>
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          {(
-            [
-              ["all", "All"],
-              ["extraction", "Extraction"],
-              ["validation", "Validation"],
-              ["missing", "Missing"],
-              ["conflicts", "Conflicts"],
-            ] as const
-          ).map(([id, label]) => (
+        {lowRiskItems.length > 0 && (
+          <div
+            className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-[var(--success)]/30 bg-[var(--success)]/[0.06] px-4 py-3 text-sm"
+            data-testid="low-risk-batch"
+          >
+            <CheckCheck className="h-4 w-4 shrink-0 text-[var(--success)]" aria-hidden="true" />
+            <p className="min-w-0 flex-1 text-text-secondary">
+              <span className="font-medium text-foreground">{lowRiskItems.length}</span> unflagged{" "}
+              {lowRiskItems.length === 1 ? "value scores" : "values score"} {Math.round(HIGH_BAND_MIN * 100)}% or
+              higher{" "}
+              {(() => {
+                const count = new Set(lowRiskItems.map((item) => item.document_id)).size;
+                return `across ${count} ${count === 1 ? "document" : "documents"}`;
+              })()}
+              . Each acceptance is audited.
+            </p>
+            {confirmLowRisk ? (
+              <span className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void acceptLowRisk()}
+                  disabled={acceptingLowRisk}
+                  className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50"
+                >
+                  {acceptingLowRisk ? "Accepting…" : `Confirm: accept ${lowRiskItems.length}`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmLowRisk(false)}
+                  disabled={acceptingLowRisk}
+                  className="text-xs text-text-secondary hover:text-foreground"
+                >
+                  Cancel
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmLowRisk(true)}
+                className="btn-secondary px-3 py-1.5 text-xs"
+              >
+                Accept low-risk values
+              </button>
+            )}
+          </div>
+        )}
+        {batchNotice && (
+          <p className="mb-4 text-sm text-text-secondary" role="status">
+            {batchNotice}
+          </p>
+        )}
+        <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Issue type">
+          {ISSUE_TABS.map(([id, label]) => (
             <button
               key={id}
               type="button"
-              onClick={() => setIssueFilter(id)}
+              aria-pressed={filters.issue === id}
+              onClick={() => setFilters((current) => ({ ...current, issue: id }))}
               className={[
                 "rounded-full px-3 py-1.5 text-xs font-semibold",
-                issueFilter === id
+                filters.issue === id
                   ? "bg-primary text-white"
                   : "border border-border bg-surface text-text-secondary",
               ].join(" ")}
             >
               {label}
+              {!loading && <span className="ml-1.5 tabular-nums opacity-75">{issueCounts[id] ?? 0}</span>}
             </button>
           ))}
         </div>
 
-      <div className="mb-6 flex flex-wrap items-center gap-3">
-        <div className="relative min-w-[240px] flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-          <input
-            type="text"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search by filename..."
-            className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm text-foreground outline-none focus:border-primary/30"
-          />
-        </div>
-
-        <select
-          value={documentType}
-          onChange={(event) => setDocumentType(event.target.value)}
-          className="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-primary/30"
-        >
-          <option value="">All types</option>
-          {documentTypesInQueue.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
-      </div>
+        <QueueFilterBar
+          filters={filters}
+          onChange={setFilters}
+          assignees={assigneeOptions}
+          contractTypes={contractTypes}
+          saved={savedFilters}
+          onSave={(name) =>
+            setSavedFilters([
+              ...savedFilters.filter((entry) => entry.name !== name),
+              { id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`, name, filters },
+            ])
+          }
+          onRemoveSaved={(id) => setSavedFilters(savedFilters.filter((entry) => entry.id !== id))}
+        />
 
       {error && (
         <div className="mb-6 rounded-xl border border-danger/20 bg-danger/5 p-3 text-sm text-danger">
@@ -264,47 +381,23 @@ export default function ReviewQueuePage() {
         </div>
       )}
 
-      {!loading && fieldItems.length > 0 && (
-        <div className="editorial-card mb-6 overflow-hidden">
-          <div className="flex items-center gap-2 border-b border-border px-6 py-4">
-            <ShieldAlert className="h-4 w-4 text-amber-600" />
-            <div>
-              <p className="text-sm font-semibold text-foreground">Review</p>
-              <p className="text-xs text-text-secondary">
-                Why a person needs to look — extraction, validation, a missing value, or a conflict.
-              </p>
-            </div>
-          </div>
-          <div className="divide-y divide-border">
-            {attentionItems.slice(0, 40).map((item) => (
-                <div
-                  key={`${item.document_id}:${item.field_key}`}
-                  className="flex flex-wrap items-center justify-between gap-3 px-6 py-3"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-foreground">
-                      {item.label}
-                      <span className="ml-2 text-xs font-normal text-text-muted">
-                        {item.original_filename}
-                      </span>
-                    </p>
-                    <p className="truncate text-xs text-text-secondary">
-                      {issueLabel(item)}
-                      {item.value ? ` · ${item.value}` : ""}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Link
-                      href={`/documents/${item.document_id}?view=qa`}
-                      className="text-xs font-semibold text-text-teal hover:text-primary"
-                    >
-                      Review
-                    </Link>
-                  </div>
-                </div>
-              ))}
-          </div>
-        </div>
+      {!loading && flaggedItems.length > 0 && (
+        <>
+          {tableItems.length !== flaggedItems.length && (
+            <p className="mb-2 text-xs text-text-secondary">
+              {tableItems.length} of {flaggedItems.length} flagged values match these filters.
+            </p>
+          )}
+          <FieldReviewList
+            items={tableItems}
+            reviewer={DEFAULT_REVIEWER}
+            issueLabel={issueLabel}
+            onDecided={handleDecided}
+            knownAssignees={assigneeOptions}
+            currentActor={assigneeInfo?.current_actor ?? ""}
+            onAssigned={handleAssigned}
+          />
+        </>
       )}
 
       {loading && entries.length === 0 && (
@@ -340,9 +433,10 @@ export default function ReviewQueuePage() {
         )}
 
       <div className="space-y-6">
-        {filteredEntries.length > 0 && (
+        {entries.length > 0 && filteredEntries.length > 0 && (
             <div className="editorial-card overflow-hidden">
-              <div className="border-b border-border px-6 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-6 py-4">
+                <div>
                   <p className="text-sm font-semibold text-foreground">
                     Documents
                     <span className="ml-2 text-xs font-normal text-text-muted">
@@ -352,6 +446,22 @@ export default function ReviewQueuePage() {
                   <p className="text-xs text-text-secondary">
                     Open a document to verify the field in source.
                   </p>
+                </div>
+                {documentTypesInQueue.length > 1 && (
+                  <select
+                    value={documentType}
+                    onChange={(event) => setDocumentType(event.target.value)}
+                    aria-label="Document type"
+                    className="rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-foreground outline-none focus:border-primary/30"
+                  >
+                    <option value="">All types</option>
+                    {documentTypesInQueue.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
 
               <div className="divide-y divide-border">

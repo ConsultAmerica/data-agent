@@ -35,7 +35,10 @@ from app.services.processing_versions import (
 from app.services.schema_discovery import discover_document_schema
 from app.services.ai_enrichment import start_session
 from app.services.target_extraction_service import extract_by_targets
-from app.services.target_result_store import persist_target_extraction_results
+from app.services.target_result_store import (
+    clear_stale_target_values,
+    persist_target_extraction_results,
+)
 from app.services.v3_orchestrator import run_and_persist_v3_extraction
 from app.staging.preparation import prepare_staging
 from app.staging.resolver import recognize_document_profile
@@ -492,6 +495,18 @@ async def run_extraction_job(
             }
             job.progress = round((index + 1) / len(batches) * 80)
             database.commit()
+
+        # Targets that found nothing this run drop their old, unreviewed value.
+        cleared_stale = clear_stale_target_values(
+            database=database,
+            document_id=document.id,
+            unresolved_keys=unresolved,
+        )
+        if cleared_stale:
+            warnings.append(
+                f"Cleared {cleared_stale} unreviewed value(s) the latest extraction no longer found."
+            )
+        database.commit()
 
         validate_started = time.perf_counter()
         _append_stage(job, "validating_results")

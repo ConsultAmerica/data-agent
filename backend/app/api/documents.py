@@ -10,6 +10,7 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
+    Form,
     HTTPException,
     Query,
     Response,
@@ -23,6 +24,7 @@ from app.core.config import get_settings
 from app.database.dependencies import get_database
 from app.models.document import Document
 from app.models.document_metadata_field import DocumentMetadataField
+from app.models.document_intake import DocumentIntake
 from app.models.document_page import DocumentPage
 from app.models.document_staging_workbook import DocumentStagingWorkbook
 from app.models.metadata_field_audit_log import MetadataFieldAuditLog
@@ -44,6 +46,13 @@ from app.schemas.document import (
 )
 from app.staging.document_labels import document_labels
 from app.services.document_deletion import delete_documents
+from app.services.document_intake import (
+    IntakeFields,
+    IntakeValidationError,
+    intake_by_document,
+    intake_summary_fields,
+    upsert_intake,
+)
 from app.services.dashboard_stats import (
     compute_document_confidence,
     compute_document_status,
@@ -320,12 +329,28 @@ async def upload_document(
             "document (used after Upload Anyway when the staged file expired)."
         ),
     ),
+    # Optional intake tagging (models/document_intake.py). Omitted → no
+    # intake row, exactly as before.
+    batch_id: str | None = Form(None),
+    agency: str | None = Form(None),
+    contracting_officer: str | None = Form(None),
+    extraction_profile: str | None = Form(None),
     database: Session = Depends(get_database),
     actor: ActorContext = Depends(get_current_actor),
 ) -> UploadedDocumentResponse:
     document_id = uuid4()
     destination: Path | None = None
     log: list[str] = []
+
+    try:
+        intake = IntakeFields(
+            batch_id=batch_id,
+            agency=agency,
+            contracting_officer=contracting_officer,
+            extraction_profile=extraction_profile,
+        )
+    except IntakeValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
         display_filename, spec = validate_upload_metadata(file)
@@ -469,6 +494,8 @@ async def upload_document(
             metadata=metadata,
             owner_workspace=actor.workspace,
         )
+        if upsert_intake(database, str(document_id), intake, actor.id) is not None:
+            log.append("Recorded intake tags")
         bind_job_context(document_id=str(document_id))
         upload_object(
             settings,
@@ -1097,6 +1124,7 @@ def _build_document_summary(
             settings, stored_filename=document.stored_filename
         ),
         **document_labels(database, document),
+        **intake_summary_fields(database.get(DocumentIntake, document.id)),
     )
 
 
@@ -1576,6 +1604,8 @@ async def get_document(
             detail="Document not found.",
         )
 
+    intake = intake_by_document(database, [document.id]).get(document.id)
+
     return UploadedDocumentResponse(
         document_id=document.id,
         original_filename=document.original_filename,
@@ -1608,4 +1638,6 @@ async def get_document(
             "processing_job_id"
         ),
         ingestion_provenance=document.ingestion_provenance,
+        agency=intake.agency if intake else None,
+        contracting_officer=intake.contracting_officer if intake else None,
     )

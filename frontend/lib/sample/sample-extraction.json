@@ -1,0 +1,398 @@
+{
+  "document": {
+    "name": "sample-contract.pdf",
+    "pdf": "/sample/sample-contract.pdf",
+    "pages": [
+      {
+        "page_number": 1,
+        "image": "/sample/page-1.png",
+        "width": 612.0,
+        "height": 792.0
+      },
+      {
+        "page_number": 2,
+        "image": "/sample/page-2.png",
+        "width": 612.0,
+        "height": 792.0
+      }
+    ]
+  },
+  "generated_by": "backend/scripts/build_public_sample.py",
+  "fields": [
+    {
+      "id": "f1",
+      "kind": "field",
+      "label": "REQUISITION NUMBER",
+      "value": "0011734552-0001",
+      "alternates": [],
+      "confidence": 0.7,
+      "band": "medium",
+      "page": 1,
+      "bbox": {
+        "x0": 41.0,
+        "y0": 63.83,
+        "x1": 118.11,
+        "y1": 76.92
+      },
+      "decision": "ready_to_accept",
+      "reasons": []
+    },
+    {
+      "id": "f2",
+      "kind": "field",
+      "label": "CONTRACT NUMBER",
+      "value": "W91ZZZ26C0042",
+      "alternates": [],
+      "confidence": 0.85,
+      "band": "high",
+      "page": 1,
+      "bbox": {
+        "x0": 311.0,
+        "y0": 63.83,
+        "x1": 386.5,
+        "y1": 76.92
+      },
+      "decision": "ready_to_accept",
+      "reasons": []
+    },
+    {
+      "id": "f3",
+      "kind": "field",
+      "label": "AWARD/EFFECTIVE DATE",
+      "value": "08/19/2026",
+      "alternates": [],
+      "confidence": 0.85,
+      "band": "high",
+      "page": 1,
+      "bbox": {
+        "x0": 41.0,
+        "y0": 97.83,
+        "x1": 88.54,
+        "y1": 110.92
+      },
+      "decision": "ready_to_accept",
+      "reasons": []
+    },
+    {
+      "id": "f4",
+      "kind": "field",
+      "label": "ORDER NUMBER",
+      "value": "N/A",
+      "alternates": [],
+      "confidence": 0.7,
+      "band": "medium",
+      "page": 1,
+      "bbox": {
+        "x0": 311.0,
+        "y0": 97.83,
+        "x1": 327.36,
+        "y1": 110.92
+      },
+      "decision": "ready_to_accept",
+      "reasons": []
+    },
+    {
+      "id": "f5",
+      "kind": "field",
+      "label": "SOLICITATION NUMBER",
+      "value": "W91ZZZ26R0007",
+      "alternates": [],
+      "confidence": 0.85,
+      "band": "high",
+      "page": 1,
+      "bbox": {
+        "x0": 41.0,
+        "y0": 131.83,
+        "x1": 116.5,
+        "y1": 144.92
+      },
+      "decision": "ready_to_accept",
+      "reasons": []
+    },
+    {
+      "id": "f6",
+      "kind": "field",
+      "label": "SOLICITATION ISSUE DATE",
+      "value": "05/04/2026",
+      "alternates": [],
+      "confidence": 0.7,
+      "band": "medium",
+      "page": 1,
+      "bbox": {
+        "x0": 311.0,
+        "y0": 131.83,
+        "x1": 358.54,
+        "y1": 144.92
+      },
+      "decision": "ready_to_accept",
+      "reasons": []
+    },
+    {
+      "id": "f7",
+      "kind": "field",
+      "label": "FOR SOLICITATION INFORMATION CALL",
+      "value": "Jordan Avery",
+      "alternates": [],
+      "confidence": 0.7,
+      "band": "medium",
+      "page": 1,
+      "bbox": {
+        "x0": 41.0,
+        "y0": 165.83,
+        "x1": 101.71,
+        "y1": 178.92
+      },
+      "decision": "ready_to_accept",
+      "reasons": []
+    },
+    {
+      "id": "f8",
+      "kind": "field",
+      "label": "TELEPHONE NUMBER",
+      "value": "555-010-4417",
+      "alternates": [],
+      "confidence": 0.85,
+      "band": "high",
+      "page": 1,
+      "bbox": {
+        "x0": 319.84,
+        "y0": 156.01,
+        "x1": 389.18,
+        "y1": 164.94
+      },
+      "decision": "ready_to_accept",
+      "reasons": []
+    },
+    {
+      "id": "f9",
+      "kind": "field",
+      "label": "ISSUED BY",
+      "value": null,
+      "alternates": [
+        "Sample Contracting Activity",
+        "100 Example Way, Suite 4"
+      ],
+      "confidence": 0.5,
+      "band": "low",
+      "page": 1,
+      "bbox": {
+        "x0": 36.0,
+        "y0": 188.0,
+        "x1": 306.0,
+        "y1": 234.0
+      },
+      "decision": "needs_review",
+      "reasons": [
+        "Low confidence",
+        "Ambiguous candidates"
+      ]
+    },
+    {
+      "id": "f10",
+      "kind": "field",
+      "label": "ADMINISTERED BY",
+      "value": null,
+      "alternates": [
+        "Sample Contract Management Office",
+        "Room 210, Building 7"
+      ],
+      "confidence": 0.5,
+      "band": "low",
+      "page": 1,
+      "bbox": {
+        "x0": 306.0,
+        "y0": 188.0,
+        "x1": 576.0,
+        "y1": 234.0
+      },
+      "decision": "needs_review",
+      "reasons": [
+        "Low confidence",
+        "Ambiguous candidates"
+      ]
+    },
+    {
+      "id": "f11",
+      "kind": "field",
+      "label": "UNIQUE ENTITY ID (UEI)",
+      "value": "QX7LMN4TZ8K1",
+      "alternates": [],
+      "confidence": 0.85,
+      "band": "high",
+      "page": 1,
+      "bbox": {
+        "x0": 311.0,
+        "y0": 245.83,
+        "x1": 384.9,
+        "y1": 258.92
+      },
+      "decision": "ready_to_accept",
+      "reasons": []
+    },
+    {
+      "id": "f12",
+      "kind": "field",
+      "label": "CONTRACTOR/OFFEROR",
+      "value": "Northwind Analytics LLC",
+      "alternates": [],
+      "confidence": 0.7,
+      "band": "medium",
+      "page": 1,
+      "bbox": {
+        "x0": 41.0,
+        "y0": 245.83,
+        "x1": 153.95,
+        "y1": 258.92
+      },
+      "decision": "ready_to_accept",
+      "reasons": []
+    },
+    {
+      "id": "f13",
+      "kind": "field",
+      "label": "TOTAL AWARD AMOUNT (For Govt. Use Only)",
+      "value": "$1,250,000.00",
+      "alternates": [],
+      "confidence": 0.85,
+      "band": "high",
+      "page": 1,
+      "bbox": {
+        "x0": 311.0,
+        "y0": 413.83,
+        "x1": 371.74,
+        "y1": 426.92
+      },
+      "decision": "ready_to_accept",
+      "reasons": []
+    },
+    {
+      "id": "f14",
+      "kind": "field",
+      "label": "UNITED STATES OF AMERICA (SIGNATURE OF CONTRACTING OFFICER)",
+      "value": null,
+      "alternates": [],
+      "confidence": 0.35,
+      "band": "low",
+      "page": 1,
+      "bbox": {
+        "x0": 36.0,
+        "y0": 436.0,
+        "x1": 306.0,
+        "y1": 476.0
+      },
+      "decision": "needs_review",
+      "reasons": [
+        "Low confidence",
+        "Validation failed"
+      ]
+    },
+    {
+      "id": "f15",
+      "kind": "field",
+      "label": "DATE SIGNED",
+      "value": "08/19/2026",
+      "alternates": [],
+      "confidence": 0.7,
+      "band": "medium",
+      "page": 1,
+      "bbox": {
+        "x0": 311.0,
+        "y0": 447.83,
+        "x1": 358.54,
+        "y1": 460.92
+      },
+      "decision": "ready_to_accept",
+      "reasons": []
+    },
+    {
+      "id": "f16",
+      "kind": "clause",
+      "label": "FAR 52.204-21",
+      "value": "Basic Safeguarding of Covered Contractor Information Systems  NOV 2021",
+      "alternates": [],
+      "confidence": 0.8,
+      "band": "medium",
+      "page": 2,
+      "bbox": {
+        "x0": 36.0,
+        "y0": 190.4,
+        "x1": 72.02,
+        "y1": 201.39
+      },
+      "decision": "ready_to_accept",
+      "reasons": []
+    },
+    {
+      "id": "f17",
+      "kind": "clause",
+      "label": "FAR 52.212-4",
+      "value": "Contract Terms and Conditions - Commercial Products and Commercial Services  NOV 2023",
+      "alternates": [],
+      "confidence": 0.8,
+      "band": "medium",
+      "page": 2,
+      "bbox": {
+        "x0": 36.0,
+        "y0": 203.4,
+        "x1": 67.58,
+        "y1": 214.39
+      },
+      "decision": "ready_to_accept",
+      "reasons": []
+    },
+    {
+      "id": "f18",
+      "kind": "clause",
+      "label": "FAR 52.232-33",
+      "value": "Payment by Electronic Funds Transfer - System for Award Management  OCT 2018",
+      "alternates": [],
+      "confidence": 0.8,
+      "band": "medium",
+      "page": 2,
+      "bbox": {
+        "x0": 36.0,
+        "y0": 216.4,
+        "x1": 72.02,
+        "y1": 227.39
+      },
+      "decision": "ready_to_accept",
+      "reasons": []
+    },
+    {
+      "id": "f19",
+      "kind": "clause",
+      "label": "DFARS 252.204-7012",
+      "value": "Safeguarding Covered Defense Information and Cyber Incident Reporting  MAY 2024",
+      "alternates": [],
+      "confidence": 0.8,
+      "band": "medium",
+      "page": 2,
+      "bbox": {
+        "x0": 36.0,
+        "y0": 229.4,
+        "x1": 85.37,
+        "y1": 240.39
+      },
+      "decision": "ready_to_accept",
+      "reasons": []
+    },
+    {
+      "id": "f20",
+      "kind": "clause",
+      "label": "DFARS 252.232-7003",
+      "value": "Electronic Submission of Payment Requests and Receiving Reports  DEC 2018",
+      "alternates": [],
+      "confidence": 0.8,
+      "band": "medium",
+      "page": 2,
+      "bbox": {
+        "x0": 36.0,
+        "y0": 242.4,
+        "x1": 85.37,
+        "y1": 253.39
+      },
+      "decision": "ready_to_accept",
+      "reasons": []
+    }
+  ]
+}

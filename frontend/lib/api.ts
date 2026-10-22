@@ -42,7 +42,7 @@ function renderServiceName(): string {
 function unreachableBackendMessage(): string {
   if (isRenderBackend()) {
     return (
-      `Cannot reach the Data Agent API at ${API_URL}. ` +
+      `Cannot reach the Dataomatix API at ${API_URL}. ` +
       "The Render backend may be suspended, redeploying, or waking from idle — " +
       "wait 60–90 seconds and retry. If this persists, open the Render dashboard " +
       `and resume or redeploy the ${renderServiceName()} service.`
@@ -50,7 +50,7 @@ function unreachableBackendMessage(): string {
   }
 
   return (
-    `Cannot reach the Data Agent API at ${API_URL}. ` +
+    `Cannot reach the Dataomatix API at ${API_URL}. ` +
     "The processing service may be waking up, offline, or blocked — " +
     "retry in a moment, or confirm the FastAPI backend is running."
   );
@@ -149,7 +149,7 @@ export class ApiError extends Error {
 }
 
 /**
- * Fetches from the Data Agent API and returns the parsed JSON body.
+ * Fetches from the Dataomatix API and returns the parsed JSON body.
  * Throws a descriptive Error on any failure so callers never have to
  * repeat response.ok / response.json() handling themselves.
  */

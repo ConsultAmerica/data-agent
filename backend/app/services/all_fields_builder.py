@@ -17,6 +17,8 @@ sources are untouched.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import re
 
 from sqlalchemy import select
@@ -52,7 +54,20 @@ _CHROME_VALUES = frozenset(
         "see",
         "united states",
         "united states of america",
+        "by",
     }
+)
+# "Not applicable" is real information about a field, so these stay as
+# values (routed to review); every other chrome word is never a value.
+_PLACEHOLDER_VALUES = frozenset({"n/a", "na"})
+# A list or outline enumerator on its own: "a.", "(b)", "iv.", "1)". Under a
+# section heading ("REQUIRED INSURANCE") the first sub-paragraph's marker
+# sits where a form value would be; it is never the value.
+_OUTLINE_MARKER = re.compile(
+    r"^\(?(?:[a-z]{1,2}"  # a. (b) aa.
+    r"|(?=[ivxlc])c{0,3}(?:xc|xl|l?x{0,3})(?:ix|iv|v?i{0,3})"  # a real Roman numeral: iv. xii)
+    r"|\d{1,3})[.)]$",  # 1. 12)
+    re.IGNORECASE,
 )
 _INSTRUCTIONAL_LABEL = re.compile(
     r"^(check if\b)|\(type or print\)|\(if other than",
@@ -87,6 +102,23 @@ def association_is_defensible(label: str, value: str) -> bool:
     return True
 
 
+def not_a_value(value: str) -> str | None:
+    """Why a candidate value can never be a field value, or None.
+
+    Unlike association_is_defensible (which routes doubtful pairs to a
+    reviewer), these are dropped: a reviewer should never be asked to
+    approve "a." or "ITEM" as a value.
+    """
+
+    text = " ".join(value.split())
+    if _OUTLINE_MARKER.match(text):
+        return "outline_marker"
+    normalized = text.lower().strip(" .:")
+    if normalized in _CHROME_VALUES and normalized not in _PLACEHOLDER_VALUES:
+        return "form_chrome"
+    return None
+
+
 def _slug(text: str) -> str:
     slug = _SLUG_RE.sub("_", text.strip().lower()).strip("_")
     return slug or "field"
@@ -117,6 +149,8 @@ def build_all_fields(
         label = (candidate.label or candidate.value).strip()
         value = candidate.value.strip()
         if not label or not value:
+            continue
+        if not_a_value(value):
             continue
         dedupe_key = (label.lower(), value.lower())
         if dedupe_key in seen:
@@ -192,7 +226,9 @@ def persist_all_fields(
         existing.field_group = row.field_group
         existing.confidence = row.confidence
         existing.extraction_method = row.extraction_method
-        existing.extracted_at = row.extracted_at
+        # A row built for this run isn't flushed yet, so its column default
+        # hasn't applied; stamp the refresh time instead of writing NULL.
+        existing.extracted_at = row.extracted_at or datetime.now(timezone.utc)
 
         if not human_locked:
             existing.value = row.value

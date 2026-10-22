@@ -1,20 +1,31 @@
-﻿from fastapi import FastAPI, Response, status
+﻿import logging
+
+from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.api import (
     actors,
+    ask,
+    assignments,
     contract_analysis,
     dashboard,
+    document_actions,
+    document_compare,
     documents,
     extraction_models,
     financial_analysis,
+    insights_search,
+    intake,
     jobs,
+    obligations,
     page_extraction,
+    playbook,
     reviewed_export,
     system,
     target_corrections,
     universal_extraction,
+    validation_rules,
     staging_workbook,
     v3_export,
 )
@@ -36,6 +47,8 @@ from app.database.migrate import (
     ensure_target_correction_columns,
     run_alembic_upgrade,
 )
+from app.database.playbook_columns import ensure_clause_playbook_rule_columns
+from app.database.rls import RlsLockdownError, lock_down_public_schema
 from app.database.session import SessionLocal, engine
 from app.services.document_storage import is_remote_storage_configured
 from app.models import (  # noqa: F401
@@ -115,6 +128,7 @@ from app.models import (  # noqa: F401
 )
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title=settings.app_name,
@@ -266,6 +280,80 @@ app.include_router(
     tags=["Actors"],
 )
 
+app.include_router(
+    obligations.router,
+    prefix="/api/documents",
+    # Document isolation for every /{document_id} route (core/document_access.py).
+    dependencies=[Depends(enforce_document_access)],
+    tags=["Obligations"],
+)
+app.include_router(
+    obligations.portfolio_router,
+    prefix="/api/obligations",
+    tags=["Obligations"],
+)
+app.include_router(
+    playbook.document_router,
+    prefix="/api/documents",
+    # Document isolation for every /{document_id} route (core/document_access.py).
+    dependencies=[Depends(enforce_document_access)],
+    tags=["Clause Playbook"],
+)
+app.include_router(
+    playbook.router,
+    prefix="/api/playbook",
+    tags=["Clause Playbook"],
+)
+app.include_router(
+    intake.router,
+    prefix="/api/intake",
+    # Batches are scoped in the handlers; /documents/{document_id} is isolated here.
+    dependencies=[Depends(enforce_document_access)],
+    tags=["Intake"],
+)
+# Handlers check access per document (items can span documents).
+app.include_router(
+    assignments.router,
+    prefix="/api/review-assignments",
+    tags=["Review Assignments"],
+)
+app.include_router(
+    document_actions.router,
+    prefix="/api/documents",
+    # Document isolation for every /{document_id} route (core/document_access.py).
+    dependencies=[Depends(enforce_document_access)],
+    tags=["Document Actions"],
+)
+app.include_router(
+    validation_rules.document_router,
+    prefix="/api/documents",
+    # Document isolation for every /{document_id} route (core/document_access.py).
+    dependencies=[Depends(enforce_document_access)],
+    tags=["Validation Rules"],
+)
+app.include_router(
+    validation_rules.router,
+    prefix="/api/validation-rules",
+    tags=["Validation Rules"],
+)
+# Scoped to the caller's documents inside the handler.
+app.include_router(
+    insights_search.router,
+    prefix="/api/search",
+    tags=["Insights Search"],
+)
+app.include_router(
+    ask.router,
+    prefix="/api/ask",
+    tags=["Ask"],
+)
+# Both document ids are access-checked inside the handler.
+app.include_router(
+    document_compare.router,
+    prefix="/api/compare",
+    tags=["Compare"],
+)
+
 
 @app.on_event("startup")
 async def create_database_tables() -> None:
@@ -303,6 +391,13 @@ async def create_database_tables() -> None:
     ensure_target_correction_columns(engine)
     ensure_metadata_field_audit_log_columns(engine)
     ensure_detected_target_columns(engine)
+    ensure_clause_playbook_rule_columns(engine)
+
+    # Supabase serves public tables over PostgREST; the app never uses it.
+    try:
+        lock_down_public_schema(engine)
+    except RlsLockdownError:
+        logger.exception("Public schema left exposed to the Supabase REST API")
 
     from app.database.session import SessionLocal
     from app.services.actor_seed import ensure_actors_seeded

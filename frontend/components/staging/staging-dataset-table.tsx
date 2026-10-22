@@ -14,7 +14,10 @@ import SelectCheckbox from "@/components/staging/select-checkbox";
 import SelectionToolbar from "@/components/staging/selection-toolbar";
 import SortableHeader from "@/components/staging/sortable-header";
 import StagingRecordDrawer from "@/components/staging/staging-record-drawer";
+import DensityToggle from "@/components/ui/density-toggle";
+import FieldToneLegend from "@/components/ui/field-tone-legend";
 import { MIN_COLUMN_WIDTH, columnWidth, frozenColumnCount, frozenOffsets } from "@/lib/data-grid";
+import { fieldToneClass, toneFromStagingCell } from "@/lib/field-tone";
 import type { StagingColumn, StagingDataset, StagingRecord } from "@/lib/staging-workbook";
 import {
   allSelected,
@@ -27,6 +30,7 @@ import {
   useTableSelection,
 } from "@/lib/table-selection";
 import { cycleSort, sortByText, type SortState } from "@/lib/table-sort";
+import { useTableDensity } from "@/lib/table-density";
 
 const STATUS_SORT_FIELD = "__status__";
 
@@ -99,7 +103,7 @@ export default function StagingDatasetTable({
   onOpenDataset,
   selectedId,
   pageSize = DEFAULT_PAGE_SIZE,
-  dense = false,
+  dense: denseProp = false,
   selectable = true,
   sortable = true,
   filename,
@@ -119,6 +123,9 @@ export default function StagingDatasetTable({
   const effectivePageSize = fullText ? chosenPageSize || Math.max(dataset.records.length, 1) : pageSize;
   const [openRecord, setOpenRecord] = useState<StagingRecord | null>(null);
   const narrow = useNarrow();
+  // A caller can force dense; otherwise the viewer's Comfortable / Compact choice.
+  const [densityChoice, setDensity] = useTableDensity("staging");
+  const dense = denseProp || densityChoice === "compact";
 
   const allColumns = useMemo(() => gridColumns(dataset), [dataset]);
   const columnKey = allColumns.map((column) => column.canonical_field).join("|");
@@ -359,6 +366,7 @@ export default function StagingDatasetTable({
         <WrapText className="h-3.5 w-3.5" aria-hidden="true" />
         Wrap text
       </button>
+      {!denseProp && <DensityToggle value={densityChoice} onChange={setDensity} />}
       <div className="relative" ref={columnsMenuRef}>
         <button
           type="button"
@@ -415,6 +423,7 @@ export default function StagingDatasetTable({
         {sorted.length.toLocaleString()} of {dataset.records.length.toLocaleString()} record
         {dataset.records.length === 1 ? "" : "s"}
       </span>
+      {hasStatus && <FieldToneLegend />}
       {fullText && (
         <label className="ml-auto flex items-center gap-1.5 text-xs text-text-secondary">
           Rows per page
@@ -679,6 +688,7 @@ export default function StagingDatasetTable({
                           selectedId === requestId ? "bg-primary/[0.08]" : "",
                           columnIndex < frozen ? "sticky z-10 bg-surface" : "",
                           columnIndex === frozen - 1 ? "border-r" : "",
+                          fieldToneClass(toneFromStagingCell(record.cells[column.canonical_field]), "cell"),
                         ].join(" ")}
                         style={columnIndex < frozen ? { left: offsets[columnIndex] } : undefined}
                         title={!wrapCells && text.length > 30 ? text.slice(0, 300) : undefined}

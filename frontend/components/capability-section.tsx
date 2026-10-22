@@ -56,7 +56,7 @@ const CAPABILITIES = [
   {
     title: "Ask for anything",
     description:
-      "Don't see the field, clause, table, date, party, or amount you need? Request any custom concept and Data Agent extracts it with the same source-page evidence.",
+      "Don't see the field, clause, table, date, party, or amount you need? Request any custom concept and Dataomatix extracts it with the same source-page evidence.",
     href: "/extraction/new",
     icon: Sparkles,
   },

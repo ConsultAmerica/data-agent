@@ -1,19 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { Bell, Menu, Plus, Search, Sparkles } from "lucide-react";
+import { Menu, Plus, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 
 import BackendStatusPill from "@/components/navigation/BackendStatusPill";
+import CommandTrigger from "@/components/navigation/command-trigger";
 import DataAgentLogo from "@/components/navigation/data-agent-logo";
 import MobileNavigation from "@/components/navigation/MobileNavigation";
 import NavDropdown from "@/components/navigation/NavDropdown";
-import { TOP_MENUS, menuForPath, type TopMenu } from "@/components/navigation/nav-config";
-
-function MenuItem({ menu, active }: { menu: TopMenu; active: TopMenu["id"] | null }) {
-  return <NavDropdown label={menu.label} href={menu.href} sections={menu.sections} current={active === menu.id} />;
-}
+import UserChip from "@/components/navigation/user-chip";
+import { TOP_MENUS, menuForPath } from "@/components/navigation/nav-config";
 
 interface GlobalHeaderProps {
   onOpenSearch: () => void;
@@ -28,25 +26,24 @@ export default function GlobalHeader({ onOpenSearch }: GlobalHeaderProps) {
       <header className="global-header app-header shrink-0">
         {/* Brand — never shrink */}
         <div className="header-left">
-          <Link href="/" className="header-brand-link" aria-label="Data Agent home">
-            <DataAgentLogo variant="wordmark" tone="onDark" size={34} />
+          <Link href="/" className="header-brand-link" aria-label="Dataomatix home">
+            <DataAgentLogo variant="wordmark" tone="onDark" size={42} />
           </Link>
         </div>
 
-        {/* Primary nav — Platform, Intelligence, Review stay visible */}
-        <nav className="header-nav" aria-label="Main navigation">
-          {TOP_MENUS.filter((menu) => menu.id !== "governance").map((menu) => (
-            <MenuItem key={menu.id} menu={menu} active={active} />
-          ))}
-          <div className="header-nav-governance">
-            <MenuItem menu={TOP_MENUS.find((menu) => menu.id === "governance")!} active={active} />
-          </div>
-          <div className="header-nav-more">
-            <NavDropdown
-              label="More"
-              href="/governance"
-              sections={TOP_MENUS.find((menu) => menu.id === "governance")!.sections}
-            />
+        {/* Section pills. All five always render; when the header is tight the
+            row scrolls sideways (snapping to a pill) instead of hiding any. */}
+        <nav aria-label="Main navigation" className="hidden min-w-0 flex-1 lg:flex">
+          <div className="scrollbar-none flex min-w-0 snap-x snap-mandatory items-center gap-1 overflow-x-auto py-1 2xl:gap-1.5">
+            {TOP_MENUS.map((menu) => (
+              <NavDropdown
+                key={menu.id}
+                label={menu.label}
+                href={menu.href}
+                sections={menu.sections}
+                current={active === menu.id}
+              />
+            ))}
           </div>
         </nav>
 
@@ -57,54 +54,31 @@ export default function GlobalHeader({ onOpenSearch }: GlobalHeaderProps) {
             <span className="header-action-label whitespace-nowrap">New Document</span>
           </Link>
 
-          <Link href="/ask" className="btn-ask-agent shrink-0" title="Ask Data Agent">
+          <Link href="/ask" className="btn-ask-agent shrink-0" title="Ask Dataomatix">
             <Sparkles className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-            <span className="header-action-label whitespace-nowrap">Ask Data Agent</span>
+            <span className="header-action-label whitespace-nowrap">Ask Dataomatix</span>
           </Link>
 
-          <button
-            type="button"
-            onClick={onOpenSearch}
-            aria-label="Search"
-            className="nav-icon-button shrink-0"
-          >
-            <Search className="h-4 w-4" strokeWidth={1.75} />
-          </button>
+          <CommandTrigger onOpen={onOpenSearch} kbdClassName="hidden xl:inline" labelClassName="hidden 2xl:inline" />
 
-          <button
-            type="button"
-            aria-label="Notifications"
-            className="nav-icon-button shrink-0"
-          >
-            <Bell className="h-4 w-4" strokeWidth={1.75} />
-          </button>
-
-          <div className="flex shrink-0 items-center border-l border-white/10 pl-3">
-            <BackendStatusPill />
+          {/* The public header stays lean: status text and role live in the
+              tooltip here (the app's top bar spells them out). */}
+          <div className="flex shrink-0 items-center gap-2 border-l border-white/10 pl-3">
+            <BackendStatusPill labelClassName="hidden min-[1800px]:inline" />
+            <span className="hidden xl:inline-flex">
+              <UserChip showRole={false} />
+            </span>
           </div>
         </div>
 
-        {/* Mobile / tablet triggers */}
+        {/* Phones and tablets: logo, search and the menu (status and profile
+            from tablet width up). */}
         <div className="header-mobile-triggers">
-          <BackendStatusPill />
-
-          <button
-            type="button"
-            onClick={onOpenSearch}
-            aria-label="Search"
-            className="nav-icon-button"
-          >
-            <Search className="h-4 w-4" strokeWidth={1.75} />
-          </button>
-
-          <button
-            type="button"
-            aria-label="Notifications"
-            className="nav-icon-button"
-          >
-            <Bell className="h-4 w-4" strokeWidth={1.75} />
-          </button>
-
+          <span className="hidden items-center gap-2 sm:flex">
+            <BackendStatusPill labelled={false} />
+            <UserChip showRole={false} />
+          </span>
+          <CommandTrigger onOpen={onOpenSearch} compact />
           <button
             type="button"
             className="nav-icon-button"

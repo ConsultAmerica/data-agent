@@ -1,4 +1,4 @@
-# Consult America — Data Agent
+# Consult America — Dataomatix
 
 **Enterprise document intelligence that does not stop at extraction.**  
 It retrieves evidence, extracts with explainable confidence, routes fields for human review, preserves corrections in an append-only audit trail, and exports only authoritative reviewed values — with Oracle send gated behind RBAC and explicit confirmation.
@@ -14,7 +14,7 @@ It retrieves evidence, extracts with explainable confidence, routes fields for h
 
 ## Why it is technically different
 
-| Typical OCR/LLM demo | Data Agent |
+| Typical OCR/LLM demo | Dataomatix |
 |---|---|
 | Extract → dump JSON | Retrieve → extract → validate → confidence → **source ground** |
 | Confidence as a vibe score | Explainable signals + review routing reasons |

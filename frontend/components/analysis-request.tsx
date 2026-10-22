@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { PIPELINE_STAGE_LABELS } from "@/components/extraction-live-progress";
 import ExtractionInstruction from "@/components/extraction/extraction-instruction";
+import SaveQueryButton from "@/components/playbook/save-query-button";
 import SuggestedExtraction from "@/components/extraction/suggested-extraction";
 import TargetPicker, {
   type CustomQuickPick,
@@ -14,6 +15,7 @@ import {
   createExtractionModel,
   listExtractionModels,
 } from "@/lib/extraction-models";
+import { listSavedQueries, type SavedQuery } from "@/lib/playbook";
 import { resolveSuggestionGroups } from "@/lib/suggestion-groups";
 import type {
   DocumentTarget,
@@ -156,6 +158,8 @@ export default function AnalysisRequest({
 
   const [instruction, setInstruction] = useState("");
   const [instructionExpanded, setInstructionExpanded] = useState(false);
+  // Extraction criteria the team saved to the clause playbook.
+  const [savedCriteria, setSavedCriteria] = useState<SavedQuery[]>([]);
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState("");
 
@@ -188,6 +192,20 @@ export default function AnalysisRequest({
     setDidApplyDefaults(false);
     setSelectedIds(new Set());
   }, [documentFamily, targets.length]);
+
+  useEffect(() => {
+    let active = true;
+    listSavedQueries("extraction")
+      .then((items) => {
+        if (active) setSavedCriteria(items);
+      })
+      .catch(() => {
+        // Saved criteria are optional; the instruction box still works.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (didApplyDefaults || suggestionGroups.length === 0) return;
@@ -718,6 +736,28 @@ export default function AnalysisRequest({
         </button>
         {instructionExpanded && (
           <div className="mt-3 space-y-3">
+            {savedCriteria.length > 0 && (
+              <label className="block text-xs font-medium text-text-muted">
+                Saved criteria
+                <select
+                  value=""
+                  disabled={busy}
+                  onChange={(event) => {
+                    const picked = savedCriteria.find((item) => item.id === event.target.value);
+                    if (picked) setInstruction(picked.query);
+                  }}
+                  className="mt-1.5 block w-full max-w-md rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground"
+                  data-testid="saved-extraction-criteria"
+                >
+                  <option value="">Use team criteria from the playbook…</option>
+                  {savedCriteria.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <ExtractionInstruction
               value={instruction}
               onChange={setInstruction}
@@ -733,6 +773,7 @@ export default function AnalysisRequest({
             >
               {asking ? "Asking…" : "Ask with custom instruction"}
             </button>
+            <SaveQueryButton kind="extraction" query={instruction} className="ml-3" />
             {askError && <p className="text-xs text-danger">{askError}</p>}
           </div>
         )}

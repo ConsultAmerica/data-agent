@@ -560,6 +560,37 @@ def test_get_analysis_before_analyzing_returns_404() -> None:
     assert response.status_code == 404
 
 
+def test_get_analysis_counts_staged_values_as_analyzed() -> None:
+    """The staging pipeline stores reviewable values without classifying the
+    document; the review page must open them, not say "not analyzed"."""
+
+    from app.database.session import SessionLocal
+    from app.models.document_metadata_field import DocumentMetadataField
+
+    document_id = upload_and_extract(
+        ["Contract Number: W91ZZZ26C0042"],
+        f"staged-only-{uuid4()}.pdf",
+    )
+    with SessionLocal() as database:
+        database.add(
+            DocumentMetadataField(
+                document_id=document_id, field_group="Identification", field_key="contract_number",
+                label="Contract Number", value="W91ZZZ26C0042", confidence=0.85,
+                extraction_method="deterministic", evidence_json={}, verified=False,
+                human_approved=False, review_status="pending", original_value="W91ZZZ26C0042",
+                extraction_source="staging",
+            )
+        )
+        database.commit()
+
+    response = client.get(f"/api/documents/{document_id}/analyze-contract")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [field["value"] for field in body["metadata_fields"]] == ["W91ZZZ26C0042"]
+    assert body["classification"]["document_type"]
+
+
 def test_accept_single_field() -> None:
     document_id = upload_and_extract(
         [

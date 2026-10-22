@@ -9,11 +9,17 @@ function sendOnce<T>(
   path: string,
   file: File,
   onProgress?: (fraction: number) => void,
+  fields?: Record<string, string | null | undefined>,
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     const formData = new FormData();
     formData.append("file", file);
+    // Extra multipart fields (e.g. intake tags: batch_id, agency, …);
+    // empty values are left out so the server sees "not provided".
+    for (const [key, value] of Object.entries(fields ?? {})) {
+      if (value != null && value !== "") formData.append(key, value);
+    }
 
     xhr.open("POST", apiUrl(path));
     // Same identity headers as apiFetch: the upload's owner workspace, and
@@ -100,6 +106,7 @@ export async function uploadFileWithProgress<T = unknown>(
   file: File,
   onProgress?: (fraction: number) => void,
   onRetry?: (attempt: number, total: number) => void,
+  fields?: Record<string, string | null | undefined>,
 ): Promise<T> {
   for (
     let attempt = 0;
@@ -107,7 +114,7 @@ export async function uploadFileWithProgress<T = unknown>(
     attempt += 1
   ) {
     try {
-      return await sendOnce<T>(path, file, onProgress);
+      return await sendOnce<T>(path, file, onProgress, fields);
     } catch (error) {
       const isNetworkError =
         error instanceof Error && error.message === "network-error";
@@ -116,7 +123,7 @@ export async function uploadFileWithProgress<T = unknown>(
       if (!isNetworkError || isLastAttempt) {
         if (isNetworkError) {
           throw new Error(
-            "Cannot reach the Data Agent API — check your connection.",
+            "Cannot reach the Dataomatix API — check your connection.",
           );
         }
         throw error;
@@ -129,5 +136,5 @@ export async function uploadFileWithProgress<T = unknown>(
   }
 
   // Unreachable — the loop above always returns or throws.
-  throw new Error("Cannot reach the Data Agent API — check your connection.");
+  throw new Error("Cannot reach the Dataomatix API — check your connection.");
 }

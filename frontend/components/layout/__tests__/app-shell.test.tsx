@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const pathname = vi.fn(() => "/");
@@ -6,6 +6,8 @@ const pathname = vi.fn(() => "/");
 vi.mock("next/navigation", () => ({
   usePathname: () => pathname(),
   useSearchParams: () => new URLSearchParams(),
+  // The marketing shell's Ask widget navigates with the router.
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }),
 }));
 
 vi.mock("@/components/global-search", () => ({
@@ -47,5 +49,41 @@ describe("AppShell", () => {
     expect(screen.getByTestId("workspace-topbar")).toBeInTheDocument();
     expect(screen.getByTestId("breadcrumbs")).toBeInTheDocument();
     expect(screen.queryByTestId("marketing-shell")).not.toBeInTheDocument();
+  });
+
+  function setDesktop(matches: boolean) {
+    window.matchMedia = vi.fn().mockReturnValue({ matches }) as unknown as typeof window.matchMedia;
+  }
+
+  it("menu button collapses the sidebar on desktop", () => {
+    pathname.mockReturnValue("/documents");
+    setDesktop(true);
+    render(
+      <AppShell>
+        <p>Docs body</p>
+      </AppShell>,
+    );
+    const sidebar = screen.getByTestId("workspace-sidebar");
+    expect(sidebar).toHaveAttribute("data-collapsed", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Toggle navigation" }));
+    expect(sidebar).toHaveAttribute("data-collapsed", "true");
+    expect(sidebar).toHaveAttribute("data-mobile-open", "false");
+  });
+
+  it("menu button opens the drawer with full labels below desktop width", () => {
+    pathname.mockReturnValue("/documents");
+    setDesktop(true);
+    render(
+      <AppShell>
+        <p>Docs body</p>
+      </AppShell>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Toggle navigation" })); // collapse on desktop
+    setDesktop(false);
+    fireEvent.click(screen.getByRole("button", { name: "Toggle navigation" }));
+    const sidebar = screen.getByTestId("workspace-sidebar");
+    expect(sidebar).toHaveAttribute("data-mobile-open", "true");
+    // The drawer ignores the collapsed rail.
+    expect(sidebar).toHaveAttribute("data-collapsed", "false");
   });
 });

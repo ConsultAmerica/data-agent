@@ -31,7 +31,7 @@ function metricFor(href: string, portfolio: Portfolio): string | null {
     case "/documents":
       return `${n(portfolio.totals.documents)} documents`;
     case "/review-queue":
-      return `${n(portfolio.review.pending)} values to review`;
+      return `${n(portfolio.review.pending)} values awaiting a decision`;
     case "/analytics":
       return `${n(portfolio.totals.processed)} processed`;
     case "/risk":
@@ -90,7 +90,7 @@ export default function MenuHub({ id }: { id: TopMenu["id"] }) {
 
   return (
     <>
-      <PageHero compact eyebrow="Data Agent" title={menu.label} description={menu.description} />
+      <PageHero compact eyebrow="Dataomatix" title={menu.label} description={menu.description} />
       <ContentSection>
         <div className="space-y-8">
           {menu.sections.map((section) => (

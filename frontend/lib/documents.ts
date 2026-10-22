@@ -1,4 +1,5 @@
 import { apiFetch } from "@/lib/api";
+import { HIGH_BAND_MIN } from "@/lib/confidence-policy";
 
 import type {
   ApproveDocumentResult,
@@ -464,6 +465,36 @@ export async function reviewMetadataFieldById(
       }),
     },
   );
+}
+
+/** Accepts these queue values one review call each (each decision is
+ * audited on its own). Unlike accept-all, only the given values change. */
+export async function acceptReviewQueueFields(
+  items: ReviewQueueFieldItem[],
+  changedBy: string,
+): Promise<{ accepted: ReviewQueueFieldItem[]; failed: ReviewQueueFieldItem[] }> {
+  const accepted: ReviewQueueFieldItem[] = [];
+  const failed: ReviewQueueFieldItem[] = [];
+  for (const item of items) {
+    try {
+      if (item.metadata_field_id != null) {
+        await reviewMetadataFieldById(item.document_id, item.metadata_field_id, "accept", changedBy);
+      } else {
+        await reviewMetadataField(item.document_id, item.field_key, "accept", changedBy);
+      }
+      accepted.push(item);
+    } catch {
+      failed.push(item);
+    }
+  }
+  return { accepted, failed };
+}
+
+/** Pending values safe to accept in bulk: nothing flagged them and they
+ * score in the high confidence band. */
+export function isLowRiskQueueField(item: ReviewQueueFieldItem): boolean {
+  const confidence = item.confidence > 1 ? item.confidence / 100 : item.confidence;
+  return item.decision_status !== "needs_review" && item.reasons.length === 0 && confidence >= HIGH_BAND_MIN;
 }
 
 export async function acceptAllMetadataFields(

@@ -2,6 +2,7 @@
 
 import type { SourceViewRequest } from "@/components/source-verification-panel";
 import { ReviewStatusBadge, cellSourceRequest, formatCellValue } from "@/components/staging/review-status";
+import { fieldToneClass, toneFromStagingCell } from "@/lib/field-tone";
 import type { StagingDataset } from "@/lib/staging-workbook";
 
 const GROUPS: { title: string; fields: string[] }[] = [
@@ -63,6 +64,7 @@ export default function ContractSummaryPanel({
               if (!column || !cell) return null;
               const request = cellSourceRequest(cell, `${dataset.dataset_id}:${record.record_id}:${field}`);
               const text = formatCellValue(cell);
+              const tone = fieldToneClass(toneFromStagingCell(cell));
               return (
                 <div key={field} className="grid grid-cols-[minmax(7rem,1fr)_minmax(0,1.2fr)_auto] items-center gap-2 border-t border-border px-3 py-2 text-[13px] first:border-t-0">
                   <dt className="text-text-secondary">{column.display_label}</dt>
@@ -73,12 +75,12 @@ export default function ContractSummaryPanel({
                       <button
                         type="button"
                         onClick={() => onOpenSource(request)}
-                        className="max-w-full truncate text-left font-medium text-foreground underline decoration-dotted"
+                        className={`max-w-full truncate text-left font-medium text-foreground underline decoration-dotted ${tone}`}
                       >
                         {text}
                       </button>
                     ) : (
-                      <span className="font-medium">{text}</span>
+                      <span className={`font-medium ${tone}`}>{text}</span>
                     )}
                   </dd>
                   <ReviewStatusBadge status={cell.review_status} />

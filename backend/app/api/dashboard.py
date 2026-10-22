@@ -1,17 +1,19 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends
 
 from app.core.auth import ActorContext, get_current_actor
 from app.core.document_access import scope_documents
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.database.dependencies import get_database
 from app.models.document import Document
 from app.models.document_clause import DocumentClause
+from app.models.document_intake import DocumentIntake
 from app.models.document_metadata_field import DocumentMetadataField
 from app.models.document_page import DocumentPage
+from app.models.review_assignment import ReviewAssignment, field_ref
 from app.schemas.dashboard import (
     DashboardStatsResponse,
     ReviewQueueEntry,
@@ -26,7 +28,61 @@ from app.services.dashboard_stats import (
 from app.services.portfolio_insights import build_portfolio
 from app.services.review_routing import human_reason_labels
 
+# Batches still being assembled, or turned away, stay out of the queue.
+UNQUEUED_INTAKE_STATUSES = ("draft", "rejected")
+
 router = APIRouter()
+
+
+class ReviewQueueFieldItemDetail(ReviewQueueFieldItem):
+    """A queue item plus who owns it, the document's contract type and the
+    source text the value was read from (each None when not stored)."""
+
+    assignee: str | None = None
+    assigned_at: datetime | None = None
+    due_date: date | None = None
+    uploaded_at: datetime | None = None
+    contract_type: str | None = None
+    source_snippet: str | None = None
+
+
+# Metadata keys whose value names the contract type, in preference order.
+_CONTRACT_TYPE_KEYS = ("contract_type", "pricing_model")
+_SNIPPET_KEYS = ("source_text", "evidence", "snippet", "text")
+_SNIPPET_CHARS = 600
+
+
+def _source_snippet(field: DocumentMetadataField) -> str | None:
+    evidence = field.evidence_json or {}
+    for key in _SNIPPET_KEYS:
+        value = evidence.get(key)
+        if isinstance(value, str) and value.strip():
+            text = " ".join(value.split())
+            return text if len(text) <= _SNIPPET_CHARS else text[: _SNIPPET_CHARS - 1].rstrip() + "…"
+    return None
+
+
+def _contract_types(database: Session, document_ids: list[str]) -> dict[str, str]:
+    if not document_ids:
+        return {}
+    found: dict[str, dict[str, str]] = {}
+    for document_id, key, value in database.execute(
+        select(
+            DocumentMetadataField.document_id,
+            DocumentMetadataField.field_key,
+            DocumentMetadataField.value,
+        ).where(
+            DocumentMetadataField.document_id.in_(document_ids),
+            DocumentMetadataField.field_key.in_(_CONTRACT_TYPE_KEYS),
+            DocumentMetadataField.review_status != "rejected",
+        )
+    ):
+        if value and value.strip():
+            found.setdefault(document_id, {}).setdefault(key, value.strip())
+    return {
+        document_id: next(values[key] for key in _CONTRACT_TYPE_KEYS if key in values)
+        for document_id, values in found.items()
+    }
 
 
 def _field_review_meta(field: DocumentMetadataField) -> dict:
@@ -182,6 +238,23 @@ async def get_portfolio(
     return build_portfolio(database, scope_documents(select(Document.id), actor))
 
 
+def _review_queue_documents(actor: ActorContext):
+    """Documents that belong in the review queue: everything visible except
+    uploads whose batch is still a draft or was rejected (no intake row =
+    uploaded outside a batch, always queued)."""
+
+    return (
+        scope_documents(select(Document), actor)
+        .outerjoin(DocumentIntake, DocumentIntake.document_id == Document.id)
+        .where(
+            or_(
+                DocumentIntake.intake_status.is_(None),
+                DocumentIntake.intake_status.notin_(UNQUEUED_INTAKE_STATUSES),
+            )
+        )
+    )
+
+
 @router.get(
     "/review-queue", response_model=list[ReviewQueueEntry]
 )
@@ -191,7 +264,7 @@ async def get_review_queue(
 ) -> list[ReviewQueueEntry]:
     documents = list(
         database.scalars(
-            scope_documents(select(Document), actor).order_by(Document.uploaded_at.desc())
+            _review_queue_documents(actor).order_by(Document.uploaded_at.desc())
         )
     )
 
@@ -243,17 +316,17 @@ async def get_review_queue(
 
 @router.get(
     "/review-queue/fields",
-    response_model=list[ReviewQueueFieldItem],
+    response_model=list[ReviewQueueFieldItemDetail],
 )
 async def get_review_queue_fields(
     database: Session = Depends(get_database),
     actor: ActorContext = Depends(get_current_actor),
-) -> list[ReviewQueueFieldItem]:
+) -> list[ReviewQueueFieldItemDetail]:
     """Field-level Review Queue for target + contract pending items."""
 
     documents = {
         document.id: document
-        for document in database.scalars(scope_documents(select(Document), actor)).all()
+        for document in database.scalars(_review_queue_documents(actor)).all()
     }
     fields = list(
         database.scalars(
@@ -263,16 +336,29 @@ async def get_review_queue_fields(
         )
     )
 
-    items: list[ReviewQueueFieldItem] = []
+    queued_ids = sorted({field.document_id for field in fields if field.document_id in documents})
+    assignments = {
+        (row.document_id, row.field_ref): row
+        for row in database.scalars(
+            select(ReviewAssignment).where(ReviewAssignment.document_id.in_(queued_ids))
+        )
+    } if queued_ids else {}
+    contract_types = _contract_types(database, queued_ids)
+
+    items: list[ReviewQueueFieldItemDetail] = []
     for field in fields:
         document = documents.get(field.document_id)
         if document is None:
             continue
         meta = _field_review_meta(field)
+        assignment = assignments.get(
+            (field.document_id, field_ref(field.id, field.field_key))
+        ) or assignments.get((field.document_id, field_ref(None, field.field_key)))
         items.append(
-            ReviewQueueFieldItem(
+            ReviewQueueFieldItemDetail(
                 document_id=field.document_id,
                 original_filename=document.original_filename,
+                metadata_field_id=field.id,
                 field_key=field.field_key,
                 label=field.label,
                 value=field.value,
@@ -289,6 +375,12 @@ async def get_review_queue_fields(
                 review_href=_review_href(
                     field.document_id, field_key=field.field_key
                 ),
+                assignee=assignment.assignee if assignment else None,
+                assigned_at=assignment.assigned_at if assignment else None,
+                due_date=assignment.due_date if assignment else None,
+                uploaded_at=document.uploaded_at,
+                contract_type=contract_types.get(field.document_id),
+                source_snippet=_source_snippet(field),
             )
         )
 

@@ -97,6 +97,9 @@ from app.models import (  # noqa: E402,F401
 from app.models import (  # noqa: E402,F401
     relationship_audit_log as _relationship_audit_log_model,
 )
+from app.models import (  # noqa: E402,F401
+    validation_rule as _validation_rule_model,
+)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -121,6 +124,9 @@ def _initialize_database() -> None:
     ensure_target_correction_columns(engine)
     ensure_metadata_field_audit_log_columns(engine)
     ensure_detected_target_columns(engine)
+    from app.database.playbook_columns import ensure_clause_playbook_rule_columns
+
+    ensure_clause_playbook_rule_columns(engine)
 
     from app.database.session import SessionLocal
 

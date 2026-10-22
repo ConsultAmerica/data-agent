@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, History } from "lucide-react";
 
 import PageHeader from "@/components/page-header";
+import EmptyState from "@/components/ui/empty-state";
 import { formatRelativeTime } from "@/lib/format";
 import { getGlobalAuditLog } from "@/lib/documents";
 import type { GlobalAuditEntry, ReviewAction } from "@/types/document";
@@ -83,9 +84,16 @@ export default function ActivityPage() {
             Loading activity...
           </p>
         ) : entries.length === 0 ? (
-          <p className="p-12 text-center text-sm text-text-secondary">
-            No review actions recorded yet.
-          </p>
+          <EmptyState
+            icon={History}
+            title="No review actions yet"
+            description="Accepts, corrections and rejections appear here as reviewers work through the review queue."
+            action={
+              <Link href="/review-queue" className="btn-secondary px-4 py-2 text-sm">
+                Open the review queue
+              </Link>
+            }
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">

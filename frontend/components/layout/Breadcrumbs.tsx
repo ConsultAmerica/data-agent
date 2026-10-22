@@ -5,6 +5,7 @@ import { ChevronRight } from "lucide-react";
 import { usePathname, useSearchParams } from "next/navigation";
 
 import { useDocumentChrome } from "@/components/layout/document-chrome-context";
+import { useRecentDocuments } from "@/lib/recent-documents";
 import { breadcrumbsForPath, type BreadcrumbCrumb } from "@/lib/workspace-nav";
 
 export default function Breadcrumbs({
@@ -15,10 +16,17 @@ export default function Breadcrumbs({
   const pathname = usePathname() || "/";
   const searchParams = useSearchParams();
   const { documentTitle } = useDocumentChrome();
+  // The document this page is about: a /documents/[id] route, or ?documentId=.
+  const documentId =
+    pathname.match(/^\/documents\/([^/]+)/)?.[1] ?? searchParams?.get("documentId")?.trim() ?? null;
+  // Until the page loads the filename, name it from this browser's recent
+  // documents (empty during server render and hydration).
+  const recent = useRecentDocuments();
+  const recentName = documentId ? (recent.find((item) => item.id === documentId)?.name ?? null) : null;
   const crumbs =
     override ??
     breadcrumbsForPath(pathname, {
-      documentTitle,
+      documentTitle: documentTitle || recentName,
       search: searchParams?.toString() ?? "",
     });
 

@@ -82,3 +82,11 @@ def test_review_queue_fields_lists_pending_with_reasons() -> None:
     assert "low_confidence" in match["reasons"]
     assert match["reason_labels"]
     assert match["review_href"]
+    # Row actions in the queue review the field by its persisted id.
+    assert isinstance(match["metadata_field_id"], int)
+    review = client.post(
+        f"/api/documents/{document_id}/metadata-fields/by-id/{match['metadata_field_id']}/review",
+        json={"action": "accept", "value": None, "changed_by": "queue-test"},
+    )
+    assert review.status_code == 200, review.text
+    assert review.json()["review_status"] == "accepted"

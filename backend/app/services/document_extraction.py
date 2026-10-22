@@ -137,7 +137,7 @@ def process_pdf_via_convera(
         )
 
         # Convera's current API doesn't return table data (confirmed
-        # against the live service), and Data Agent's table detection
+        # against the live service), and Dataomatix's table detection
         # has always been local/deterministic (pdfplumber) rather than
         # sourced from a document-AI response — run it against the
         # original file the same way the local extraction path does,

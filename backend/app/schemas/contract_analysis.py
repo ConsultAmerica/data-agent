@@ -221,6 +221,11 @@ class ContractAnalysisResponse(BaseModel):
 
     warnings: list[str] = Field(default_factory=list)
 
+    # Header identity from the staging workbook (what the document page
+    # shows), for when the reviewable values don't carry it.
+    staged_contract_number: str | None = None
+    staged_contractor: str | None = None
+
 
 class AnalyzeContractRequest(BaseModel):
     extraction_model_id: int | None = None

@@ -6,6 +6,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { SourceViewRequest } from "@/components/source-verification-panel";
 import EvidenceDrawer, { type EvidenceTarget } from "@/components/staging/evidence-drawer";
 import { cellSourceRequest, formatCellValue } from "@/components/staging/review-status";
+import { fieldToneClass, toneFromStagingCell, type FieldTone } from "@/lib/field-tone";
+import FieldToneLegend from "@/components/ui/field-tone-legend";
 import ResizeHandle, { useGridSizes } from "@/components/staging/resize-handle";
 import SelectCheckbox from "@/components/staging/select-checkbox";
 import SelectionToolbar from "@/components/staging/selection-toolbar";
@@ -151,6 +153,8 @@ export default function PresentationWorkspace({
         )}
       </div>
       )}
+
+      <FieldToneLegend />
 
       {manifest.groups.length > 0 && (
         <div role="tablist" aria-label="Document sections" className="flex flex-wrap gap-1.5">
@@ -377,6 +381,7 @@ function ValueButton({
   className = "",
   wrap = false,
   whole = false,
+  tone = null,
 }: {
   text: string;
   onOpen: () => void;
@@ -384,6 +389,8 @@ function ValueButton({
   wrap?: boolean;
   /** Never ellipsized (amounts): one line, at its full width. */
   whole?: boolean;
+  /** Inline highlight: verified / needs review / failed validation. */
+  tone?: FieldTone | null;
 }) {
   return (
     <button
@@ -392,7 +399,11 @@ function ValueButton({
       title="View source evidence"
       className={`group/value -mx-1 inline-flex max-w-full items-baseline gap-1.5 rounded px-1 text-left text-foreground transition-colors hover:bg-primary/[0.06] hover:text-primary ${className}`}
     >
-      <span className={wrap ? "min-w-0 whitespace-pre-line break-words" : whole ? "whitespace-nowrap" : "min-w-0 truncate"}>{text}</span>
+      <span
+        className={`${wrap ? "min-w-0 whitespace-pre-line break-words" : whole ? "whitespace-nowrap" : "min-w-0 truncate"} ${fieldToneClass(tone)}`}
+      >
+        {text}
+      </span>
       <FileSearch
         aria-hidden="true"
         className="h-3.5 w-3.5 shrink-0 self-center text-primary opacity-0 transition-opacity group-hover/value:opacity-70 group-focus-visible/value:opacity-70"
@@ -418,7 +429,7 @@ function SummaryCard({ items, onSelect, picked, onPick }: { items: FieldItem[]; 
               {item.label}
             </dt>
             <dd className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2 pl-5 text-sm">
-              <ValueButton text={displayText(text)} onOpen={open} className="font-medium" wrap />
+              <ValueButton text={displayText(text)} onOpen={open} className="font-medium" wrap tone={toneFromStagingCell(item.cell)} />
               <ReviewMark cell={item.cell} onOpen={open} />
             </dd>
           </div>
@@ -670,7 +681,13 @@ function DetailList({ items, onSelect, picked, onPick }: { items: FieldItem[]; o
                 </td>
                 <td className="relative border-b border-border/70 px-3 py-2.5 align-top">
                   <span className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-                    <ValueButton text={displayText(formatCellValue(item.cell))} onOpen={open} className="font-medium" wrap />
+                    <ValueButton
+                      text={displayText(formatCellValue(item.cell))}
+                      onOpen={open}
+                      className="font-medium"
+                      wrap
+                      tone={toneFromStagingCell(item.cell)}
+                    />
                     <ReviewMark cell={item.cell} onOpen={open} />
                   </span>
                   <ResizeHandle
@@ -717,7 +734,13 @@ function SummaryBlock({ items, onSelect, picked, onPick }: { items: FieldItem[];
             </dt>
             <dd className="flex shrink-0 items-center gap-2">
               <ReviewMark cell={item.cell} onOpen={open} />
-              <ValueButton text={formatCellValue(item.cell)} onOpen={open} className="tabular-nums" whole />
+              <ValueButton
+                text={formatCellValue(item.cell)}
+                onOpen={open}
+                className="tabular-nums"
+                whole
+                tone={toneFromStagingCell(item.cell)}
+              />
             </dd>
           </div>
         );
@@ -940,7 +963,7 @@ function RecordGrid({
                   return (
                     <td
                       key={column.canonical_field}
-                      className={`relative px-3 py-2 align-top ${wrapCells ? "" : "overflow-hidden"} ${whole ? "whitespace-nowrap" : ""}`}
+                      className={`relative px-3 py-2 align-top ${wrapCells ? "" : "overflow-hidden"} ${whole ? "whitespace-nowrap" : ""} ${fieldToneClass(toneFromStagingCell(cell), "cell")}`}
                       title={wrapCells ? undefined : text}
                     >
                       <span className={`min-w-0 ${height && !wrapCells ? "overflow-hidden" : ""}`}>

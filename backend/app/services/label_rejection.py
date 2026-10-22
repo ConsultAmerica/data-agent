@@ -128,6 +128,20 @@ _IDENTIFIER_TYPES = frozenset(
         "requisition_number",
     }
 )
+
+
+def is_word_not_identifier(value: str) -> bool:
+    """A word or sentence fragment picked up from prose where an ID belongs:
+    "Contract Number: assigned." on a clause page, "WAWF: point of contact.".
+    That is digit-free, has lowercase letters, and is a single word or ends
+    in a sentence period. Upper-case codes ("N/A", "SB-DBMACC") and the
+    form's own placeholder statements ("Specified on task order", "Not
+    Applicable") are left alone."""
+
+    text = " ".join(str(value).split())
+    if not text or any(ch.isdigit() for ch in text) or not any(ch.islower() for ch in text):
+        return False
+    return " " not in text or text.endswith(".")
 _DATE_TYPES = frozenset({"date", "effective_date", "date_issued"})
 _NAME_TYPES = frozenset({"name", "text", "party", None})
 
@@ -270,6 +284,50 @@ def looks_like_narrative_fragment(value: str | None) -> bool:
     return False
 
 
+# A label noun closing a short all-caps phrase: "FACILITY CODE", "DATE
+# SIGNED", "CONTRACT NO." are the form's labels, not values.
+_LABEL_NOUN_TAIL = re.compile(
+    r"^[A-Z][A-Z/&\-]*(?:\s+[A-Z][A-Z/&\-]*){0,3}\s+"
+    r"(?:CODE|NO\.?|NUMBER|DATE|NAME|ADDRESS|TITLE|TELEPHONE|PHONE|EMAIL|SIGNATURE)$"
+)
+# Only "LABEL:" tokens, no value between them: "FAX: TEL:".
+_LABELS_ONLY = re.compile(r"^(?:[A-Za-z][A-Za-z.\-/ ]{0,24}:\s*){1,4}$")
+# The printed form's own footer: form number, NSN stock number, edition note.
+_FORM_FOOTER = re.compile(
+    r"\bSTANDARD FORM\s+\d{2,4}\b|\bNSN\s*\d{4}-\d{2}-\d{3}-\d{4}\b|\bPREVIOUS EDITIONS?\b"
+    r"|\bPRESCRIBED BY\s+(?:GSA|OPM|DOD)\b",
+    re.IGNORECASE,
+)
+# The discovered key itself is an identifier ("kv_n4019221r28000019" from a
+# solicitation number, "kv_nsn_7540_..." from a stock number): the pair is
+# backwards, so the "value" is whatever followed the identifier.
+_KEY_IS_IDENTIFIER = re.compile(r"^kv_(?:nsn_|(?=[a-z0-9]*\d{4})[a-z]{0,3}\d[a-z0-9]{5,}$)")
+# A FAR/DFARS citation split at its dot: key "..._52", value "216-7, ...".
+_SPLIT_CITATION_VALUE = re.compile(r"^\d{3}-\d{1,4}\b")
+_CAGE_RE = re.compile(r"^[A-Z0-9]{5}$")
+
+
+def pairing_rejection(text: str, field_key: str | None = None) -> str | None:
+    """Why a label/value pair is not a real field, judged from the value's
+    shape and, for discovered pairs, the key it was filed under."""
+
+    if _LABELS_ONLY.match(text) and ":" in text:
+        return "value_is_labels_only"
+    if _LABEL_NOUN_TAIL.match(text):
+        return "value_is_a_label"
+    if _FORM_FOOTER.search(text):
+        return "form_footer"
+    key = (field_key or "").lower()
+    if key:
+        if _KEY_IS_IDENTIFIER.match(key):
+            return "label_is_an_identifier"
+        if (key.endswith("_52") or key.endswith("_252")) and _SPLIT_CITATION_VALUE.match(text):
+            return "split_clause_citation"
+        if key in {"cage_code", "cage"} and not _CAGE_RE.match(text.replace(" ", "").upper()):
+            return "cage_code_shape"
+    return None
+
+
 def reject_as_field_value(
     value: str | None,
     *,
@@ -294,6 +352,9 @@ def reject_as_field_value(
         return "clause_citation_reference"
     if looks_like_form_label(text):
         return "looks_like_form_label"
+    pair_reason = pairing_rejection(text, field_key)
+    if pair_reason:
+        return pair_reason
     # Leftover label tokens after a failed split ("NUMBER", "NO.", "CODE").
     if text.upper() in {
         "NUMBER",
@@ -327,6 +388,8 @@ def reject_as_field_value(
     ):
         if looks_like_identifier_sentence(text):
             return "identifier_looks_like_prose_or_label"
+        if is_word_not_identifier(text):
+            return "identifier_is_a_word"
         if not _COMPACT_ID.match(text.replace(" ", "")):
             if " " in text or "," in text:
                 return "identifier_not_compact"

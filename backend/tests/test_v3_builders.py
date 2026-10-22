@@ -94,8 +94,11 @@ def test_weak_form_associations_are_not_verified():
     ]
     rows = build_all_fields(document=_document(), candidates=candidates)
     by_label = {row.label: (row.evidence_json or {})["qa_status"] for row in rows}
-    assert by_label["UNITED STATES OF AMERICA"] == "Needs Review"
-    assert by_label["NAME OF CONTRACTING OFFICER (Type or print)"] == "Needs Review"
+    # Pure form chrome ("SIGN", "UNITED STATES") is never stored as a value,
+    # so a reviewer is never asked to approve it.
+    assert "UNITED STATES OF AMERICA" not in by_label
+    assert "NAME OF CONTRACTING OFFICER (Type or print)" not in by_label
+    # Doubtful but possibly real pairs still go to a reviewer.
     assert by_label["CHECK IF REMITTANCE ADDRESS IS"] == "Needs Review"
     assert by_label["Email"] == "Verified"
 

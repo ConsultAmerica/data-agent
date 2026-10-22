@@ -82,9 +82,9 @@ export default function ArchitecturePage() {
     <div className="space-y-10 pb-16">
       <PageHero
         compact
-        eyebrow="Platform"
+        eyebrow="Administration"
         title="Architecture"
-        description="Data Agent is an enterprise contract intelligence spine: retrieve evidence, extract with explainable confidence, govern at field level, and only then export or send downstream."
+        description="Dataomatix is an enterprise contract intelligence spine: retrieve evidence, extract with explainable confidence, govern at field level, and only then export or send downstream."
         actions={
           <div className="flex flex-wrap gap-3">
             <Link
@@ -150,7 +150,7 @@ export default function ArchitecturePage() {
       <ContentSection>
         <SectionHeading
           title="Deploy topology"
-          description="What runs where for the live Data Agent demo."
+          description="What runs where for the live Dataomatix demo."
         />
         <div className="overflow-hidden rounded-xl border border-border">
           <table className="w-full text-left text-sm">

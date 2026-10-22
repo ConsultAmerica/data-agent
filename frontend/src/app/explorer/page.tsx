@@ -97,15 +97,9 @@ function ExplorerContent() {
     <>
       <PageHero
         compact
-        eyebrow="Intelligence / Field Explorer"
-        title={
-          <>
-            Cross-Document Explorer
-            <br />
-            across your entire repository
-          </>
-        }
-        description="Compare any extracted field across contracts, financial reports, lab results, and more — with confidence and source links."
+        eyebrow="Intelligence & AI"
+        title="Field Explorer"
+        description="Compare any extracted field across contracts, financial reports and other documents, with confidence and source links."
       />
 
       <ContentSection>

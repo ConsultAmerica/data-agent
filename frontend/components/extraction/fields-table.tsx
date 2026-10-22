@@ -5,7 +5,9 @@ import { useEffect, useState } from "react";
 
 import type { FieldRow } from "@/components/extraction/field-row";
 import IntelligenceTrace from "@/components/extraction/intelligence-trace";
+import FieldToneLegend from "@/components/ui/field-tone-legend";
 import type { SourceViewRequest } from "@/components/source-verification-panel";
+import { fieldToneClass, toneFromConfidence } from "@/lib/field-tone";
 
 interface FieldsTableProps {
   title: string;
@@ -253,7 +255,15 @@ function FieldCard({
             {row.label}
           </p>
           {value ? (
-            <p className="mt-0.5 truncate text-sm font-medium text-foreground">{value}</p>
+            <p className="mt-0.5 truncate text-sm font-medium text-foreground">
+              <span
+                className={fieldToneClass(
+                  toneFromConfidence(row.confidence, row.confidence_band, row.status === "validation_failed"),
+                )}
+              >
+                {value}
+              </span>
+            </p>
           ) : (
             <p className="mt-0.5 text-sm italic text-text-muted">
               {row.status === "not_found" ? "Not found in document" : "No value captured"}
@@ -478,7 +488,10 @@ export default function FieldsTable({
 
   return (
     <div className="editorial-card overflow-hidden p-0">
-      <h3 className="px-5 pt-5 text-sm font-semibold text-foreground sm:px-6">{title}</h3>
+      <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-5 sm:px-6">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <FieldToneLegend />
+      </div>
       <div className="mt-3">
         {rows.map((row) => (
           <FieldCard

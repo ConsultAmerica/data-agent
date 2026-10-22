@@ -43,6 +43,9 @@ class ReviewQueueEntry(BaseModel):
 class ReviewQueueFieldItem(BaseModel):
     document_id: str
     original_filename: str
+    # The persisted row id: review actions address the field by it, since a
+    # field_key can repeat within one document (two telephone numbers).
+    metadata_field_id: int | None = None
     field_key: str
     label: str
     value: str

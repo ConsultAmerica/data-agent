@@ -6,6 +6,7 @@ import {
   reviewStatusLabel,
 } from "@/components/extraction/workbook-classify";
 import type { SourceViewRequest } from "@/components/source-verification-panel";
+import { fieldToneClass, toneFromConfidence } from "@/lib/field-tone";
 
 interface FieldsWorkbookGridProps {
   rows: FieldRow[];
@@ -115,7 +116,11 @@ export default function FieldsWorkbookGrid({
                       Needs Review
                     </span>
                   ) : (
-                    <span className="line-clamp-3 font-medium text-foreground">
+                    <span
+                      className={`line-clamp-3 font-medium text-foreground ${fieldToneClass(
+                        toneFromConfidence(row.confidence, null, status === "Rejected"),
+                      )}`}
+                    >
                       {String(row.value)}
                     </span>
                   )}

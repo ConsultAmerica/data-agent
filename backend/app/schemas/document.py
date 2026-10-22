@@ -47,6 +47,9 @@ class UploadedDocumentResponse(BaseModel):
     # True when the client should open an existing document without
     # re-running page extraction (duplicate → "Use existing").
     reused_existing: bool = False
+    # Intake tags given at upload (GET /documents/{id} only; null otherwise).
+    agency: str | None = None
+    contracting_officer: str | None = None
 
 
 class ResolveDuplicateRequest(BaseModel):
@@ -87,6 +90,12 @@ class DocumentSummaryResponse(BaseModel):
     profile_label: str | None = None
     type_label: str | None = None
     staging_status: Literal["staged", "not_staged"] = "not_staged"
+    # Intake tagging from the upload (models/document_intake.py); all None
+    # for a document uploaded without intake fields.
+    agency: str | None = None
+    contracting_officer: str | None = None
+    batch_id: str | None = None
+    intake_status: Literal["draft", "submitted", "rejected"] | None = None
 
 
 class DocumentSearchResponse(BaseModel):

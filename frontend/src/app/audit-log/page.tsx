@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -41,11 +42,21 @@ const EMPTY_FILTERS: GlobalAuditLogFilters = {
 };
 
 export default function AuditLogPage() {
+  return (
+    <Suspense fallback={<LoadingState title="Loading audit log…" />}>
+      <AuditLogContent />
+    </Suspense>
+  );
+}
+
+function AuditLogContent() {
+  // "Open in audit log" from a document links here with ?document_id=.
+  const linkedDocument = useSearchParams().get("document_id") ?? "";
   const [entries, setEntries] = useState<GlobalAuditEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
-  const [draft, setDraft] = useState<GlobalAuditLogFilters>(EMPTY_FILTERS);
-  const [applied, setApplied] = useState<GlobalAuditLogFilters>({});
+  const [draft, setDraft] = useState<GlobalAuditLogFilters>({ ...EMPTY_FILTERS, documentId: linkedDocument });
+  const [applied, setApplied] = useState<GlobalAuditLogFilters>(linkedDocument ? { documentId: linkedDocument } : {});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -224,7 +235,7 @@ export default function AuditLogPage() {
           <EmptyState
             variant="documents"
             title="No audit actions match"
-            description="Human Accept / Edit / Reject events appear here. Missing rows are not invented — try clearing filters or reviewing a document."
+            description="Accept, edit and reject decisions appear here once reviewers act on documents. If you've set filters, try clearing them."
           />
         ) : (
           <div className="overflow-x-auto">
@@ -302,10 +313,10 @@ export default function AuditLogPage() {
                         {entry.previous_value || "—"} → {entry.new_value || "—"}
                       </span>
                     </td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-text-muted">
+                    <td className="font-id px-4 py-3 text-[11px] text-text-muted">
                       {entry.request_id || "—"}
                     </td>
-                    <td className="px-4 py-3 text-text-secondary">
+                    <td className="font-id whitespace-nowrap px-4 py-3 text-text-secondary">
                       {new Date(entry.changed_at).toLocaleString()}
                     </td>
                   </tr>

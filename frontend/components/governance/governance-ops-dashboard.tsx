@@ -52,7 +52,8 @@ export function mapProcessingLabel(status: string | null | undefined): string {
 type MetricCard = {
   label: string;
   value: string;
-  source: string;
+  /** What the number counts, in plain words. */
+  hint: string;
   href?: string;
   tone?: "default" | "warning" | "danger" | "success";
 };
@@ -158,39 +159,39 @@ export default function GovernanceOpsDashboard() {
         {
           label: "Total documents",
           value: fmt(portfolio.totals.documents),
-          source: "GET /api/dashboard/portfolio → totals.documents",
+          hint: "Every document in this workspace",
           href: "/documents",
         },
         {
-          label: "Needs review",
+          label: "Values awaiting review",
           value: fmt(portfolio.review.pending),
-          source: "portfolio → review.pending (metadata fields)",
+          hint: "Extracted values with no reviewer decision yet",
           href: "/review-queue",
           tone: portfolio.review.pending > 0 ? "warning" : "default",
         },
         {
           label: "Processing failures",
           value: fmt(portfolio.totals.failed),
-          source: "portfolio → totals.failed",
+          hint: "Documents whose processing failed",
           href: "/documents?filter=failed",
           tone: portfolio.totals.failed > 0 ? "danger" : "default",
         },
         {
           label: "Active processing",
           value: fmt(portfolio.totals.processing),
-          source: "portfolio → totals.processing",
+          hint: "Documents being processed right now",
           tone: portfolio.totals.processing > 0 ? "warning" : "default",
         },
         {
           label: "Review decisions",
           value: fmt(reviewDecisions),
-          source: "portfolio → review.accepted + edited + rejected",
+          hint: "Values accepted, corrected or rejected by a reviewer",
           href: "/audit-log",
         },
         {
-          label: "Low-confidence docs",
+          label: "Low-confidence documents",
           value: fmt(portfolio.review.low_confidence_documents),
-          source: "portfolio → review.low_confidence_documents",
+          hint: "Documents with at least one low-confidence value",
           href: "/documents?filter=review",
           tone:
             portfolio.review.low_confidence_documents > 0
@@ -202,9 +203,9 @@ export default function GovernanceOpsDashboard() {
 
   if (stats) {
     cards.push({
-      label: "Manual review docs",
+      label: "Documents with flagged values",
       value: fmt(stats.documents_requiring_manual_review),
-      source: "GET /api/dashboard/stats → documents_requiring_manual_review",
+      hint: "Documents with at least one value flagged for a reviewer",
       href: "/review-queue",
     });
   }
@@ -220,18 +221,18 @@ export default function GovernanceOpsDashboard() {
     <>
       <PageHero
         compact
-        eyebrow="Governance"
+        eyebrow="Administration"
         title="Operations"
-        description="Operational metrics from portfolio, stats, audit, and readiness probes — never invented client-side counts."
+        description="Service health, review workload and recent reviewer activity across the workspace."
       />
       <ContentSection className="space-y-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-text-secondary" aria-live="polite">
             {loading
-              ? "Loading authoritative operations data…"
+              ? "Loading operations data…"
               : health
                 ? health.label
-                : "Health not probed"}
+                : "Health not checked yet"}
           </p>
           <button
             type="button"
@@ -267,32 +268,33 @@ export default function GovernanceOpsDashboard() {
             <dl className="mt-2 flex flex-wrap gap-4 text-xs text-text-muted">
               {health.readyStatus && (
                 <div>
-                  Ready: <span className="text-foreground">{health.readyStatus}</span>
+                  Readiness check:{" "}
+                  <span className="text-foreground">{health.readyStatus === "ready" ? "passed" : health.readyStatus}</span>
                 </div>
               )}
               {health.oracleDryRun != null && (
                 <div>
-                  Oracle dry-run:{" "}
+                  Oracle sends:{" "}
                   <span className="text-foreground">
-                    {health.oracleDryRun ? "on" : "off"}
+                    {health.oracleDryRun ? "dry run only" : "live"}
                   </span>
                 </div>
               )}
               {health.rbacEnforced != null && (
                 <div>
-                  RBAC:{" "}
+                  Access control:{" "}
                   <span className="text-foreground">
-                    {health.rbacEnforced ? "enforced" : "relaxed"}
+                    {health.rbacEnforced ? "role-based" : "open workspace (demo)"}
                   </span>
                 </div>
               )}
               {health.metadataReviewMutationsEnabled != null && (
                 <div>
-                  Metadata review mutations:{" "}
+                  Review edits:{" "}
                   <span className="text-foreground">
                     {health.metadataReviewMutationsEnabled
-                      ? "enabled"
-                      : "disabled"}
+                      ? "allowed"
+                      : "locked"}
                   </span>
                 </div>
               )}
@@ -318,7 +320,7 @@ export default function GovernanceOpsDashboard() {
                       {card.value}
                     </p>
                     <p className="mt-2 text-[10px] leading-4 text-text-muted">
-                      Source: {card.source}
+                      {card.hint}
                     </p>
                   </>
                 );
@@ -348,10 +350,10 @@ export default function GovernanceOpsDashboard() {
             Role-aware actions
           </h2>
           <p className="mt-1 text-xs text-text-muted">
-            Visibility hints only — the API still enforces permissions.
+            Actions shown for your role. Permissions are also checked on the server.
             {actor
               ? ` Signed in as ${actor.display_name} (${actor.role}).`
-              : " Actor identity unavailable."}
+              : " Your identity couldn't be loaded."}
           </p>
           <ul className="mt-3 flex flex-wrap gap-2 text-xs" data-testid="role-actions">
             <ActionChip href="/documents" label="View documents" allowed />
@@ -540,8 +542,8 @@ export default function GovernanceOpsDashboard() {
                 Recent review activity
               </h2>
               <p className="mt-1 text-xs text-text-muted">
-                Source: GET /api/documents/audit-log (limit 8). Metadata review
-                only — not Oracle or export events.
+                The last 8 reviewer decisions. Export and Oracle events are
+                recorded in the integration log.
               </p>
             </div>
             <Link href="/audit-log" className="text-xs text-primary hover:underline">
@@ -582,20 +584,23 @@ export default function GovernanceOpsDashboard() {
 
         <section className="rounded-xl border border-border bg-surface px-4 py-4">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-            Exports &amp; Oracle (workspace-scoped limits)
+            Exports &amp; Oracle
           </h2>
           <ul className="mt-2 space-y-1 text-xs text-text-secondary">
             <li>
               Recent exports:{" "}
               <span className="text-text-muted">
-                No global export-audit list API — counts not displayed.
+                Tracked per document. Open a document&apos;s Export menu to see its history.
               </span>
             </li>
             <li>
               Oracle outcomes:{" "}
               <span className="text-text-muted">
-                Document-scoped GET …/integration-audit only — open Integrations
-                with a document id.
+                Tracked per document. Open{" "}
+                <Link href="/integrations" className="text-primary hover:underline">
+                  Exports &amp; Oracle
+                </Link>{" "}
+                and choose a document.
               </span>
             </li>
           </ul>
@@ -606,21 +611,21 @@ export default function GovernanceOpsDashboard() {
             Oracle operational safety
           </h2>
           <ul className="mt-2 space-y-1 text-xs text-text-secondary">
-            <li>Preview generated ≠ send requested or succeeded.</li>
+            <li>Generating a preview doesn&apos;t send anything to Oracle.</li>
             <li>
-              Dry-run sends are audited as simulated — not Fusion deliveries.
+              Dry-run sends are logged as simulations, not deliveries to Fusion.
             </li>
             <li>
-              Live send remains unconfigured (HTTP 501) unless a Fusion client is
-              approved separately.
+              Live sends stay off until an administrator connects an approved
+              Fusion account.
             </li>
             <li>
-              Unknown / timeout outcomes must be reconciled in integration
-              history before any retry (no automatic retries).
+              If a send times out or its result is unknown, check its history
+              before trying again. Nothing retries automatically.
             </li>
             <li>
-              Idempotency: not implemented — see risk register R1 (proposal
-              only).
+              Duplicate sends aren&apos;t detected yet, so don&apos;t resend a
+              document that may already have arrived.
             </li>
           </ul>
           <Link

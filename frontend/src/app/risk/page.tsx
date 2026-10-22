@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { FileSearch, ShieldCheck } from "lucide-react";
 
 import ContentSection from "@/components/layout/ContentSection";
 import PageHero from "@/components/layout/PageHero";
+import EmptyState from "@/components/ui/empty-state";
 import {
   EmptyNote,
   Panel,
@@ -24,7 +26,7 @@ export default function RiskPage() {
     <>
       <PageHero
         compact
-        eyebrow="Governance / Risk"
+        eyebrow="Administration"
         title="Risk register"
         description="Documents that need attention: failed processing, periods of performance ending, unreviewed low-confidence values, missing contract numbers and duplicates."
       />
@@ -37,7 +39,12 @@ export default function RiskPage() {
                 <StatTile label="Medium" value={data.risks.by_severity.medium.toLocaleString()} hint="Review soon" />
                 <StatTile label="Low" value={data.risks.by_severity.low.toLocaleString()} hint="Housekeeping" />
               </div>
-              <RiskTable items={data.risks.items} total={data.risks.total} kinds={data.risks.by_kind.map((kind) => kind.name)} />
+              <RiskTable
+                items={data.risks.items}
+                total={data.risks.total}
+                kinds={data.risks.by_kind.map((kind) => kind.name)}
+                documents={data.totals.documents}
+              />
             </div>
           )}
         </PortfolioGate>
@@ -46,7 +53,17 @@ export default function RiskPage() {
   );
 }
 
-function RiskTable({ items, total, kinds }: { items: RiskItem[]; total: number; kinds: string[] }) {
+function RiskTable({
+  items,
+  total,
+  kinds,
+  documents,
+}: {
+  items: RiskItem[];
+  total: number;
+  kinds: string[];
+  documents: number;
+}) {
   const [severity, setSeverity] = useState<Filter>("all");
   const [kind, setKind] = useState("all");
   const [page, setPage] = useState(0);
@@ -99,7 +116,27 @@ function RiskTable({ items, total, kinds }: { items: RiskItem[]; total: number; 
         </div>
       }
     >
-      {filtered.length === 0 ? (
+      {total === 0 ? (
+        documents > 0 ? (
+          <EmptyState
+            icon={ShieldCheck}
+            tone="success"
+            title="No risks found"
+            description={`All ${documents.toLocaleString()} ${documents === 1 ? "document was" : "documents were"} checked: none failed processing, has a period of performance ending, unreviewed low-confidence values, a missing contract number or a duplicate.`}
+          />
+        ) : (
+          <EmptyState
+            icon={FileSearch}
+            title="Nothing to check yet"
+            description="Risks are found in processed documents. Upload a contract to see its findings here."
+            action={
+              <Link href="/extraction/new" className="btn-primary px-4 py-2 text-sm">
+                Start an extraction
+              </Link>
+            }
+          />
+        )
+      ) : filtered.length === 0 ? (
         <EmptyNote>No findings match this filter.</EmptyNote>
       ) : (
         <>

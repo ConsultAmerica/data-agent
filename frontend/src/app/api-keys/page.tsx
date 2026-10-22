@@ -7,7 +7,7 @@ export default function ApiKeysPage() {
     <>
       <PageHero
         compact
-        eyebrow="Governance"
+        eyebrow="Administration"
         title="API Keys"
         description="Manage integration keys for external systems and automation."
       />

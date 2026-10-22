@@ -98,7 +98,7 @@ describe("Documents repository (RC2-02)", { timeout: 15_000 }, () => {
     expect(screen.getByText("Manage, review and export documents")).toBeTruthy();
     expect(screen.getByRole("link", { name: /upload document/i })).toHaveAttribute("href", "/extraction/new");
     expect(within(row("05_multipage_stress.pdf")).getAllByText("Invoice").length).toBeGreaterThan(0);
-    expect(within(row("SF1442 Award_N4019223D2803.pdf")).getByText("SF 1442 Contract Award")).toBeTruthy();
+    expect(within(row("SF1442 Award_N4019223D2803.pdf")).getByText(/SF 1442 Contract Award/)).toBeTruthy();
     expect(within(row("invoice_copy.pdf")).queryByText("Invoice")).toBeNull();
     expect(within(row("invoice_copy.pdf")).getByText("Not staged")).toBeTruthy();
     expect(screen.queryByText(/invoice@1|contract_v3/)).toBeNull();
@@ -120,7 +120,7 @@ describe("Documents repository (RC2-02)", { timeout: 15_000 }, () => {
   it("searches and sorts through the API", async () => {
     render(<DocumentsHome />);
     await screen.findByText("05_multipage_stress.pdf");
-    fireEvent.change(screen.getByPlaceholderText(/search by document name/i), {
+    fireEvent.change(screen.getByPlaceholderText(/search file name, contract number/i), {
       target: { value: "SF1442" },
     });
     await waitFor(() =>
@@ -269,6 +269,80 @@ describe("Documents repository (RC2-02)", { timeout: 15_000 }, () => {
     await waitFor(() =>
       expect(searchDocuments).toHaveBeenCalledWith(expect.objectContaining({ offset: 25, limit: 25 })),
     );
+  });
+
+  it("lists agency, formatted contract value and extracted status, with honest dashes when missing", async () => {
+    rows = [
+      doc("c1", "award.pdf", {
+        status: "review_required",
+        profile_id: "contract_v3",
+        profile_label: "Government Contract",
+        type_label: "SF 1449",
+        agency: "NAVFAC Southwest",
+        contract_value: "$1250000",
+      }),
+      doc("c2", "plain.pdf", { profile_id: "invoice", profile_label: "Invoice", type_label: "Invoice" }),
+    ];
+    total = 2;
+    render(<DocumentsHome />);
+    await screen.findByText("award.pdf");
+    const table = screen.getByTestId("documents-table");
+    for (const header of ["File name", "Agency / contracting activity", "Total contract value", "Extracted status", "Upload date"]) {
+      expect(within(table).getByText(header)).toBeTruthy();
+    }
+    const award = row("award.pdf");
+    expect(within(award).getByText("NAVFAC Southwest")).toBeTruthy();
+    expect(within(award).getByText("$1,250,000.00")).toBeTruthy();
+    expect(within(award).getByText(/Review needed/)).toBeTruthy();
+    const plain = row("plain.pdf");
+    expect(within(plain).getAllByText("—").length).toBeGreaterThanOrEqual(2);
+    expect(within(plain).getByText(/Complete/)).toBeTruthy();
+  });
+
+  it("opens a quick-preview drawer on row click and closes it with Escape", async () => {
+    rows = [
+      doc("c1", "award.pdf", {
+        profile_id: "contract_v3",
+        profile_label: "Government Contract",
+        type_label: "SF 1449",
+        agency: "NAVFAC Southwest",
+        contracting_officer: "J. Rivera",
+        counterparty: "Acme Federal LLC",
+      }),
+    ];
+    total = 1;
+    render(<DocumentsHome />);
+    fireEvent.click(await screen.findByText("award.pdf"));
+    const drawer = screen.getByRole("dialog", { name: "award.pdf" });
+    expect(within(drawer).getByText("NAVFAC Southwest")).toBeTruthy();
+    expect(within(drawer).getByText("J. Rivera")).toBeTruthy();
+    expect(within(drawer).getByText("Acme Federal LLC")).toBeTruthy();
+    expect(within(drawer).getByRole("link", { name: "Open workspace" })).toHaveAttribute("href", "/documents/c1");
+    expect(within(drawer).getByRole("link", { name: "Review" })).toHaveAttribute("href", "/documents/c1/review");
+    expect(push).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    // Keyboard: Enter on a focused row opens the same preview.
+    fireEvent.keyDown(screen.getByRole("row", { name: "Preview award.pdf" }), { key: "Enter" });
+    expect(screen.getByRole("dialog", { name: "award.pdf" })).toBeTruthy();
+  });
+
+  it("switches to a grid of cards and remembers the choice", async () => {
+    window.localStorage.removeItem("dx-documents-view");
+    const { unmount } = render(<DocumentsHome />);
+    await screen.findByText("05_multipage_stress.pdf");
+    fireEvent.click(screen.getByRole("radio", { name: "Grid" }));
+    expect(await screen.findByTestId("documents-grid")).toBeTruthy();
+    expect(screen.queryByTestId("documents-table")).toBeNull();
+    expect(screen.getAllByTestId("document-card")).toHaveLength(4);
+    fireEvent.click(screen.getByRole("button", { name: "Preview 04_international_eur.pdf" }));
+    expect(screen.getByRole("dialog", { name: "04_international_eur.pdf" })).toBeTruthy();
+    unmount();
+
+    render(<DocumentsHome />);
+    expect(await screen.findByTestId("documents-grid")).toBeTruthy();
+    window.localStorage.removeItem("dx-documents-view");
   });
 
   it("blocks reprocess while a document is already processing", async () => {

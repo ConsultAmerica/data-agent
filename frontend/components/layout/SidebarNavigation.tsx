@@ -2,16 +2,22 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 import {
   Archive,
   BarChart3,
+  BookCheck,
+  Bot,
+  CalendarClock,
   ClipboardList,
   Compass,
   FileSearch,
+  GitCompareArrows,
   LayoutGrid,
   ListChecks,
   PanelLeftClose,
   PanelLeftOpen,
+  Search,
   ScrollText,
   Settings,
   Sparkles,
@@ -33,7 +39,13 @@ const ICONS: Record<WorkspaceNavId, LucideIcon> = {
   review: ListChecks,
   explorer: Compass,
   ask: Sparkles,
+  search: Search,
+  analytics: BarChart3,
   clauses: ScrollText,
+  obligations: CalendarClock,
+  compare: GitCompareArrows,
+  actions: Bot,
+  playbook: BookCheck,
   integrations: Workflow,
   governance: ClipboardList,
   settings: Settings,
@@ -53,6 +65,14 @@ export default function SidebarNavigation({
   onMobileClose,
 }: SidebarNavigationProps) {
   const pathname = usePathname() || "/";
+  // Collapsed rail: the hovered/focused item's name, drawn outside the
+  // scrolling list (which would clip it) at the item's height.
+  const [tip, setTip] = useState<{ label: string; top: number } | null>(null);
+  const showTip = (label: string, element: HTMLElement) => {
+    if (!collapsed) return;
+    const box = element.getBoundingClientRect();
+    setTip({ label, top: box.top + box.height / 2 });
+  };
 
   return (
     <>
@@ -94,7 +114,7 @@ export default function SidebarNavigation({
           </button>
         </div>
 
-        <nav className="workspace-sidebar-nav" aria-label="Primary">
+        <nav className="workspace-sidebar-nav" aria-label="Primary" onScroll={() => setTip(null)}>
           <ul className="workspace-sidebar-list">
             {WORKSPACE_NAV.map((item) => (
               <SidebarItem
@@ -102,11 +122,22 @@ export default function SidebarNavigation({
                 item={item}
                 collapsed={collapsed}
                 active={isNavItemActive(pathname, item)}
-                onNavigate={onMobileClose}
+                onNavigate={() => {
+                  setTip(null);
+                  onMobileClose();
+                }}
+                onHint={showTip}
+                onHintEnd={() => setTip(null)}
               />
             ))}
           </ul>
         </nav>
+
+        {collapsed && tip && (
+          <span className="workspace-sidebar-tooltip" style={{ top: tip.top }} role="presentation">
+            {tip.label}
+          </span>
+        )}
 
         {!collapsed && (
           <p className="workspace-sidebar-footnote">
@@ -124,25 +155,35 @@ function SidebarItem({
   collapsed,
   active,
   onNavigate,
+  onHint,
+  onHintEnd,
 }: {
   item: WorkspaceNavItem;
   collapsed: boolean;
   active: boolean;
   onNavigate: () => void;
+  onHint: (label: string, element: HTMLElement) => void;
+  onHintEnd: () => void;
 }) {
   const Icon = ICONS[item.id];
   return (
     <li>
-      {item.group && !collapsed && (
-        <p className="workspace-sidebar-group" aria-hidden="true">
-          {item.group}
-        </p>
-      )}
+      {item.group &&
+        (collapsed ? (
+          <span className="workspace-sidebar-divider" aria-hidden="true" />
+        ) : (
+          <p className="workspace-sidebar-group" aria-hidden="true">
+            {item.group}
+          </p>
+        ))}
       <Link
         href={item.href}
         onClick={onNavigate}
+        onMouseEnter={(event) => onHint(item.label, event.currentTarget)}
+        onMouseLeave={onHintEnd}
+        onFocus={(event) => onHint(item.label, event.currentTarget)}
+        onBlur={onHintEnd}
         aria-current={active ? "page" : undefined}
-        title={collapsed ? item.label : undefined}
         className={["workspace-sidebar-link", active ? "workspace-sidebar-link-active" : ""].join(" ")}
         data-testid={`nav-${item.id}`}
       >

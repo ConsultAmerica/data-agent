@@ -30,7 +30,7 @@ import type {
   UploadedDocument,
 } from "@/types/document";
 
-const ACCEPTED_EXTENSIONS = [
+export const ACCEPTED_EXTENSIONS = [
   ".pdf",
   ".docx",
   ".doc",
@@ -52,6 +52,32 @@ const ACCEPTED_EXTENSIONS = [
   ".bmp",
   ".webp",
 ];
+
+/** MIME → extensions for react-dropzone (shared with the batch dropzone). */
+export const ACCEPTED_FILE_TYPES: Record<string, string[]> = {
+  "application/pdf": [".pdf"],
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+    [".docx"],
+  "application/msword": [".doc"],
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+    [".xlsx"],
+  "application/vnd.ms-excel": [".xls"],
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+    [".pptx"],
+  "application/vnd.ms-powerpoint": [".ppt"],
+  "text/plain": [".txt"],
+  "text/csv": [".csv"],
+  "application/rtf": [".rtf"],
+  "text/rtf": [".rtf"],
+  "text/html": [".html", ".htm"],
+  "application/xml": [".xml"],
+  "text/xml": [".xml"],
+  "image/png": [".png"],
+  "image/jpeg": [".jpg", ".jpeg"],
+  "image/tiff": [".tif", ".tiff"],
+  "image/bmp": [".bmp"],
+  "image/webp": [".webp"],
+};
 
 /**
  * Explicit upload lifecycle. Processing progress after upload is owned by
@@ -230,30 +256,7 @@ export default function DocumentUploader({
     isDragActive,
   } = useDropzone({
     onDrop,
-    accept: {
-      "application/pdf": [".pdf"],
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        [".docx"],
-      "application/msword": [".doc"],
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-        [".xlsx"],
-      "application/vnd.ms-excel": [".xls"],
-      "application/vnd.openxmlformats-officedocument.presentationml.presentation":
-        [".pptx"],
-      "application/vnd.ms-powerpoint": [".ppt"],
-      "text/plain": [".txt"],
-      "text/csv": [".csv"],
-      "application/rtf": [".rtf"],
-      "text/rtf": [".rtf"],
-      "text/html": [".html", ".htm"],
-      "application/xml": [".xml"],
-      "text/xml": [".xml"],
-      "image/png": [".png"],
-      "image/jpeg": [".jpg", ".jpeg"],
-      "image/tiff": [".tif", ".tiff"],
-      "image/bmp": [".bmp"],
-      "image/webp": [".webp"],
-    },
+    accept: ACCEPTED_FILE_TYPES,
     multiple: false,
     maxFiles: 1,
   });
@@ -396,7 +399,7 @@ export default function DocumentUploader({
         </h2>
 
         <p className="mt-2 text-sm leading-6 text-text-secondary">
-          Contracts, invoices, regulatory documents, spreadsheets, scans, images, and business records. Data Agent detects the document type and staging profile.
+          Contracts, invoices, regulatory documents, spreadsheets, scans, images, and business records. Dataomatix detects the document type and staging profile.
         </p>
       </div>
 

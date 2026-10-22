@@ -281,7 +281,7 @@ export default function ExtractionResultsWorkspace({
           <RelationshipCard
             documentId={document.document_id}
             relationship={analysis.relationship}
-            reviewerName="Data Agent"
+            reviewerName="Dataomatix"
             busy={relationshipBusy}
             onConfirm={() => onRelationshipAction("confirm")}
             onReject={() => onRelationshipAction("reject")}

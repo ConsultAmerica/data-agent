@@ -60,7 +60,7 @@ export default function WorkflowDiagram({
       ]
         .filter(Boolean)
         .join(" ")}
-      aria-label="Data Agent workflow: Upload, Understand, Extract, Verify, Repository"
+      aria-label="Dataomatix workflow: Upload, Understand, Extract, Verify, Repository"
     >
       <ol className="workflow-diagram-steps">
         {STEPS.map((step, index) => {

@@ -3,6 +3,8 @@
 import { AlertCircle, ArrowRight, Loader2, RefreshCw } from "lucide-react";
 import Link from "next/link";
 
+import { Skeleton, SkeletonTable, SkeletonText } from "@/components/ui/skeleton";
+
 interface LoadingStateProps {
   title?: string;
   description?: string;
@@ -11,36 +13,34 @@ interface LoadingStateProps {
 
 export function LoadingState({
   title = "Loading data...",
-  description = "Connecting to Data Agent…",
+  description = "Connecting to Dataomatix…",
   compact = false,
 }: LoadingStateProps) {
   if (compact) {
     return (
-      <div className="flex items-center justify-center gap-3 py-8 text-sm text-text-secondary">
-        <Loader2 className="h-4 w-4 animate-spin text-sirion-teal" />
-        <span>{title}</span>
+      <div className="w-full space-y-3 py-6" role="status" aria-live="polite" aria-busy="true">
+        <span className="sr-only">{title}</span>
+        <SkeletonText lines={3} />
       </div>
     );
   }
 
+  // Shaped like the content that is coming (a short header and a table),
+  // with the title kept for context and screen readers.
   return (
-    <div className="flex flex-col items-center justify-center px-4 py-16 text-center">
-      <div className="mb-6 w-full max-w-md space-y-3">
-        <div className="h-4 w-3/4 animate-pulse rounded bg-border/80" />
-        <div className="h-4 w-full animate-pulse rounded bg-border/60" />
-        <div className="h-4 w-5/6 animate-pulse rounded bg-border/70" />
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          <div className="h-16 animate-pulse rounded-xl bg-border/50" />
-          <div className="h-16 animate-pulse rounded-xl bg-border/50" />
+    <div className="w-full px-4 py-8" role="status" aria-live="polite" aria-busy="true">
+      <div className="mb-5 text-center">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <p className="mt-1 text-xs leading-relaxed text-text-muted">{description}</p>
+      </div>
+      <div className="mx-auto max-w-4xl space-y-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {Array.from({ length: 4 }, (_, index) => (
+            <Skeleton key={index} className="h-16 rounded-xl" />
+          ))}
         </div>
+        <SkeletonTable rows={5} columns={4} />
       </div>
-      <div className="relative mb-5 flex h-10 w-10 items-center justify-center rounded-2xl border border-border bg-surface-soft">
-        <Loader2 className="h-5 w-5 animate-spin text-sirion-teal" />
-      </div>
-      <h3 className="text-base font-semibold text-foreground">{title}</h3>
-      <p className="mt-1.5 max-w-sm text-xs leading-relaxed text-text-muted">
-        {description}
-      </p>
     </div>
   );
 }

@@ -186,7 +186,7 @@ describe("GovernanceOpsDashboard", () => {
     });
   });
 
-  it("renders portfolio metrics with documented sources", async () => {
+  it("renders portfolio metrics with plain-language explanations", async () => {
     render(<GovernanceOpsDashboard />);
 
     await waitFor(() =>
@@ -195,10 +195,9 @@ describe("GovernanceOpsDashboard", () => {
 
     expect(screen.getByText("Total documents")).toBeTruthy();
     expect(screen.getByText("12")).toBeTruthy();
-    expect(
-      screen.getByText(/Source: GET \/api\/dashboard\/portfolio/),
-    ).toBeTruthy();
-    expect(screen.getByText(/No global export-audit list API/i)).toBeTruthy();
+    expect(screen.getByText("Every document in this workspace")).toBeTruthy();
+    // No API paths or internal switch names on a user-facing page.
+    expect(screen.queryByText(/GET \/api|RBAC|API/)).toBeNull();
   });
 
   it("shows health from probes and recent review activity", async () => {
@@ -267,7 +266,7 @@ describe("GovernanceOpsDashboard", () => {
   it("does not invent Oracle outcome counts", async () => {
     render(<GovernanceOpsDashboard />);
     await waitFor(() =>
-      expect(screen.getByText(/Document-scoped GET/i)).toBeTruthy(),
+      expect(screen.getAllByText(/Tracked per document/i).length).toBeGreaterThan(0),
     );
     expect(screen.queryByText(/Oracle sends succeeded/i)).toBeNull();
   });

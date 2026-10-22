@@ -9,6 +9,8 @@ import {
 } from "@/components/staging/review-status";
 import SelectCheckbox from "@/components/staging/select-checkbox";
 import SelectionToolbar from "@/components/staging/selection-toolbar";
+import FieldToneLegend from "@/components/ui/field-tone-legend";
+import { fieldToneClass, toneFromStagingCell } from "@/lib/field-tone";
 import type { StagingDataset } from "@/lib/staging-workbook";
 import { allSelected, isSelected, setCells, someSelected, toggleBlock, toggleCell, useTableSelection } from "@/lib/table-selection";
 
@@ -40,6 +42,7 @@ export default function StagingFieldList({
 
   return (
     <div className="space-y-2">
+    <FieldToneLegend />
     {selecting && (
       <SelectionToolbar
         documentId={documentId}
@@ -100,7 +103,9 @@ export default function StagingFieldList({
                 >
                   {column.display_label}
                 </td>
-                <td className={`max-w-md px-3 py-2 ${picked ? "cell-selected" : ""}`}>
+                <td
+                  className={`relative max-w-md px-3 py-2 ${picked ? "cell-selected" : ""} ${fieldToneClass(toneFromStagingCell(cell), "cell")}`}
+                >
                   {cell.value == null ? (
                     <span className="text-text-muted">—</span>
                   ) : request && onOpenSource ? (

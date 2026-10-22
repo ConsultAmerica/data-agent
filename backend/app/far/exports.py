@@ -62,7 +62,7 @@ def sheet_rows(sheet: str, rows: list[DocumentFarRecord], summary: dict | None) 
     if sheet == "04_STRUCTURED_FAR":
         return views.STRUCTURED_COLUMNS, [views.structured_row(r) for r in rows]
     if sheet == "05_EXTRACTION_GUIDE":
-        columns = ("Field", "Extraction / Formatting Rule", "Data Agent Use")
+        columns = ("Field", "Extraction / Formatting Rule", "Dataomatix Use")
         return columns, [dict(zip(columns, row)) for row in views.EXTRACTION_GUIDE]
     if sheet == "06_CANONICAL_MODEL":
         return views.CANONICAL_COLUMNS, [views.canonical_row(r) for r in rows]
@@ -85,7 +85,7 @@ WIDE_COLUMNS = {
     "Transformation Rule",
     "Notes",
     "Extraction / Formatting Rule",
-    "Data Agent Use",
+    "Dataomatix Use",
 }
 
 

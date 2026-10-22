@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { Bell, Menu, Plus, Search, Sparkles } from "lucide-react";
+import { Menu, Plus, Sparkles } from "lucide-react";
 
 import DataAgentLogo from "@/components/navigation/data-agent-logo";
 import BackendStatusPill from "@/components/navigation/BackendStatusPill";
+import CommandTrigger from "@/components/navigation/command-trigger";
+import UserChip from "@/components/navigation/user-chip";
 
 interface WorkspaceTopBarProps {
   onOpenSearch: () => void;
@@ -19,14 +21,14 @@ export default function WorkspaceTopBar({ onOpenSearch, onOpenMobileNav }: Works
         <button
           type="button"
           className="nav-icon-button lg:hidden"
-          aria-label="Open navigation"
+          aria-label="Toggle navigation"
           aria-controls="workspace-sidebar"
           onClick={onOpenMobileNav}
         >
           <Menu className="h-4 w-4" strokeWidth={1.75} />
         </button>
-        <Link href="/documents" className="header-brand-link" aria-label="Data Agent documents">
-          <DataAgentLogo variant="wordmark" tone="onDark" size={30} />
+        <Link href="/documents" className="header-brand-link" aria-label="Dataomatix documents">
+          <DataAgentLogo variant="wordmark" tone="onDark" size={36} />
         </Link>
       </div>
 
@@ -35,18 +37,20 @@ export default function WorkspaceTopBar({ onOpenSearch, onOpenMobileNav }: Works
           <Plus className="h-4 w-4 shrink-0" strokeWidth={2} />
           <span className="header-action-label whitespace-nowrap">New Document</span>
         </Link>
-        <Link href="/ask" className="btn-ask-agent shrink-0" title="Ask Data Agent">
+        <Link href="/ask" className="btn-ask-agent shrink-0" title="Ask Dataomatix">
           <Sparkles className="h-4 w-4 shrink-0" strokeWidth={1.75} />
           <span className="header-action-label whitespace-nowrap">Ask</span>
         </Link>
-        <button type="button" onClick={onOpenSearch} aria-label="Search" className="nav-icon-button shrink-0">
-          <Search className="h-4 w-4" strokeWidth={1.75} />
-        </button>
-        <button type="button" aria-label="Notifications" className="nav-icon-button shrink-0">
-          <Bell className="h-4 w-4" strokeWidth={1.75} />
-        </button>
-        <div className="hidden shrink-0 items-center border-l border-white/10 pl-2 sm:flex">
-          <BackendStatusPill />
+        {/* Search pill with its shortcut from tablet width; a plain icon on phones. */}
+        <span className="hidden md:inline-flex">
+          <CommandTrigger onOpen={onOpenSearch} />
+        </span>
+        <span className="md:hidden">
+          <CommandTrigger onOpen={onOpenSearch} compact />
+        </span>
+        <div className="hidden shrink-0 items-center gap-2 border-l border-white/10 pl-2 sm:flex">
+          <BackendStatusPill labelClassName="hidden lg:inline" />
+          <UserChip />
         </div>
       </div>
     </header>

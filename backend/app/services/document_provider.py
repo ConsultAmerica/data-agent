@@ -21,7 +21,7 @@ def normalize_convera_extraction(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Adapter so the rest of Data Agent never has to know Convera's
+    Adapter so the rest of Dataomatix never has to know Convera's
     response shape. Convera's live response nests the extracted text
     under "extraction" (confirmed against the running service:
     {"extraction": {"text": ..., "pages": [{"page", "text"}, ...]}}),

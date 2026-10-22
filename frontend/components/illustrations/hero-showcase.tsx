@@ -3,49 +3,46 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
-import {
-  ArrowRight,
-  CheckCheck,
-  FileSearch,
-  ShieldCheck,
-  Sparkles,
-  Upload,
-} from "lucide-react";
+import { ArrowRight, FileSearch, Upload } from "lucide-react";
+
+import AgentRunMockup from "@/components/marketing/agent-run-mockup";
 
 const SLIDES = [
   {
     id: "extract",
     label: "Extract",
-    caption: "Source-grounded fields from every page",
+    caption:
+      "Every value is boxed on its source page. Low-confidence fields route to a reviewer.",
     image: "/brand/hero/hero-extract.jpg",
-    panel: "extract" as const,
+    durationMs: 7000,
   },
   {
     id: "review",
     label: "Review",
-    caption: "Human verification before anything ships",
+    caption: "A reviewer resolves the flagged value; the decision is logged before anything ships.",
     image: "/brand/hero/hero-review.jpg",
-    panel: "review" as const,
+    durationMs: 5600,
   },
   {
     id: "govern",
     label: "Govern",
-    caption: "Audit-ready paths into enterprise systems",
+    caption: "Only reviewed values are staged for the Oracle export, and live sends stay off by default.",
     image: "/brand/hero/hero-govern.jpg",
-    panel: "govern" as const,
+    durationMs: 5600,
   },
 ] as const;
 
-const INTERVAL_MS = 5600;
-
 interface HeroShowcaseProps {
   brand?: ReactNode;
+  /** Small mono pill above the headline. */
+  eyebrow?: string;
   title: ReactNode;
   description: string;
 }
 
 export default function HeroShowcase({
   brand,
+  eyebrow,
   title,
   description,
 }: HeroShowcaseProps) {
@@ -54,11 +51,11 @@ export default function HeroShowcase({
 
   useEffect(() => {
     if (paused) return;
-    const id = window.setInterval(() => {
+    const id = window.setTimeout(() => {
       setActive((i) => (i + 1) % SLIDES.length);
-    }, INTERVAL_MS);
-    return () => window.clearInterval(id);
-  }, [paused]);
+    }, SLIDES[active].durationMs);
+    return () => window.clearTimeout(id);
+  }, [active, paused]);
 
   const slide = SLIDES[active];
 
@@ -66,7 +63,7 @@ export default function HeroShowcase({
     <section
       className="hero-showcase"
       aria-roledescription="carousel"
-      aria-label="Data Agent product highlights"
+      aria-label="Dataomatix product highlights"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       onFocusCapture={() => setPaused(true)}
@@ -101,6 +98,7 @@ export default function HeroShowcase({
       <div className="hero-showcase-inner">
         <div className="hero-showcase-copy">
           {brand && <div className="page-hero-brand reveal-up">{brand}</div>}
+          {eyebrow && <p className="hero-eyebrow-pill reveal-up">{eyebrow}</p>}
           <h1 className="page-hero-title reveal-up reveal-up-delay-1">{title}</h1>
           <p className="page-hero-description reveal-up reveal-up-delay-2">
             {description}
@@ -110,34 +108,21 @@ export default function HeroShowcase({
               <Upload className="h-4 w-4 shrink-0" />
               <span className="whitespace-nowrap">Start extraction</span>
             </Link>
-            <Link href="/ask" className="btn-hero-secondary">
-              <Sparkles className="h-4 w-4 shrink-0" />
-              <span className="whitespace-nowrap">Ask Data Agent</span>
+            <Link href="/sample" className="btn-hero-secondary">
+              <FileSearch className="h-4 w-4 shrink-0" />
+              <span className="whitespace-nowrap">Open a sample contract</span>
               <ArrowRight className="h-4 w-4 shrink-0" />
             </Link>
           </div>
         </div>
 
-        <div className="hero-showcase-stage reveal-up reveal-up-delay-2">
-          <div
-            key={slide.id}
-            className="hero-stage-frame"
-            aria-live="polite"
-          >
-            <div className="hero-stage-chrome">
-              <span className="hero-stage-dots" aria-hidden="true">
-                <i />
-                <i />
-                <i />
-              </span>
-              <span className="hero-stage-label">{slide.label}</span>
-            </div>
-            <div className="hero-stage-body">
-              {slide.panel === "extract" && <ExtractPanel />}
-              {slide.panel === "review" && <ReviewPanel />}
-              {slide.panel === "govern" && <GovernPanel />}
-            </div>
-            <p className="hero-stage-caption">{slide.caption}</p>
+        <div className="hero-showcase-stage hero-showcase-stage-wide reveal-up reveal-up-delay-2">
+          <div id={`hero-panel-${slide.id}`} className="w-full" aria-live="polite">
+            <AgentRunMockup stage={active as 0 | 1 | 2} />
+            <p className="hero-agent-caption">
+              <span className="hero-agent-caption-label">{slide.label}</span>
+              {slide.caption}
+            </p>
           </div>
         </div>
       </div>
@@ -162,7 +147,7 @@ export default function HeroShowcase({
                 className="hero-showcase-tab-progress"
                 style={
                   index === active && !paused
-                    ? { animationDuration: `${INTERVAL_MS}ms` }
+                    ? { animationDuration: `${item.durationMs}ms` }
                     : undefined
                 }
               />
@@ -171,79 +156,5 @@ export default function HeroShowcase({
         </div>
       </div>
     </section>
-  );
-}
-
-function ExtractPanel() {
-  return (
-    <div id="hero-panel-extract" className="hero-panel">
-      <div className="hero-panel-row hero-panel-row-head">
-        <FileSearch className="h-4 w-4 text-primary" strokeWidth={1.75} />
-        <span>Contract W912HQ-24-C-0001</span>
-        <span className="hero-panel-pill">Live extract</span>
-      </div>
-      {[
-        ["Contract No.", "W912HQ-24-C-0001", "99%"],
-        ["Award Date", "08/19/2026", "97%"],
-        ["Total Value", "$1.25M", "94%"],
-      ].map(([label, value, conf]) => (
-        <div key={label} className="hero-panel-row">
-          <span className="hero-panel-muted">{label}</span>
-          <span className="hero-panel-value">{value}</span>
-          <span className="hero-panel-conf">{conf}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ReviewPanel() {
-  return (
-    <div id="hero-panel-review" className="hero-panel">
-      <div className="hero-panel-row hero-panel-row-head">
-        <CheckCheck className="h-4 w-4 text-primary" strokeWidth={1.75} />
-        <span>Review queue</span>
-        <span className="hero-panel-pill hero-panel-pill-warn">3 need eyes</span>
-      </div>
-      {[
-        ["Period of Performance", "Needs review"],
-        ["Clause 52.212-4", "Verified"],
-        ["Payment Terms", "Needs review"],
-      ].map(([field, status]) => (
-        <div key={field} className="hero-panel-row">
-          <span className="hero-panel-muted">{field}</span>
-          <span
-            className={[
-              "hero-panel-status",
-              status === "Verified" ? "is-ok" : "is-warn",
-            ].join(" ")}
-          >
-            {status}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function GovernPanel() {
-  return (
-    <div id="hero-panel-govern" className="hero-panel">
-      <div className="hero-panel-row hero-panel-row-head">
-        <ShieldCheck className="h-4 w-4 text-primary" strokeWidth={1.75} />
-        <span>Export readiness</span>
-        <span className="hero-panel-pill">Oracle path</span>
-      </div>
-      {[
-        ["Staging workbook", "Ready"],
-        ["Audit trail", "Complete"],
-        ["Dry-run preview", "Passed"],
-      ].map(([item, status]) => (
-        <div key={item} className="hero-panel-row">
-          <span className="hero-panel-muted">{item}</span>
-          <span className="hero-panel-status is-ok">{status}</span>
-        </div>
-      ))}
-    </div>
   );
 }

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.models.document_extracted_table import DocumentExtractedTable
 from app.models.document_metadata_field import DocumentMetadataField
+from app.models.metadata_field_audit_log import MetadataFieldAuditLog
 from app.schemas.document_target import (
     ExtractTargetsResponse,
     ScalarTargetResult,
@@ -64,6 +65,49 @@ def _evidence_dict(evidence: Any) -> dict:
         "source_text": str(evidence),
         "source_reference": "",
     }
+
+
+def clear_stale_target_values(
+    *,
+    database: Session,
+    document_id: str,
+    unresolved_keys: list[str],
+) -> int:
+    """Remove machine values the latest extraction no longer produces.
+
+    A target that resolved to nothing this run (its old value now fails
+    validation, or is gone from the source) must not keep showing the old
+    value. Only untouched rows go: pending, never reviewed, no audit entry.
+    Accepted, edited or rejected values stay as reviewers left them.
+    """
+
+    keys = sorted({key for key in unresolved_keys if key})
+    if not keys:
+        return 0
+    rows = list(
+        database.scalars(
+            select(DocumentMetadataField).where(
+                DocumentMetadataField.document_id == document_id,
+                DocumentMetadataField.extraction_source == "target",
+                DocumentMetadataField.field_key.in_(keys),
+                DocumentMetadataField.review_status == "pending",
+            )
+        )
+    )
+    audited = set(
+        database.scalars(
+            select(MetadataFieldAuditLog.metadata_field_id).where(
+                MetadataFieldAuditLog.metadata_field_id.in_([row.id for row in rows])
+            )
+        )
+    ) if rows else set()
+    cleared = 0
+    for row in rows:
+        if row.id in audited:
+            continue
+        database.delete(row)
+        cleared += 1
+    return cleared
 
 
 def persist_target_extraction_results(

@@ -7,14 +7,14 @@ import Image from "next/image";
 export default function DataAgentLogo({
   size = 36,
   className,
-  title = "Data Agent",
+  title = "Dataomatix",
   variant = "mark",
   tone = "onDark",
 }: {
   size?: number;
   className?: string;
   title?: string;
-  /** `mark` = compact icon; `wordmark` = icon + DataAgent + tagline */
+  /** `mark` = compact icon; `wordmark` = icon + Dataomatix + tagline */
   variant?: "mark" | "wordmark";
   /** `onDark` for teal chrome; `onLight` for drawers / light surfaces */
   tone?: "onDark" | "onLight";
@@ -37,9 +37,9 @@ export default function DataAgentLogo({
             <span className="da-logo-data">Data</span>
             <span className="da-logo-agent">
               <span className="da-logo-a" aria-hidden="true">
-                A
+                o
               </span>
-              <span className="da-logo-gent">gent</span>
+              <span className="da-logo-gent">matix</span>
             </span>
           </span>
           <span className="da-logo-tag">Document Intelligence</span>
@@ -54,7 +54,7 @@ export default function DataAgentLogo({
 function BrandMark({
   size,
   className,
-  title = "Data Agent",
+  title = "Dataomatix",
 }: {
   size: number;
   className?: string;
@@ -68,6 +68,9 @@ function BrandMark({
       height={size}
       className={["da-logo-mark", className].filter(Boolean).join(" ")}
       style={{ width: size, height: size, objectFit: "contain" }}
+      // A small static PNG: served as-is. Re-encoding it to WebP per size gains
+      // nothing and stalls on hosts where the image optimizer hangs.
+      unoptimized
       priority
     />
   );

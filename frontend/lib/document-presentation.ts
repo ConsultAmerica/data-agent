@@ -16,7 +16,7 @@ export interface DocumentPresentation {
   statusLabel: string;
 }
 
-/** Type and Profile as Data Agent resolved them — the persisted staging
+/** Type and Profile as Dataomatix resolved them — the persisted staging
  * resolution the server returns, never a guess from the filename. A
  * document that was never staged has neither (it can be reprocessed). */
 export function presentDocument(document: DocumentSummary): DocumentPresentation {

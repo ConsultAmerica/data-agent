@@ -11,11 +11,15 @@ import {
   Receipt,
   Upload,
   BarChart3,
+  BookCheck,
+  Bot,
+  CalendarClock,
   ClipboardList,
   Compass,
   FileSearch,
   GitBranch,
   GitCompare,
+  GitCompareArrows,
   History,
   Layers,
   Lightbulb,
@@ -94,10 +98,12 @@ export const PLATFORM_SECTIONS: MegaMenuSection[] = [
   {
     title: "Intelligence",
     tiles: [
-      { label: "Ask Data Agent", description: "Query document data", href: "/ask", icon: Sparkles },
+      { label: "Ask Dataomatix", description: "Query document data", href: "/ask", icon: Sparkles },
       { label: "Search", description: "Search documents and fields", href: "/search", icon: Search },
       { label: "Analytics", description: "Portfolio insights", href: "/analytics", icon: BarChart3 },
       { label: "FAR / DFARS", description: "Contract intelligence", href: "/clauses", icon: ScrollText },
+      { label: "Obligations", description: "Deliverables and deadlines", href: "/obligations", icon: CalendarClock },
+      { label: "Agent Actions", description: "Summaries, risk and funding reports", href: "/actions", icon: Bot },
     ],
   },
 ];
@@ -113,7 +119,7 @@ export const INTELLIGENCE_SECTIONS: MegaMenuSection[] = [
         icon: Compass,
       },
       {
-        label: "Ask Data Agent",
+        label: "Ask Dataomatix",
         description: "Query document data",
         href: "/ask",
         icon: Sparkles,
@@ -140,6 +146,24 @@ export const INTELLIGENCE_SECTIONS: MegaMenuSection[] = [
         description: "Side-by-side comparison",
         href: "/clauses/compare",
         icon: GitCompare,
+      },
+      {
+        label: "Document Compare",
+        description: "Mod vs base award diff",
+        href: "/compare",
+        icon: GitCompareArrows,
+      },
+      {
+        label: "Obligations",
+        description: "Deliverables, reports and due dates",
+        href: "/obligations",
+        icon: CalendarClock,
+      },
+      {
+        label: "Agent Actions",
+        description: "One-click contract reports",
+        href: "/actions",
+        icon: Bot,
       },
       {
         label: "Relationships",
@@ -218,6 +242,12 @@ export const GOVERNANCE_SECTIONS: MegaMenuSection[] = [
         icon: Settings,
       },
       {
+        label: "Clause Playbook",
+        description: "Expected and prohibited clauses",
+        href: "/playbook",
+        icon: BookCheck,
+      },
+      {
         label: "Risk",
         description: "Obligations and compliance gaps",
         href: "/risk",
@@ -228,7 +258,7 @@ export const GOVERNANCE_SECTIONS: MegaMenuSection[] = [
 ];
 
 export const OVERVIEW_LINKS = [
-  { label: "Data Agent", href: "/", icon: Sparkles },
+  { label: "Dataomatix", href: "/", icon: Sparkles },
 ];
 
 export interface TopMenu {

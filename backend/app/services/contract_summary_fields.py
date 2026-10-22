@@ -207,7 +207,9 @@ _PHONE_RE = re.compile(r"^\(?\d{3}\)?[-. ]?\d{3}[-. ]?\d{4}$|^\d{3}[-. ]?\d{4}$"
 _UEID_RE = re.compile(r"^[0-9A-Z]{12}$")
 _NAICS_RE = re.compile(r"^\d{6}$")
 _MONEY_RE = re.compile(r"^\$?[\d,]+(\.\d{1,2})?$")
-_NAME_LIKE_RE = re.compile(r"^[A-Z][a-zA-Z'.\-]+(\s+[A-Z][a-zA-Z'.\-]+){0,3}$")
+# A person's name has at least two parts ("Doris Castro", "DORIS CASTRO");
+# a single capitalized word is usually a heading or noun ("Officials").
+_NAME_LIKE_RE = re.compile(r"^[A-Z][a-zA-Z'.\-]+(\s+[A-Z][a-zA-Z'.\-]+){1,3}$")
 _PSC_RE = re.compile(r"^[A-Z0-9]{1,4}$")
 
 

@@ -1,4 +1,4 @@
-"""Post-detection table acceptance gate for Data Agent.
+"""Post-detection table acceptance gate for Dataomatix.
 
 Scores candidate tables and rejects prose / segmentation artifacts that were
 incorrectly split into columns, while preserving legitimate one-row form tables.

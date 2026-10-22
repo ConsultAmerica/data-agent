@@ -63,4 +63,31 @@ describe("SidebarNavigation", () => {
     fireEvent.click(screen.getByTestId("nav-review"));
     expect(onMobileClose).toHaveBeenCalled();
   });
+
+  it("shows the item's name as a tooltip on hover or focus when collapsed", () => {
+    render(
+      <SidebarNavigation collapsed mobileOpen={false} onCollapsedChange={() => {}} onMobileClose={() => {}} />,
+    );
+    const link = screen.getByTestId("nav-obligations");
+    fireEvent.mouseEnter(link);
+    expect(screen.getByText("Obligations", { selector: ".workspace-sidebar-tooltip" })).toBeInTheDocument();
+    fireEvent.mouseLeave(link);
+    expect(document.querySelector(".workspace-sidebar-tooltip")).toBeNull();
+    fireEvent.focus(screen.getByTestId("nav-documents"));
+    expect(screen.getByText("Documents", { selector: ".workspace-sidebar-tooltip" })).toBeInTheDocument();
+  });
+
+  it("draws group dividers instead of group labels when collapsed, and no tooltip when expanded", () => {
+    const { rerender } = render(
+      <SidebarNavigation collapsed mobileOpen={false} onCollapsedChange={() => {}} onMobileClose={() => {}} />,
+    );
+    expect(document.querySelectorAll(".workspace-sidebar-divider").length).toBeGreaterThan(0);
+    expect(document.querySelector(".workspace-sidebar-group")).toBeNull();
+    rerender(
+      <SidebarNavigation collapsed={false} mobileOpen={false} onCollapsedChange={() => {}} onMobileClose={() => {}} />,
+    );
+    fireEvent.mouseEnter(screen.getByTestId("nav-obligations"));
+    expect(document.querySelector(".workspace-sidebar-tooltip")).toBeNull();
+    expect(document.querySelector(".workspace-sidebar-group")).not.toBeNull();
+  });
 });

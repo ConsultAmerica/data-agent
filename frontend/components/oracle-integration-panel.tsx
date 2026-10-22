@@ -10,7 +10,13 @@ import {
   ShieldAlert,
 } from "lucide-react";
 
+import IntegrationAuditTable from "@/components/integrations/integration-audit-table";
+import JsonPayloadPreview from "@/components/integrations/json-payload-preview";
+import OracleModeBanner from "@/components/integrations/oracle-mode-banner";
+import PayloadSchemaTree from "@/components/integrations/payload-schema-tree";
+import OracleSendConfirmModal from "@/components/oracle-send-confirm-modal";
 import { ApiError } from "@/lib/api";
+import { buildOracleChecklist, checklistPasses } from "@/lib/oracle-checklist";
 import {
   getOraclePayloadPreview,
   listIntegrationAudit,
@@ -19,6 +25,7 @@ import {
   type OraclePayloadPreview,
   type OracleSendResult,
 } from "@/lib/reviewed-export";
+import { getStagingProfile, type ProfileDescriptor } from "@/lib/staging-workbook";
 
 type PanelState =
   | { kind: "idle" }
@@ -78,12 +85,20 @@ function explainError(error: unknown): { message: string; code?: number } {
 export default function OracleIntegrationPanel({
   documentId,
   documentFilename,
+  layout = "compact",
 }: {
   documentId: string;
   documentFilename?: string;
+  /** "hub" (Exports & Oracle page): mode banner, payload schema beside the
+   * JSON preview, and the audit ledger as a table. */
+  layout?: "compact" | "hub";
 }) {
+  const hub = layout === "hub";
   const [state, setState] = useState<PanelState>({ kind: "idle" });
-  const [confirmChecked, setConfirmChecked] = useState(false);
+  // The mode the server reported on the last preview (null until one loads).
+  const [dryRun, setDryRun] = useState<boolean | null>(null);
+  const [mapping, setMapping] = useState<ProfileDescriptor["oracle_mapping_capability"] | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [history, setHistory] = useState<IntegrationAuditEntry[] | null>(null);
   const [historyError, setHistoryError] = useState("");
 
@@ -107,11 +122,28 @@ export default function OracleIntegrationPanel({
     void loadHistory();
   }, [loadHistory]);
 
+  // The hub shows the profile's target-mapping status beside the schema.
+  useEffect(() => {
+    if (!hub) return;
+    let active = true;
+    getStagingProfile(documentId)
+      .then((profile) => {
+        if (active) setMapping(profile.oracle_mapping_capability);
+      })
+      .catch(() => {
+        // Unknown mapping status is simply not shown.
+      });
+    return () => {
+      active = false;
+    };
+  }, [hub, documentId]);
+
   async function loadPreview() {
-    setConfirmChecked(false);
+    setConfirmOpen(false);
     setState({ kind: "loading" });
     try {
       const preview = await getOraclePayloadPreview(documentId);
+      setDryRun(preview.dry_run);
       setState({ kind: "preview", preview });
     } catch (error) {
       const explained = explainError(error);
@@ -124,12 +156,13 @@ export default function OracleIntegrationPanel({
   }
 
   async function confirmSend() {
-    if (!confirmChecked) return;
+    // The dialog only enables Confirm when every check passes; re-check here.
+    if (!preview || !checkPreview(preview)) return;
+    setConfirmOpen(false);
     setState({ kind: "sending" });
     try {
       const result = await sendOraclePayload(documentId, true);
       setState({ kind: "sent", result });
-      setConfirmChecked(false);
       await loadHistory();
     } catch (error) {
       const explained = explainError(error);
@@ -148,11 +181,8 @@ export default function OracleIntegrationPanel({
   }
 
   const preview = state.kind === "preview" ? state.preview : null;
-  const canSend =
-    preview?.actor?.can_send === true &&
-    preview.ready_to_send === true &&
-    preview.skipped_count === 0 &&
-    preview.authoritative_count > 0;
+  const checklist = preview ? buildOracleChecklist(preview) : [];
+  const checklistReady = preview != null && checkPreview(preview);
 
   return (
     <section
@@ -191,6 +221,7 @@ export default function OracleIntegrationPanel({
       </header>
 
       <div className="space-y-4 px-4 py-4" aria-live="polite">
+        {hub && <OracleModeBanner dryRun={dryRun} />}
         {state.kind === "idle" && (
           <p className="text-sm text-text-secondary">
             Generate a payload preview to inspect destination, validation, and
@@ -298,8 +329,8 @@ export default function OracleIntegrationPanel({
                   Blocked from Oracle payload
                 </p>
                 <ul className="mt-2 max-h-40 space-y-1 overflow-auto text-xs text-text-secondary">
-                  {preview.skipped.map((row) => (
-                    <li key={row.field_key}>
+                  {preview.skipped.map((row, index) => (
+                    <li key={`${row.field_key}:${index}`}>
                       <span className="font-medium text-foreground">{row.field}</span>
                       {" · "}
                       {row.review_status}
@@ -314,19 +345,26 @@ export default function OracleIntegrationPanel({
               </div>
             )}
 
-            <details className="rounded-lg border border-border px-3 py-2">
-              <summary className="cursor-pointer text-xs font-semibold text-text-secondary">
-                Contract header preview ({Object.keys(preview.contract_header).length} fields)
-              </summary>
-              <dl className="mt-2 grid gap-1 text-xs sm:grid-cols-2">
-                {Object.entries(preview.contract_header).map(([key, value]) => (
-                  <div key={key} className="contents">
-                    <dt className="text-text-muted">{key}</dt>
-                    <dd className="break-all text-foreground">{value}</dd>
-                  </div>
-                ))}
-              </dl>
-            </details>
+            {hub ? (
+              <div className="grid gap-3 lg:grid-cols-2">
+                <PayloadSchemaTree preview={preview} mapping={mapping} />
+                <JsonPayloadPreview preview={preview} />
+              </div>
+            ) : (
+              <details className="rounded-lg border border-border px-3 py-2">
+                <summary className="cursor-pointer text-xs font-semibold text-text-secondary">
+                  Contract header preview ({Object.keys(preview.contract_header).length} fields)
+                </summary>
+                <dl className="mt-2 grid gap-1 text-xs sm:grid-cols-2">
+                  {Object.entries(preview.contract_header).map(([key, value]) => (
+                    <div key={key} className="contents">
+                      <dt className="text-text-muted">{key}</dt>
+                      <dd className="break-all text-foreground">{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </details>
+            )}
 
             {state.kind === "sending" ? (
               <p className="flex items-center gap-2 text-sm text-text-secondary">
@@ -335,39 +373,25 @@ export default function OracleIntegrationPanel({
               </p>
             ) : (
               <div className="rounded-lg border border-border bg-surface-soft px-3 py-3">
-                <label className="flex items-start gap-2 text-sm text-foreground">
-                  <input
-                    type="checkbox"
-                    className="mt-1"
-                    checked={confirmChecked}
-                    onChange={(event) => setConfirmChecked(event.target.checked)}
-                    disabled={!canSend}
-                  />
-                  <span>
-                    I confirm this payload should be submitted through the
-                    authorized Oracle send endpoint
-                    {preview.dry_run ? " (dry-run / simulated)" : ""}.
-                  </span>
-                </label>
+                <p className="text-xs text-text-secondary">
+                  {checklistReady
+                    ? "All delivery checks and required header fields pass."
+                    : `${checklist.filter((item) => !item.passed).length} of ${checklist.length} pre-send checks fail — review them before sending.`}
+                </p>
                 {!preview.actor?.can_send && (
                   <p className="mt-2 text-xs text-warning">
                     Your role cannot send to Oracle (preview only).
                   </p>
                 )}
-                {!canSend && preview.actor?.can_send && (
-                  <p className="mt-2 text-xs text-warning">
-                    Send is blocked until the review set is clean and
-                    authoritative fields exist.
-                  </p>
-                )}
+                {/* Sending only ever happens from the confirmation dialog. */}
                 <button
                   type="button"
                   className="btn-primary mt-3 px-3 py-1.5 text-xs disabled:opacity-50"
-                  disabled={!canSend || !confirmChecked}
-                  onClick={() => void confirmSend()}
+                  disabled={!preview.actor?.can_send}
+                  onClick={() => setConfirmOpen(true)}
                 >
                   <Send className="h-3.5 w-3.5" aria-hidden="true" />
-                  Confirm and send
+                  Review and send…
                 </button>
               </div>
             )}
@@ -378,7 +402,7 @@ export default function OracleIntegrationPanel({
       <footer className="border-t border-border px-4 py-3">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-            Integration history
+            {hub ? "Audit log" : "Integration history"}
           </h3>
           <button
             type="button"
@@ -396,7 +420,12 @@ export default function OracleIntegrationPanel({
         {history && history.length === 0 && !historyError && (
           <p className="mt-2 text-xs text-text-muted">No Oracle operations recorded yet.</p>
         )}
-        {history && history.length > 0 && (
+        {hub && history && history.length > 0 && (
+          <div className="mt-2">
+            <IntegrationAuditTable rows={history} />
+          </div>
+        )}
+        {!hub && history && history.length > 0 && (
           <ul className="mt-2 max-h-48 space-y-2 overflow-auto text-xs">
             {history.map((row) => (
               <li
@@ -434,6 +463,20 @@ export default function OracleIntegrationPanel({
           </ul>
         )}
       </footer>
+
+      {confirmOpen && preview && (
+        <OracleSendConfirmModal
+          preview={preview}
+          documentFilename={documentFilename}
+          onConfirm={() => void confirmSend()}
+          onCancel={() => setConfirmOpen(false)}
+        />
+      )}
     </section>
   );
+}
+
+/** Every pre-send check passes, and the backend agrees the set is ready. */
+function checkPreview(preview: OraclePayloadPreview): boolean {
+  return preview.ready_to_send === true && checklistPasses(buildOracleChecklist(preview));
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -9,28 +9,42 @@ import {
   ChevronLeft,
   ChevronRight,
   FileText,
+  LayoutGrid,
+  List,
   MoreHorizontal,
   Plus,
   Search,
   X,
 } from "lucide-react";
 
+import DocumentPreviewDrawer from "@/components/documents/document-preview-drawer";
 import PageHeader from "@/components/layout/PageHeader";
 import { ErrorState } from "@/components/layout/StatusState";
+import DensityToggle from "@/components/ui/density-toggle";
+import { HIGH_BAND_MIN } from "@/lib/confidence-policy";
 import {
+  acceptReviewQueueFields,
   deleteDocuments,
   getDocumentStatusCounts,
+  getReviewQueueFields,
+  isLowRiskQueueField,
   searchDocuments,
   startProcessingJob,
   type DocumentSortBy,
   type DocumentSortDir,
 } from "@/lib/documents";
 import { FAMILY_LABELS } from "@/lib/document-families";
+import { useBrowserPreference } from "@/lib/browser-preference";
 import {
-  presentDocument,
-  statusMark,
-  type OperationalStatus,
-} from "@/lib/document-presentation";
+  DOCUMENT_SEARCH_PLACEHOLDER,
+  EXTRACTED_STATUS_TONE,
+  extractedStatusLabel,
+  formatContractValue,
+  formatDocumentDate,
+} from "@/lib/document-repository";
+import { getDocumentTypeAppearance } from "@/lib/document-type-icon";
+import { useTableDensity } from "@/lib/table-density";
+import { presentDocument, statusMark } from "@/lib/document-presentation";
 import { downloadExport, getStagingProfile } from "@/lib/staging-workbook";
 import type { DocumentStatus, DocumentSummary } from "@/types/document";
 
@@ -71,37 +85,15 @@ function isSortDir(value: string | null): value is DocumentSortDir {
   return value === "asc" || value === "desc";
 }
 
-const TONE: Record<OperationalStatus, string> = {
-  ready: "text-success",
-  verified: "text-success",
-  review: "text-warning",
-  failed: "text-danger",
-  processing: "text-text-secondary",
-};
-
-const PROCESS_LABEL: Record<DocumentStatus, string> = {
-  processing: "Processing",
-  review_required: "Complete",
-  completed: "Complete",
-  failed: "Failed",
-};
-
-function formatDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
-}
-
-function reviewLabel(status: OperationalStatus): string {
-  if (status === "review") return "Needs Review";
-  if (status === "verified") return "Verified";
-  if (status === "failed") return "—";
-  if (status === "processing") return "Pending";
-  return "Ready";
-}
+type RepositoryView = "table" | "grid";
+const REPOSITORY_VIEWS: readonly RepositoryView[] = ["table", "grid"];
 
 export default function DocumentsHome() {
   const router = useRouter();
+  const [density, setDensity] = useTableDensity("documents");
+  const [view, setView] = useBrowserPreference<RepositoryView>("dx-documents-view", REPOSITORY_VIEWS, "table");
+  const [previewing, setPreviewing] = useState<DocumentSummary | null>(null);
+  const closePreview = useCallback(() => setPreviewing(null), []);
   const params = useSearchParams();
   const urlFilter = params.get("filter");
   const urlFamily = params.get("family") ?? "";
@@ -133,6 +125,7 @@ export default function DocumentsHome() {
   const [confirm, setConfirm] = useState<DocumentSummary[] | null>(null);
   const [notice, setNotice] = useState("");
   const [reprocessing, setReprocessing] = useState(false);
+  const [acceptingLowRisk, setAcceptingLowRisk] = useState(false);
   const lastWrittenUrl = useRef("");
 
   // Follow deep links from the sidebar / type tiles (external URL changes).
@@ -268,6 +261,31 @@ export default function DocumentsHome() {
     return qs ? `${base}?return=${encodeURIComponent(qs)}` : base;
   }
 
+  /** The … menu of one row or card. */
+  function rowMenu(document: DocumentSummary) {
+    return (
+      <RowMenu
+        staged={presentDocument(document).staged}
+        processing={document.status === "processing"}
+        onClose={() => setMenuFor(null)}
+        onOpen={() => {
+          setMenuFor(null);
+          router.push(documentHref(document.document_id));
+        }}
+        onReview={() => {
+          setMenuFor(null);
+          router.push(documentHref(document.document_id, "review"));
+        }}
+        onExport={() => void exportDocument(document)}
+        onReprocess={() => void reprocessOne(document)}
+        onDelete={() => {
+          setMenuFor(null);
+          setConfirm([document]);
+        }}
+      />
+    );
+  }
+
   function toggle(document: DocumentSummary) {
     setSelected((current) => {
       const next = new Map(current);
@@ -352,6 +370,32 @@ export default function DocumentsHome() {
     setReloadKey((key) => key + 1);
   }
 
+  async function acceptLowRiskSelected() {
+    setAcceptingLowRisk(true);
+    try {
+      const ids = new Set(selectedList.map((document) => document.document_id));
+      const candidates = (await getReviewQueueFields()).filter(
+        (item) => ids.has(item.document_id) && isLowRiskQueueField(item),
+      );
+      if (candidates.length === 0) {
+        setNotice("No unflagged high-confidence values are pending in the selected documents.");
+        return;
+      }
+      const { accepted, failed } = await acceptReviewQueueFields(candidates, "Dataomatix");
+      const touched = new Set(accepted.map((item) => item.document_id)).size;
+      setNotice(
+        `Accepted ${accepted.length} low-risk value${accepted.length === 1 ? "" : "s"} in ${touched} document${touched === 1 ? "" : "s"}` +
+          (failed.length ? ` · ${failed.length} could not be saved` : "") +
+          ". Flagged and lower-confidence values stay in the review queue.",
+      );
+      setReloadKey((key) => key + 1);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Batch accept failed.");
+    } finally {
+      setAcceptingLowRisk(false);
+    }
+  }
+
   async function confirmDelete() {
     if (!confirm) return;
     const ids = confirm.map((document) => document.document_id);
@@ -382,17 +426,11 @@ export default function DocumentsHome() {
       <PageHeader
         title="Documents"
         description="Manage, review and export documents"
-        actions={
-          <Link href="/extraction/new" className="btn-hero-primary !w-auto px-4">
-            <Plus className="h-4 w-4" />
-            Upload Document
-          </Link>
-        }
       />
 
       <dl className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="documents-summary">
         <Metric label="Total Documents" value={counts?.all} />
-        <Metric label="Needs Review" value={counts?.review} tone="text-warning" />
+        <Metric label="Documents to review" value={counts?.review} tone="text-warning" />
         <Metric label="Ready" value={counts?.ready} tone="text-success" />
         <Metric label="Failed" value={counts?.failed} tone="text-danger" />
       </dl>
@@ -404,13 +442,14 @@ export default function DocumentsHome() {
         data-testid="documents-toolbar"
       >
         <label className="relative min-w-[12rem] flex-1">
-          <span className="sr-only">Search by document name</span>
+          <span className="sr-only">Search documents</span>
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
           <input
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search by document name…"
+            placeholder={DOCUMENT_SEARCH_PLACEHOLDER}
+            title="Matches file names, contract numbers and titles, supplier / customer names, and extracted page text"
             className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm outline-none focus:border-primary/40"
           />
         </label>
@@ -471,6 +510,15 @@ export default function DocumentsHome() {
             Clear Filters
           </button>
         )}
+
+        <div className="ml-auto flex items-center gap-2 self-end">
+          {view === "table" && <DensityToggle value={density} onChange={setDensity} />}
+          <ViewToggle value={view} onChange={setView} />
+          <Link href="/extraction/new" className="btn-hero-primary !w-auto h-8 px-3 text-xs">
+            <Plus className="h-4 w-4" />
+            Upload document
+          </Link>
+        </div>
       </div>
 
       {notice && (
@@ -501,6 +549,15 @@ export default function DocumentsHome() {
           </button>
           <button
             type="button"
+            disabled={acceptingLowRisk}
+            onClick={() => void acceptLowRiskSelected()}
+            title={`Accept every unflagged pending value scoring ${Math.round(HIGH_BAND_MIN * 100)}% or higher in the selected documents`}
+            className="rounded-md border border-success/40 bg-success/10 px-2.5 py-1 text-xs font-semibold text-success hover:border-success disabled:opacity-50"
+          >
+            {acceptingLowRisk ? "Accepting…" : "Accept low-risk values"}
+          </button>
+          <button
+            type="button"
             disabled={reprocessing}
             onClick={() => void reprocessSelected()}
             className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-surface-soft disabled:opacity-50"
@@ -526,13 +583,36 @@ export default function DocumentsHome() {
         </div>
       )}
 
-      <div className="relative mt-4 overflow-x-auto rounded-xl border border-border bg-surface">
+      {/* Its own scroller, capped to the screen, so the header stays visible while rows scroll. */}
+      <div className="relative mt-4 max-h-[calc(100vh-14rem)] min-h-[12rem] overflow-auto rounded-xl border border-border bg-surface">
         {loading ? (
           <TableSkeleton />
         ) : documents.length === 0 ? (
           <EmptyState hasFilters={filtersActive} onClear={clearFilters} />
+        ) : view === "grid" ? (
+          <ul className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" data-testid="documents-grid">
+            {documents.map((document) => (
+              <li key={document.document_id}>
+                <DocumentCard
+                  document={document}
+                  selected={selected.has(document.document_id)}
+                  onToggle={() => toggle(document)}
+                  onPreview={() => setPreviewing(document)}
+                  menuOpen={menuFor === document.document_id}
+                  onMenu={() =>
+                    setMenuFor((current) => (current === document.document_id ? null : document.document_id))
+                  }
+                  menu={rowMenu(document)}
+                />
+              </li>
+            ))}
+          </ul>
         ) : (
-          <table className="min-w-full text-sm" data-testid="documents-table">
+          <table
+            className="min-w-full text-sm data-[density=compact]:text-[13px] data-[density=compact]:[&_td]:py-1 data-[density=compact]:[&_td]:whitespace-nowrap data-[density=compact]:[&_th]:py-1.5"
+            data-testid="documents-table"
+            data-density={density}
+          >
             <thead className="sticky top-0 z-10 bg-surface-soft">
               <tr className="border-b border-border text-left text-[11px] font-semibold uppercase tracking-wide text-text-muted">
                 <th className="w-10 px-3 py-2.5">
@@ -556,16 +636,11 @@ export default function DocumentsHome() {
                     }}
                   />
                 </th>
-                <th className="px-3 py-2.5">Document Name</th>
-                <th className="px-3 py-2.5">Document Type</th>
-                <th className="hidden px-3 py-2.5 lg:table-cell">Profile</th>
-                <th className="px-3 py-2.5">Processing</th>
-                <th className="hidden px-3 py-2.5 sm:table-cell">Review</th>
-                <th className="hidden px-3 py-2.5 md:table-cell">Records</th>
-                <SortableTh label="Uploaded" active={sortBy === "uploaded_at"} dir={sortDir} onClick={() => toggleSort("uploaded_at")} className="hidden md:table-cell" />
-                <th className="hidden px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-text-secondary xl:table-cell" title="Display only — global Updated sort disabled (capped scan is not pagination-accurate)">
-                  Updated
-                </th>
+                <th className="px-3 py-2.5">File name</th>
+                <th className="hidden px-3 py-2.5 lg:table-cell">Agency / contracting activity</th>
+                <th className="hidden px-3 py-2.5 text-right md:table-cell">Total contract value</th>
+                <th className="px-3 py-2.5">Extracted status</th>
+                <SortableTh label="Upload date" active={sortBy === "uploaded_at"} dir={sortDir} onClick={() => toggleSort("uploaded_at")} className="hidden sm:table-cell" />
                 <th className="w-12 px-3 py-2.5">
                   <span className="sr-only">Actions</span>
                 </th>
@@ -574,19 +649,21 @@ export default function DocumentsHome() {
             <tbody>
               {documents.map((document) => {
                 const row = presentDocument(document);
-                const open = () => {
-                  setMenuFor(null);
-                  router.push(documentHref(document.document_id));
-                };
-                const review = () => {
-                  setMenuFor(null);
-                  router.push(documentHref(document.document_id, "review"));
-                };
+                const { Icon, iconClass } = getDocumentTypeAppearance(document.original_filename, document.document_type);
                 return (
                   <tr
                     key={document.document_id}
-                    onClick={open}
-                    className="h-11 cursor-pointer border-b border-border/70 last:border-0 hover:bg-[var(--color-row-hover)]"
+                    onClick={() => setPreviewing(document)}
+                    onKeyDown={(event) => {
+                      if (event.target !== event.currentTarget) return;
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setPreviewing(document);
+                      }
+                    }}
+                    tabIndex={0}
+                    aria-label={`Preview ${document.original_filename}`}
+                    className="h-11 cursor-pointer border-b border-border/70 outline-none last:border-0 hover:bg-[var(--color-row-hover)] focus-visible:bg-[var(--color-row-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40"
                   >
                     <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
                       <input
@@ -596,32 +673,32 @@ export default function DocumentsHome() {
                         onChange={() => toggle(document)}
                       />
                     </td>
-                    <td className="max-w-[22rem] px-3 py-2" title={document.original_filename}>
+                    <td className="max-w-[24rem] px-3 py-2" title={document.original_filename}>
                       <span className="flex min-w-0 items-center gap-2">
-                        <FileText className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-                        <span className="truncate font-medium text-foreground">{document.original_filename}</span>
+                        <Icon className={`h-4 w-4 shrink-0 ${iconClass}`} aria-hidden="true" />
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium text-foreground">{document.original_filename}</span>
+                          <TypeLine document={document} />
+                        </span>
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-text-secondary">{row.typeLabel}</td>
-                    <td className={`hidden px-3 py-2 lg:table-cell ${row.staged ? "text-text-secondary" : "text-text-muted"}`}>
-                      {row.profileLabel}
+                    <td className={`hidden max-w-[16rem] truncate px-3 py-2 lg:table-cell ${document.agency ? "text-text-secondary" : "text-text-muted"}`}>
+                      {document.agency || "—"}
                     </td>
-                    <td className={`px-3 py-2 font-medium ${document.status === "failed" ? "text-danger" : document.status === "processing" ? "text-text-secondary" : "text-foreground"}`}>
-                      {PROCESS_LABEL[document.status]}
+                    <td className={`hidden px-3 py-2 text-right tabular-nums md:table-cell ${document.contract_value ? "text-foreground" : "text-text-muted"}`}>
+                      {formatContractValue(document.contract_value)}
                     </td>
-                    <td className={`hidden px-3 py-2 font-medium sm:table-cell ${TONE[row.status]}`}>
-                      {statusMark(row.status)} {reviewLabel(row.status)}
+                    <td className={`whitespace-nowrap px-3 py-2 font-medium ${EXTRACTED_STATUS_TONE[row.status]}`}>
+                      {statusMark(row.status)} {extractedStatusLabel(row.status)}
                     </td>
-                    <td className="hidden px-3 py-2 tabular-nums text-text-secondary md:table-cell">
-                      {document.fields_extracted.toLocaleString()}
+                    <td className="hidden whitespace-nowrap px-3 py-2 tabular-nums text-text-secondary sm:table-cell">
+                      {formatDocumentDate(document.uploaded_at)}
                     </td>
-                    <td className="hidden px-3 py-2 tabular-nums text-text-secondary md:table-cell">
-                      {formatDate(document.uploaded_at)}
-                    </td>
-                    <td className="hidden px-3 py-2 tabular-nums text-text-secondary xl:table-cell">
-                      {formatDate(document.last_updated)}
-                    </td>
-                    <td className="relative px-3 py-2 text-right" onClick={(event) => event.stopPropagation()}>
+                    <td
+                      className="relative px-3 py-2 text-right"
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => event.stopPropagation()}
+                    >
                       <button
                         type="button"
                         aria-label={`Actions for ${document.original_filename}`}
@@ -634,21 +711,7 @@ export default function DocumentsHome() {
                       >
                         <MoreHorizontal className="h-4 w-4" />
                       </button>
-                      {menuFor === document.document_id && (
-                        <RowMenu
-                          staged={row.staged}
-                          processing={document.status === "processing"}
-                          onClose={() => setMenuFor(null)}
-                          onOpen={open}
-                          onReview={review}
-                          onExport={() => void exportDocument(document)}
-                          onReprocess={() => void reprocessOne(document)}
-                          onDelete={() => {
-                            setMenuFor(null);
-                            setConfirm([document]);
-                          }}
-                        />
-                      )}
+                      {menuFor === document.document_id && rowMenu(document)}
                     </td>
                   </tr>
                 );
@@ -687,7 +750,148 @@ export default function DocumentsHome() {
       )}
 
       {confirm && <DeleteDialog documents={confirm} onCancel={() => setConfirm(null)} onConfirm={confirmDelete} />}
+
+      {previewing && (
+        <DocumentPreviewDrawer
+          document={previewing}
+          workspaceHref={documentHref(previewing.document_id)}
+          reviewHref={documentHref(previewing.document_id, "review")}
+          onClose={closePreview}
+        />
+      )}
     </div>
+  );
+}
+
+/** "SF 1442 Contract Award · Government Contract", or "Not staged". */
+function TypeLine({ document }: { document: DocumentSummary }) {
+  const row = presentDocument(document);
+  return (
+    <span className={`block truncate text-xs ${row.staged ? "text-text-secondary" : "text-text-muted"}`}>
+      {row.staged
+        ? `${row.typeLabel}${row.profileLabel && row.profileLabel !== row.typeLabel ? ` · ${row.profileLabel}` : ""}`
+        : row.profileLabel}
+    </span>
+  );
+}
+
+function ViewToggle({ value, onChange }: { value: RepositoryView; onChange: (next: RepositoryView) => void }) {
+  const options = [
+    { value: "table" as const, label: "Detailed table", icon: List },
+    { value: "grid" as const, label: "Grid", icon: LayoutGrid },
+  ];
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Repository view"
+      className="inline-flex h-8 shrink-0 items-center rounded-lg border border-border bg-surface p-0.5"
+    >
+      {options.map((option) => {
+        const active = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            aria-label={option.label}
+            title={option.label}
+            onClick={() => onChange(option.value)}
+            className={[
+              "inline-flex h-full items-center rounded-md px-2 transition-colors",
+              active ? "bg-primary/10 text-foreground" : "text-text-secondary hover:text-foreground",
+            ].join(" ")}
+          >
+            <option.icon className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Grid view: one card per document, same facts and click behavior as a row. */
+function DocumentCard({
+  document,
+  selected,
+  onToggle,
+  onPreview,
+  menuOpen,
+  onMenu,
+  menu,
+}: {
+  document: DocumentSummary;
+  selected: boolean;
+  onToggle: () => void;
+  onPreview: () => void;
+  menuOpen: boolean;
+  onMenu: () => void;
+  menu: ReactNode;
+}) {
+  const row = presentDocument(document);
+  const { Icon, bgClass, iconClass } = getDocumentTypeAppearance(document.original_filename, document.document_type);
+  return (
+    <article
+      className={`relative flex h-full flex-col rounded-xl border bg-surface p-3 transition-colors hover:border-primary/40 ${selected ? "border-primary/50" : "border-border"}`}
+      data-testid="document-card"
+    >
+      <div className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          className="relative z-10 mt-1"
+          aria-label={`Select ${document.original_filename}`}
+          checked={selected}
+          onChange={onToggle}
+        />
+        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${bgClass}`}>
+          <Icon className={`h-4 w-4 ${iconClass}`} aria-hidden="true" />
+        </span>
+        <button
+          type="button"
+          onClick={onPreview}
+          aria-label={`Preview ${document.original_filename}`}
+          className="min-w-0 flex-1 text-left after:absolute after:inset-0 after:rounded-xl after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-primary/40"
+        >
+          <span className="block truncate text-sm font-medium text-foreground" title={document.original_filename}>
+            {document.original_filename}
+          </span>
+          <TypeLine document={document} />
+        </button>
+        <div className="relative z-10">
+          <button
+            type="button"
+            aria-label={`Actions for ${document.original_filename}`}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={onMenu}
+            className="rounded-md p-1 text-text-secondary hover:bg-surface-soft hover:text-foreground"
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
+          {menuOpen && menu}
+        </div>
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+        <div className="col-span-2 min-w-0">
+          <dt className="text-text-muted">Agency / contracting activity</dt>
+          <dd className={`truncate ${document.agency ? "text-foreground" : "text-text-muted"}`}>{document.agency || "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-text-muted">Total contract value</dt>
+          <dd className={`tabular-nums ${document.contract_value ? "text-foreground" : "text-text-muted"}`}>
+            {formatContractValue(document.contract_value)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-text-muted">Uploaded</dt>
+          <dd className="tabular-nums text-foreground">{formatDocumentDate(document.uploaded_at)}</dd>
+        </div>
+      </dl>
+      <p className={`mt-auto pt-3 text-xs font-medium ${EXTRACTED_STATUS_TONE[row.status]}`}>
+        {statusMark(row.status)} {extractedStatusLabel(row.status)}
+        <span className="ml-2 font-normal text-text-muted">{document.fields_extracted.toLocaleString()} fields</span>
+      </p>
+    </article>
   );
 }
 

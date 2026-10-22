@@ -8,6 +8,7 @@ import Breadcrumbs from "@/components/layout/Breadcrumbs";
 import { DocumentChromeProvider } from "@/components/layout/document-chrome-context";
 import SidebarNavigation from "@/components/layout/SidebarNavigation";
 import WorkspaceTopBar from "@/components/layout/WorkspaceTopBar";
+import AssistantWidget from "@/components/marketing/assistant-widget";
 import GlobalHeader from "@/components/navigation/GlobalHeader";
 import { SIDEBAR_COLLAPSED_KEY, isMarketingPath } from "@/lib/workspace-nav";
 
@@ -50,12 +51,23 @@ export default function AppShell({ children }: AppShellProps) {
     }
   }
 
+  // The top bar's menu button: on desktop it collapses/expands the sidebar;
+  // below lg it opens the sidebar as a drawer.
+  function handleMenu() {
+    if (window.matchMedia("(min-width: 1024px)").matches) {
+      handleCollapsedChange(!collapsed);
+    } else {
+      setMobileNavOpen(true);
+    }
+  }
+
   if (marketing) {
     return (
       <div className="marketing-shell flex h-full min-h-0 flex-col" data-testid="marketing-shell">
         <GlobalHeader onOpenSearch={openSearch} />
         <main className="min-h-0 flex-1 overflow-y-auto bg-background">{children}</main>
         <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
+        <AssistantWidget />
       </div>
     );
   }
@@ -65,11 +77,12 @@ export default function AppShell({ children }: AppShellProps) {
       <div className="workspace-shell flex h-full min-h-0 flex-col" data-testid="workspace-shell">
         <WorkspaceTopBar
           onOpenSearch={openSearch}
-          onOpenMobileNav={() => setMobileNavOpen(true)}
+          onOpenMobileNav={handleMenu}
         />
         <div className="workspace-body flex min-h-0 flex-1">
           <SidebarNavigation
-            collapsed={collapsed}
+            // The drawer always shows labels, even if the desktop rail is collapsed.
+            collapsed={collapsed && !mobileNavOpen}
             mobileOpen={mobileNavOpen}
             onCollapsedChange={handleCollapsedChange}
             onMobileClose={() => setMobileNavOpen(false)}

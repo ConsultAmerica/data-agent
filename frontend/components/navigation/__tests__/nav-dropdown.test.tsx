@@ -48,6 +48,23 @@ describe("NavDropdown", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
+  it("switching menus never updates one menu while another is rendering", () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      renderMenus();
+      fireEvent.click(screen.getByRole("button", { name: "Platform" }));
+      fireEvent.click(screen.getByRole("button", { name: "Review" }));
+      fireEvent.click(screen.getByRole("button", { name: "Platform" }));
+      expect(screen.getAllByRole("menu")).toHaveLength(1);
+      const renderPhaseUpdates = errors.mock.calls.filter((args) =>
+        String(args[0]).includes("Cannot update a component"),
+      );
+      expect(renderPhaseUpdates).toHaveLength(0);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
   it("keeps only one menu open and closes after choosing an item", () => {
     renderMenus();
     fireEvent.click(screen.getByRole("button", { name: "Platform" }));
@@ -68,6 +85,8 @@ describe("NavDropdown", () => {
     expect(menuForPath("/relationships")).toBe("intelligence");
     expect(menuForPath("/")).toBeNull();
     render(<NavDropdown label="Review" href="/review" sections={topMenu("review").sections} current />);
-    expect(screen.getByRole("button", { name: "Review" })).toHaveClass("nav-menu-button-current");
+    const pill = screen.getByRole("button", { name: "Review" });
+    expect(pill).toHaveAttribute("data-current", "true");
+    expect(pill).toHaveClass("rounded-full", "bg-white"); // the filled pill
   });
 });

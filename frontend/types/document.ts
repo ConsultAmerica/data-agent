@@ -32,6 +32,9 @@ export interface UploadedDocument {
   ingestion_provenance?: Record<string, unknown> | null;
   /** Open an existing doc without re-running page extraction. */
   reused_existing?: boolean;
+  /** Intake tags given at upload (GET /api/documents/{id}). */
+  agency?: string | null;
+  contracting_officer?: string | null;
 }
 
 export type DuplicateResolution = "use_existing" | "upload_anyway";
@@ -70,6 +73,12 @@ export interface DocumentSummary {
   profile_label?: string | null;
   type_label?: string | null;
   staging_status?: "staged" | "not_staged";
+  /** Intake tags given at upload (null when none were given). */
+  agency?: string | null;
+  contracting_officer?: string | null;
+  /** Upload batch this document arrived in, and that batch's state. */
+  batch_id?: string | null;
+  intake_status?: "draft" | "submitted" | "rejected" | null;
 }
 
 export interface HierarchyNode {
@@ -125,6 +134,8 @@ export interface ReviewQueueEntry {
 export interface ReviewQueueFieldItem {
   document_id: string;
   original_filename: string;
+  /** Persisted row id; review actions address the field by it. */
+  metadata_field_id?: number | null;
   field_key: string;
   label: string;
   value: string;
@@ -792,6 +803,11 @@ export interface ContractAnalysisResult {
   relationship: DetectedRelationship | null;
 
   warnings: string[];
+
+  /** Contract number / contractor from the staging workbook, when staged. */
+  staged_contract_number?: string | null;
+
+  staged_contractor?: string | null;
 }
 
 export type RelationshipAction = "confirm" | "reject";

@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, get_args
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -17,6 +17,7 @@ from app.models.document_page import DocumentPage
 from app.models.metadata_field_audit_log import MetadataFieldAuditLog
 from app.models.extraction_model import ExtractionField
 from app.models.relationship_audit_log import RelationshipAuditLog
+from app.staging.document_labels import document_labels
 from app.schemas.contract_analysis import (
     AcceptAllRequest,
     AnalyzeContractRequest,
@@ -331,6 +332,22 @@ async def analyze_contract(
     )
 
 
+def _staged_contract_type(database: Session, document: Document) -> str:
+    """The classifier's type for a document only the staging pipeline has
+    read: its staging label when that is one of the classifier's types,
+    "Government Contract" for a staged contract, otherwise "Other"."""
+
+    allowed = set(get_args(ContractClassification.model_fields["document_type"].annotation))
+    labels = document_labels(database, document)
+    label = labels["type_label"]
+    if label in allowed:
+        return label
+    profile = (labels["profile_id"] or "").lower()
+    if "contract" in profile or "contract" in (label or "").lower():
+        return "Government Contract"
+    return "Other"
+
+
 @router.get(
     "/{document_id}/analyze-contract",
     response_model=ContractAnalysisResponse,
@@ -347,27 +364,33 @@ async def get_contract_analysis(
             detail="Document not found.",
         )
 
-    if document.document_type is None:
-        raise HTTPException(
-            status_code=404,
-            detail="This document has not been analyzed yet.",
-        )
-
-    classification = ContractClassification(
-        document_type=document.document_type,
-        industry=document.industry,
-        contract_side=document.contract_side or "unknown",
-        language=document.document_language,
-        document_status=document.document_status or "Unknown",
-        confidence=document.classification_confidence or 0.0,
-    )
-
     fields = list(
         database.scalars(
             select(DocumentMetadataField).where(
                 DocumentMetadataField.document_id == document_id
             )
         )
+    )
+
+    # The staging pipeline extracts reviewable values without running the
+    # contract classifier, so a document counts as analyzed once it has
+    # values; its type then comes from the staging label the list shows.
+    document_type = document.document_type
+    if document_type is None and fields:
+        document_type = _staged_contract_type(database, document)
+    if document_type is None:
+        raise HTTPException(
+            status_code=404,
+            detail="This document has not been analyzed yet.",
+        )
+
+    classification = ContractClassification(
+        document_type=document_type,
+        industry=document.industry,
+        contract_side=document.contract_side or "unknown",
+        language=document.document_language,
+        document_status=document.document_status or "Unknown",
+        confidence=document.classification_confidence or 0.0,
     )
 
     relationship = None
@@ -388,7 +411,29 @@ async def get_contract_analysis(
         ],
         relationship=relationship,
         warnings=[],
+        **_staged_identity(database, document_id),
     )
+
+
+def _staged_identity(database: Session, document_id: str) -> dict:
+    """Contract number and contractor as the staging workbook has them;
+    first line only (addresses follow the name). Empty when not staged."""
+
+    try:
+        from app.services.ask_engine import contract_facts
+
+        facts = contract_facts(database, document_id)
+    except Exception:  # noqa: BLE001 - the header is optional; analysis must still load
+        return {}
+
+    def first_line(*labels: str) -> str | None:
+        value = facts.fact(*labels).value
+        return " ".join(str(value).strip().splitlines()[0].split()) if value else None
+
+    return {
+        "staged_contract_number": first_line("Contract Number"),
+        "staged_contractor": first_line("Contractor", "Contractor Name", "Offeror"),
+    }
 
 
 @router.post(
