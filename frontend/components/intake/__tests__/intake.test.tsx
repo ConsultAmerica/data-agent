@@ -172,16 +172,6 @@ describe("BatchIntakePortal", () => {
     expect(screen.getByRole("option", { name: "Auto-detect" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Government Contract" })).toBeInTheDocument();
     expect(screen.queryByText(/classification/i)).not.toBeInTheDocument();
-    // Local dev server: no hosted-data notice.
-    expect(screen.queryByTestId("hosted-data-notice")).not.toBeInTheDocument();
-  });
-
-  it("warns about controlled information on a hosted build", () => {
-    envMock.mockReturnValue("Production");
-    render(<BatchIntakePortal config={config} fields={fields} onFieldsChange={vi.fn()} onFiles={vi.fn()} />);
-    expect(screen.getByTestId("hosted-data-notice").textContent).toContain(
-      "Don't upload CUI or other controlled information to it.",
-    );
   });
 
   it("says a requested profile is only a hint", () => {

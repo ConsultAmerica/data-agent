@@ -5,7 +5,6 @@ import { useDropzone, type FileRejection } from "react-dropzone";
 import { UploadCloud } from "lucide-react";
 
 import { ACCEPTED_EXTENSIONS, ACCEPTED_FILE_TYPES } from "@/components/document-uploader";
-import HostedDataNotice from "@/components/intake/hosted-data-notice";
 import type { IntakeConfig, IntakeFields } from "@/lib/intake";
 
 interface BatchIntakePortalProps {
@@ -111,7 +110,6 @@ export default function BatchIntakePortal({
         </p>
       </div>
 
-      <HostedDataNotice className="mt-3" />
 
       {rejected.length > 0 && (
         <ul className="mt-3 space-y-1 rounded-xl border border-danger/20 bg-danger/5 p-3 text-xs text-danger" role="alert">

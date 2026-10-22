@@ -4,7 +4,6 @@ import {
   History,
   Landmark,
   Server,
-  ShieldOff,
   Workflow,
 } from "lucide-react";
 
@@ -148,18 +147,6 @@ export default function TrustDeploymentSection() {
           ))}
         </ol>
       </div>
-
-      <p className="mt-6 flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/5 p-4 text-sm text-text-secondary">
-        <ShieldOff className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-        <span>
-          <span className="font-medium text-foreground">
-            The hosted demo runs on commercial cloud.
-          </span>{" "}
-          Files go to Supabase storage and data to Render Postgres. Don&apos;t
-          upload CUI or other controlled information to it. Use the sample
-          contract, or self-host.
-        </span>
-      </p>
     </section>
   );
 }
