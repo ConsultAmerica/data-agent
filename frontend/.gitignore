@@ -42,3 +42,6 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# The public production API URL is committed (see the file).
+!.env.production

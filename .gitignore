@@ -39,3 +39,6 @@ backend/req.json
 backend/upload.json
 backend/uvicorn.log
 reference/regression/generated_v3.xlsx
+
+# The frontend's public production API URL is committed.
+!frontend/.env.production
