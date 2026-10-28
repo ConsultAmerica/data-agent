@@ -797,3 +797,27 @@ def summarize_obligations(obligations: list[dict]) -> dict:
         "workflow_counts": {value: workflow.get(value, 0) for value in WORKFLOW_STATUSES},
         "by_category": [{"name": name, "count": count} for name, count in categories.most_common()],
     }
+
+
+def contract_period_ends(database: Session, document_id: str) -> list[dict]:
+    """Period-of-performance ends stated by a contract's schedule (base
+    CLINs and options), for key-date detection (app/key_dates/)."""
+
+    facts = _schedule_facts(database, document_id)
+    ends = []
+    for entry in facts.clins.values():
+        if entry.pop_end:
+            ends.append({
+                "label": f"CLIN {entry.clin} {'option ' if entry.is_option else ''}period of performance ends",
+                "date": entry.pop_end, "is_option": entry.is_option, "page": entry.page, "evidence": entry.evidence,
+            })
+    award_fact = facts.fields.get("award_date")
+    base_period = facts.fields.get("base_period")
+    award = _parse_date(award_fact.value) if award_fact else None
+    computed = _add_duration(award, base_period.value) if award and base_period else None
+    if computed and not any(not e["is_option"] for e in ends):
+        ends.append({
+            "label": "Base period ends (award date + base period)", "date": computed, "is_option": False,
+            "page": base_period.page or award_fact.page, "evidence": f"Award date {award_fact.value}; base period {base_period.value}",
+        })
+    return ends

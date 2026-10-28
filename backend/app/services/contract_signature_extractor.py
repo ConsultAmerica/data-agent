@@ -59,6 +59,7 @@ async def extract_contract_signatures(
         source_text = str(raw_signature.get("source_text", ""))
 
         if not validate_source_value(
+            strict=True,  # AI-produced value: the quote alone is not evidence
             value=source_text,
             source_text=source_text,
             page_text=page.final_text or "",

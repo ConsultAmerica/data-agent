@@ -1,7 +1,7 @@
 # Neon Migration Assessment — Supabase PostgreSQL → Neon
 
 **Date:** 2026-10-12  
-**Scope:** Authoritative PostgreSQL only (Consult America / Data Agent)  
+**Scope:** Authoritative PostgreSQL only (Consult America / Dataomatix)  
 **Mode:** Discovery + plan — **no production DB access, no cutover, no config changes, no commit**  
 **RC2 posture preserved:** metadata review mutations fail-closed in production; Oracle dry-run / no live send
 

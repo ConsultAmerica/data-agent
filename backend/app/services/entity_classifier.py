@@ -77,6 +77,7 @@ DATE_VALUE_PATTERN = re.compile(
     r"|^\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}$"
 )
 MONEY_VALUE_PATTERN = re.compile(r"^\$?\s*[\d,]+(?:\.\d{2})?$")
+_DECIMAL_AMOUNT = re.compile(r"^\(?-?\$?\s*\d[\d,]*\.\d{2}\)?$")
 
 
 def _label_has_any(label: str, keywords: tuple[str, ...]) -> bool:
@@ -95,6 +96,10 @@ def classify_target_type(
         return "identifier"
 
     if _label_has_any(label, _DATE_LABEL_KEYWORDS):
+        # "Change Due 10.84", "Balance Due 1,200.00": a date word in the
+        # label, but the value is plainly money, not a date.
+        if _DECIMAL_AMOUNT.match(stripped_value):
+            return "amount"
         return "date"
 
     if _label_has_any(label, _AMOUNT_LABEL_KEYWORDS):

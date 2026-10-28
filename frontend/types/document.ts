@@ -35,6 +35,9 @@ export interface UploadedDocument {
   /** Intake tags given at upload (GET /api/documents/{id}). */
   agency?: string | null;
   contracting_officer?: string | null;
+  /** Sensitivity class: public | internal | confidential | restricted (null = not yet classified). */
+  data_class?: string | null;
+  data_class_source?: string | null;
 }
 
 export type DuplicateResolution = "use_existing" | "upload_anyway";
@@ -73,6 +76,10 @@ export interface DocumentSummary {
   profile_label?: string | null;
   type_label?: string | null;
   staging_status?: "staged" | "not_staged";
+  /** Broad category of the detected type (Contracts & Awards, Financial…);
+   * "unclassified" until staged. */
+  category?: string;
+  category_label?: string;
   /** Intake tags given at upload (null when none were given). */
   agency?: string | null;
   contracting_officer?: string | null;
@@ -160,13 +167,23 @@ export interface DocumentSearchResponse {
 export interface DocumentStatusCountsResponse {
   total: number;
   by_status: Partial<Record<DocumentStatus, number>>;
+  /** Category id -> documents, over the other filters (not the category). */
+  by_category?: Record<string, number>;
+  /** The same, labeled and in display order (empty categories left out). */
+  categories?: CategoryCount[];
+}
+
+export interface CategoryCount {
+  category: string;
+  label: string;
+  count: number;
 }
 
 export interface GlobalAuditEntry {
   document_id: string;
   document_filename: string;
   field_key: string;
-  action: ReviewAction;
+  action: AuditAction;
   previous_value: string | null;
   new_value: string | null;
   previous_status?: string | null;
@@ -310,6 +327,9 @@ export interface DiscoverSchemaResult {
   document_family: string;
   document_family_label: string;
   document_family_confidence: number;
+  /** Broad category the document is grouped under. */
+  category?: string | null;
+  category_label?: string | null;
   targets: DocumentTarget[];
   counts_by_type: Partial<Record<TargetType, number>>;
   generated_at: string;
@@ -703,6 +723,10 @@ export type ReviewAction =
   | "edit"
   | "reject"
   | "mark_unknown";
+
+/** Actions the global audit log can hold: field review actions plus
+ * document-level events (approve/promote and the deletion record). */
+export type AuditAction = ReviewAction | "approve" | "promote" | "delete";
 
 export interface MetadataField {
   /** Persisted DocumentMetadataField.id — preferred review address. */

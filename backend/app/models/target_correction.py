@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -66,6 +66,24 @@ class TargetCorrection(Base):
 
     changed_by: Mapped[str | None] = mapped_column(
         String(120),
+        nullable=True,
+    )
+
+    # Authenticated actor (changed_by is only the display name) and why
+    # the value was corrected — learning needs both (DI-02, B-009).
+    actor_id: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        index=True,
+    )
+
+    reason_code: Mapped[str | None] = mapped_column(
+        String(40),
+        nullable=True,
+    )
+
+    reason_text: Mapped[str | None] = mapped_column(
+        Text,
         nullable=True,
     )
 

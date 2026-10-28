@@ -649,9 +649,15 @@ def test_failed_layout_pass_falls_back_to_mupdf_ocr_word_positions():
     pytesseract layout pass times out. The page must still get real word
     positions (from MuPDF's own OCR pass) — not text-only."""
 
+    import shutil
     from unittest.mock import patch
 
     from PIL import Image, ImageDraw, ImageFont
+
+    # This is the Tesseract path's own fallback. Without Tesseract the page
+    # is read by RapidOCR instead (app/recognition/page_ocr.py).
+    if shutil.which("tesseract") is None:
+        pytest.skip("Tesseract not installed: the MuPDF/Tesseract fallback isn't used here")
 
     image = Image.new("RGB", (1400, 700), "white")
     draw = ImageDraw.Draw(image)

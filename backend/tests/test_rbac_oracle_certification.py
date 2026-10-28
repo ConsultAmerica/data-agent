@@ -15,7 +15,7 @@ from app.main import app
 from app.models.document_metadata_field import DocumentMetadataField
 from app.models.integration_audit_log import IntegrationAuditLog
 from app.models.metadata_field_audit_log import MetadataFieldAuditLog
-from app.services.actor_seed import DEFAULT_SERVICE_API_KEY
+from app.core.config import get_settings
 
 client = TestClient(app)
 
@@ -228,7 +228,7 @@ def test_service_account_bearer_can_send() -> None:
 
     response = client.post(
         f"/api/documents/{document_id}/oracle-send",
-        headers={"Authorization": f"Bearer {DEFAULT_SERVICE_API_KEY}"},
+        headers={"Authorization": f"Bearer {get_settings().seed_service_api_key}"},
         json={"confirm": True},
     )
     assert response.status_code == 200, response.text

@@ -17,7 +17,6 @@ from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
 from app.main import app
-from app.services.actor_seed import DEFAULT_SERVICE_API_KEY
 
 client = TestClient(app)
 
@@ -181,7 +180,7 @@ def test_no_workspace_token_sees_nothing_and_real_credentials_see_everything(own
     _, _, document_id = owned
     assert client.get(f"/api/documents/{document_id}").status_code == 404
     assert client.get(f"/api/documents/{document_id}", headers={"X-Workspace-Token": "short"}).status_code == 404
-    admin = {"Authorization": f"Bearer {DEFAULT_SERVICE_API_KEY}"}
+    admin = {"Authorization": f"Bearer {get_settings().seed_service_api_key}"}
     assert client.get(f"/api/documents/{document_id}/staging-workbook", headers=admin).status_code == 200
 
 

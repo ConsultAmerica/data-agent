@@ -204,7 +204,7 @@ def test_log_sanitize_strips_document_text(caplog) -> None:
     assert clean["page_number"] == 3
     assert clean["document_id"] == "abc"
 
-    with caplog.at_level("INFO", logger="data_agent.obs"):
+    with caplog.at_level("INFO", logger="dataomatix.obs"):
         log_event(
             "test_event",
             source_text="SECRET CLAUSE TEXT SHOULD NEVER LOG",

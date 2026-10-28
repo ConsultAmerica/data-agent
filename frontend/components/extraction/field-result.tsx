@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 
 import type { SourceViewRequest } from "@/components/source-verification-panel";
 import type { UniversalValue } from "@/types/document";
+import { hasSourcePage, sourcePageLabel } from "@/lib/source-page";
 
 export type { SourceViewRequest };
 
@@ -77,7 +78,7 @@ function consolidateSources(items: UniversalValue[]): SourceEntry[] {
     } else {
       sources.set(key, {
         page_number: page,
-        source_reference: ref || `Page ${page}`,
+        source_reference: ref || sourcePageLabel(page),
         source_text: text,
         count: 1,
       });
@@ -166,7 +167,7 @@ function ValueRow({
   const first = group.items[0];
   const anyVerified = group.items.some((item) => item.verified);
   const pages = Array.from(
-    new Set(group.items.map((item) => item.evidence.page_number)),
+    new Set(group.items.map((item) => item.evidence.page_number).filter(hasSourcePage)),
   ).sort((a, b) => a - b);
   const uniqueSources = consolidateSources(group.items).length;
 

@@ -5,10 +5,10 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 
-import { ArrowLeft, ArrowRight, Loader2, Play, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, Play, Sparkles, UploadCloud } from "lucide-react";
 
 import ContentSection from "@/components/layout/ContentSection";
-import PageHero from "@/components/layout/PageHero";
+import ConsoleHeader from "@/components/layout/ConsoleHeader";
 import WorkflowBreadcrumb from "@/components/workflow-breadcrumb";
 import ExtractionResultsWorkspace from "@/components/extraction/extraction-results-workspace";
 import ProcessingDetailsDrawer from "@/components/extraction/processing-details-drawer";
@@ -18,8 +18,6 @@ import UniversalResults from "@/components/universal-results";
 import type { SourceViewRequest } from "@/components/source-verification-panel";
 import DocumentOverview from "@/components/document-overview";
 import BackendStatusBanner from "@/components/backend-status-banner";
-import ImportSourceTabs from "@/components/import-source-tabs";
-import BackendStatusPill from "@/components/navigation/BackendStatusPill";
 import BatchFooter from "@/components/intake/batch-footer";
 import BatchIntakePortal from "@/components/intake/batch-intake-portal";
 import { useBatchQueue, type QueueItem } from "@/components/intake/batch-queue";
@@ -40,6 +38,7 @@ import {
 import { recordRecentDocument } from "@/lib/recent-documents";
 import {
   markExtractionCompleted,
+  markBackendHealthy,
   markProcessingStarted,
   startBackendWarmup,
 } from "@/lib/backend-warmup";
@@ -139,6 +138,7 @@ function NewExtractionPageContent() {
     let active = true;
     getIntakeConfig()
       .then((config) => {
+        markBackendHealthy();
         if (active) setIntakeConfig(config);
       })
       .catch(() => {
@@ -1208,15 +1208,53 @@ function NewExtractionPageContent() {
         batchStatus,
       );
 
+  const tracker = (
+    <IntakeProgressTracker
+      embedded={!document}
+      activeStep={headerStep.step}
+      complete={headerStep.complete}
+      actions={
+        <>
+          <button
+            type="button"
+            onClick={() => void handleRunFullExtraction()}
+            disabled={runFullExtractionDisabled}
+            className={`${runFullExtractionDisabled && !fullExtractionRunning ? "btn-secondary" : "btn-primary"} text-sm disabled:cursor-not-allowed disabled:opacity-60`}
+            title={
+              document
+                ? "Extract every field discovered in this document"
+                : "Extract every discovered field of each processed file in the batch"
+            }
+            data-testid="run-full-extraction"
+          >
+            {fullExtractionRunning ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Play className="h-4 w-4" aria-hidden="true" />
+            )}
+            {fullExtractionRunning ? "Extracting…" : "Run full extraction"}
+          </button>
+          {batchHasFiles && (
+            <span className="text-xs text-text-secondary" data-testid="batch-status">
+              {batchDocumentCount} of {queueItems.length} {queueItems.length === 1 ? "file" : "files"} uploaded
+              {batchBusyCount > 0 ? ` · ${batchBusyCount} in progress` : ""}
+            </span>
+          )}
+        </>
+      }
+    />
+  );
+
   return (
     <>
       {!document ? (
-        <PageHero
-          compact
-          eyebrow="Document Processing"
+        <ConsoleHeader
+          icon={UploadCloud}
           title="New batch"
-          description="Upload federal contracts, SF 1442 awards and modification packages — or any invoice, regulation, spreadsheet, scan or image. Dataomatix classifies each file, extracts its fields and stages them for review."
-        />
+          description="Upload invoices, receipts, pay stubs, passports, driving licences, transcripts, contracts and more. Dataomatix detects each document's type, extracts its fields and stages them for review."
+        >
+          {tracker}
+        </ConsoleHeader>
       ) : (
         <div className="extraction-bar-inner border-b border-border bg-surface py-3" data-testid="extraction-page-header">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1247,42 +1285,7 @@ function NewExtractionPageContent() {
         </div>
       )}
 
-      <IntakeProgressTracker
-        activeStep={headerStep.step}
-        complete={headerStep.complete}
-        actions={
-          <>
-            <button
-              type="button"
-              onClick={() => void handleRunFullExtraction()}
-              disabled={runFullExtractionDisabled}
-              className="btn-primary text-sm disabled:cursor-not-allowed disabled:opacity-60"
-              title={
-                document
-                  ? "Extract every field discovered in this document"
-                  : "Extract every discovered field of each processed file in the batch"
-              }
-              data-testid="run-full-extraction"
-            >
-              {fullExtractionRunning ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <Play className="h-4 w-4" aria-hidden="true" />
-              )}
-              {fullExtractionRunning ? "Extracting…" : "Run full extraction"}
-            </button>
-            {batchHasFiles && (
-              <span className="text-xs text-text-secondary" data-testid="batch-status">
-                {batchDocumentCount} of {queueItems.length} {queueItems.length === 1 ? "file" : "files"} uploaded
-                {batchBusyCount > 0 ? ` · ${batchBusyCount} in progress` : ""}
-              </span>
-            )}
-            <span className="inline-flex rounded-full bg-slate-900">
-              <BackendStatusPill />
-            </span>
-          </>
-        }
-      />
+      {document && tracker}
 
       <ContentSection wide>
         <BackendStatusBanner />
@@ -1304,7 +1307,6 @@ function NewExtractionPageContent() {
                     onFieldsChange={setIntakeFields}
                     onFiles={handleBatchFiles}
                   />
-                  <ImportSourceTabs />
                 </section>
                 <ProcessingQueue
                   items={queueItems}

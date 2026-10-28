@@ -55,8 +55,8 @@ export const metadata: Metadata = {
     description: SITE_DESCRIPTION,
   },
   icons: {
-    icon: "/data-agent-logo.svg",
-    apple: "/data-agent-logo.svg",
+    icon: "/dataomatix-logo.svg",
+    apple: "/dataomatix-logo.svg",
   },
 };
 

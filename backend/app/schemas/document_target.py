@@ -57,6 +57,10 @@ class DiscoverSchemaResponse(BaseModel):
     document_family: str
     document_family_label: str
     document_family_confidence: float
+    # The broad category the document is grouped under: from its persisted
+    # staging resolution, else the resolver's current reading of it.
+    category: str | None = None
+    category_label: str | None = None
     targets: list[DocumentTarget] = Field(default_factory=list)
     counts_by_type: dict[str, int] = Field(default_factory=dict)
     generated_at: datetime

@@ -191,3 +191,28 @@ def test_correction_requires_existing_document() -> None:
         json={"original_value": "a", "corrected_value": "b"},
     )
     assert response.status_code == 404
+
+
+def test_correction_records_the_actor_and_reason() -> None:
+    document_id = upload_document(f"correction-{uuid4()}.pdf")
+    response = client.post(
+        f"/api/documents/{document_id}/targets/contract_number/corrections",
+        json={
+            "original_value": "W912DR-26-C-0042",
+            "corrected_value": "W912DR-26-C-0043",
+            "changed_by": "any typed name",
+            "reason_code": "ocr_error",
+            "reason_text": "  3 read as 2  ",
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["actor_id"] == "actor-admin-default"
+    assert body["reason_code"] == "ocr_error"
+    assert body["reason_text"] == "3 read as 2"
+
+    bad = client.post(
+        f"/api/documents/{document_id}/targets/contract_number/corrections",
+        json={"corrected_value": "x", "reason_code": "because"},
+    )
+    assert bad.status_code == 422

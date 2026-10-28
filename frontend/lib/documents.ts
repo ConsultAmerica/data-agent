@@ -91,6 +91,8 @@ export interface DocumentSearchParams {
   family?: string;
   /** Persisted staging profile id (contract_v3, invoice, …). */
   profileId?: string;
+  /** Broad category: contracts, regulations, financial, … or unclassified. */
+  category?: string;
   sortBy?: DocumentSortBy;
   sortDir?: DocumentSortDir;
   limit?: number;
@@ -118,6 +120,7 @@ export async function searchDocuments(
   }
   if (params.family) query.set("family", params.family);
   if (params.profileId) query.set("profile_id", params.profileId);
+  if (params.category) query.set("category", params.category);
   if (params.sortBy) query.set("sort_by", params.sortBy);
   if (params.sortDir) query.set("sort_dir", params.sortDir);
   query.set("limit", String(params.limit ?? 25));
@@ -128,9 +131,13 @@ export async function searchDocuments(
 
 export async function getDocumentStatusCounts(
   family?: string,
+  category?: string,
 ): Promise<DocumentStatusCountsResponse> {
-  const query = family ? `?family=${encodeURIComponent(family)}` : "";
-  return apiFetch(`/api/documents/status-counts${query}`);
+  const query = new URLSearchParams();
+  if (family) query.set("family", family);
+  if (category) query.set("category", category);
+  const qs = query.toString();
+  return apiFetch(`/api/documents/status-counts${qs ? `?${qs}` : ""}`);
 }
 
 export async function getGlobalAuditLog(
@@ -216,6 +223,51 @@ export async function getDocumentPages(
   documentId: string,
 ): Promise<DocumentPage[]> {
   return apiFetch(`/api/documents/${documentId}/pages`);
+}
+
+/** Mirrors backend app/source_structure/models.py (the parts the results
+ * view shows). Boxes are (x0, y0, x1, y1) in page space (PDF points). */
+export type SourceBox = [number, number, number, number];
+
+export interface SourceFieldCandidate {
+  candidate_id: string;
+  label_text: string;
+  raw_value: string;
+  value_type_hint: string | null;
+  structural_relation: string;
+  page: number | null;
+  label_bbox: SourceBox | null;
+  value_bbox: SourceBox | null;
+  acceptance: "accepted" | "ambiguous" | "rejected";
+  quality_score: number | null;
+  ocr_confidence?: number | null;
+}
+
+export interface SourceTableCell {
+  row_index: number;
+  column_index: number;
+  text: string;
+  bbox: SourceBox | null;
+}
+
+export interface SourceTableCandidate {
+  candidate_id: string;
+  page: number | null;
+  bbox: SourceBox | null;
+  headers: string[];
+  rows: SourceTableCell[][];
+  acceptance: "accepted" | "ambiguous" | "rejected";
+  structure_score: number | null;
+}
+
+export interface SourceStructure {
+  document_id: string;
+  field_candidates: SourceFieldCandidate[];
+  table_candidates: SourceTableCandidate[];
+}
+
+export async function getSourceStructure(documentId: string): Promise<SourceStructure> {
+  return apiFetch(`/api/documents/${documentId}/source-structure`);
 }
 
 export async function getPageTranscript(
@@ -739,9 +791,12 @@ export async function getExtractionJob(
 // Jobs run for minutes on large documents. Polling starts quick for short
 // jobs, then backs off: Render's edge (Cloudflare) rate-limits bursty
 // clients with a 429 challenge the browser reports as unreachable.
-const JOB_POLL_INITIAL_MS = 1500;
-const JOB_POLL_MAX_MS = 5000;
-const JOB_POLL_BACKOFF = 1.3;
+// Most jobs finish in seconds: the first checks come quickly so a finished
+// job is noticed within about half a second, then the gap grows gently
+// (about 7 checks over a 10-second job) and caps at 4 s for long ones.
+const JOB_POLL_INITIAL_MS = 700;
+const JOB_POLL_MAX_MS = 4000;
+const JOB_POLL_BACKOFF = 1.25;
 
 function nextJobPollDelay(current: number): number {
   return Math.min(Math.round(current * JOB_POLL_BACKOFF), JOB_POLL_MAX_MS);

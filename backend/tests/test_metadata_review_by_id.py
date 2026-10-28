@@ -15,6 +15,9 @@ from app.models.document_metadata_field import DocumentMetadataField
 from app.models.metadata_field_audit_log import MetadataFieldAuditLog
 
 client = TestClient(app)
+# These flows review every value via accept-all; since DI-02 that
+# includes flagged values only as an admin override with a reason.
+ACCEPT_EVERYTHING = {"include_flagged": True, "override_reason": "test: review every value"}
 
 
 def _pdf() -> bytes:
@@ -232,7 +235,7 @@ def test_reject_by_id_preserves_semantics() -> None:
 
     accept_all = client.post(
         f"/api/documents/{document_id}/metadata-fields/accept-all",
-        json={"changed_by": "Reviewer"},
+        json={"changed_by": "Reviewer", **ACCEPT_EVERYTHING},
     )
     assert accept_all.status_code == 200
     by_id = {row["id"]: row for row in accept_all.json()}

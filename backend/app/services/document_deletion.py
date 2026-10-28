@@ -3,7 +3,8 @@
 Deleting a document removes everything that belongs to it alone: its rows
 in every table that references it — directly (document_id) or through one
 of its own rows (a page's text blocks) — found from the schema's foreign
-keys, so new tables are covered without changes here; then, once the
+keys (audit logs deliberately have none, so its history is kept and a
+deletion event is added), so new tables are covered without changes here; then, once the
 database transaction has committed, its stored file, any files derived
 from it (normalized images, converted Office files) and the remote storage
 object. Child documents (portfolio members) are detached, not deleted.
@@ -26,7 +27,9 @@ from app.core.auth import ActorContext
 from app.core.config import get_settings
 from app.core.document_access import can_access_document
 from app.database.base import Base
+from app.core.observability import get_request_id
 from app.models.document import Document
+from app.models.metadata_field_audit_log import DOCUMENT_EVENT_FIELD_KEY, MetadataFieldAuditLog
 from app.services.document_storage import delete_object
 
 logger = logging.getLogger(__name__)
@@ -102,6 +105,22 @@ def delete_documents(database: Session, actor: ActorContext, document_ids: list[
         for table, column in direct:
             result.rows_deleted += database.execute(delete(table).where(column.in_(ids))).rowcount or 0
         result.rows_deleted += database.execute(delete(Document).where(Document.id.in_(ids))).rowcount or 0
+        # Audit logs have no FK to documents and are kept; record who
+        # deleted each one (no filename — names can carry personal data).
+        for document_id in ids:
+            database.add(
+                MetadataFieldAuditLog(
+                    document_id=document_id,
+                    field_key=DOCUMENT_EVENT_FIELD_KEY,
+                    action="delete",
+                    reason="Document deleted",
+                    request_id=get_request_id(),
+                    actor_id=actor.id,
+                    actor_type=actor.actor_type,
+                    actor_role=actor.role,
+                    changed_by=actor.display_name,
+                )
+            )
         database.commit()
     except Exception:
         database.rollback()
@@ -121,5 +140,5 @@ def delete_documents(database: Session, actor: ActorContext, document_ids: list[
         except Exception as exc:  # noqa: BLE001 - reported, the record is already gone
             result.storage_errors.append(f"{stored_filename}: {exc}")
     for document in targets:
-        logger.info("document_deleted id=%s file=%s actor=%s", document.id, document.original_filename, actor.id)
+        logger.info("document_deleted id=%s actor=%s", document.id, actor.id)
     return result

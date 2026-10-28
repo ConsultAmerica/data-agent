@@ -12,6 +12,7 @@ from app.services.review_routing import (
     REASON_AI_ESCALATION,
     REASON_AMBIGUOUS,
     REASON_LOW_CONFIDENCE,
+    REASON_NO_SOURCE_EVIDENCE,
     REASON_NOT_SOURCE_GROUNDED,
     REASON_VALIDATION_FAILED,
     decide_review_for_scalar,
@@ -119,3 +120,30 @@ def test_ai_escalation_and_ambiguity_route() -> None:
 def test_ungrounded_routes() -> None:
     decision = decide_review_for_scalar(_scalar(verified=False))
     assert REASON_NOT_SOURCE_GROUNDED in decision["reasons"]
+
+
+def test_value_without_source_page_needs_review_even_when_clean() -> None:
+    no_page = {"page_number": 0, "source_text": "W912DR-26-C-0042", "source_reference": ""}
+    decision = decide_review_for_scalar(
+        _scalar(evidence=no_page), auto_accept_high_confidence=True
+    )
+    assert decision["status"] == "needs_review"
+    assert REASON_NO_SOURCE_EVIDENCE in decision["reasons"]
+    assert decision["review_status"] == "pending"
+    assert decision["priority"] == "low"  # listed first in the queue
+
+
+def test_value_without_source_text_needs_review() -> None:
+    no_text = {"page_number": 3, "source_text": "  ", "source_reference": "page 3"}
+    decision = decide_review_for_scalar(
+        _scalar(evidence=no_text), auto_accept_high_confidence=True
+    )
+    assert decision["status"] == "needs_review"
+    assert REASON_NO_SOURCE_EVIDENCE in decision["reasons"]
+    assert decision["review_status"] == "pending"
+
+
+def test_missing_evidence_is_never_stored_as_page_one() -> None:
+    from app.services.target_result_store import _evidence_dict
+
+    assert _evidence_dict(None)["page_number"] == 0

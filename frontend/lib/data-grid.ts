@@ -5,7 +5,9 @@ import type { StagingColumn, StagingRecord } from "@/lib/staging-workbook";
  * decides how wide each column is and which leading columns stay frozen. */
 
 export const MIN_COLUMN_WIDTH = 80;
-export const MAX_COLUMN_WIDTH = 340;
+export const MAX_COLUMN_WIDTH = 280;
+/** Trailing (blank / repeated) columns stay narrow: their values ellipsize. */
+export const TRAILING_MAX_WIDTH = 130;
 const SAMPLE = 200;
 const DATE = /^(\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}[- ][A-Za-z]{3,9}[- ]\d{2,4}|[A-Za-z]{3,9}\.? \d{1,2},? \d{4}|[A-Za-z]{3,9} \d{4})$/;
 
@@ -41,12 +43,12 @@ function valueWidth(column: StagingColumn, records: StagingRecord[]): number {
   if (average <= 4) width = 80;
   else if (average <= 10) width = 105;
   else if (average <= 18) width = 140;
-  else if (average <= 30) width = 200;
-  else if (average <= 60) width = 250;
-  else if (average <= 120) width = 300;
+  else if (average <= 30) width = 180;
+  else if (average <= 60) width = 220;
+  else if (average <= 120) width = 250;
   else width = MAX_COLUMN_WIDTH;
   // Short values keep their header readable; prose doesn't need to.
-  return clamp(average <= 30 ? Math.max(width, Math.min(labelWidth, 150)) : width);
+  return clamp(average <= 30 ? Math.max(width, Math.min(labelWidth, 140)) : width);
 }
 
 function clamp(width: number): number {
@@ -76,6 +78,70 @@ export function frozenColumnCount(columns: StagingColumn[], widths: number[]): n
     if (count > 0 && within(count)) return count;
   }
   return columns.length > 1 ? 1 : 0;
+}
+
+/** A category column before the identifier (Section, Record Type…) has at
+ * most this many values, each shared by several records. */
+const CATEGORY_MAX_VALUES = 20;
+
+function distinctValues(column: StagingColumn, records: StagingRecord[], limit: number): Set<string> {
+  const values = new Set<string>();
+  for (const record of records) {
+    const value = text(record.cells[column.canonical_field]?.value);
+    if (value) values.add(value);
+    if (values.size >= limit) break;
+  }
+  return values;
+}
+
+/** On-screen column order: the columns that tell the shown rows apart come
+ * first, then those filled on only a few shown rows; columns blank on every
+ * shown row, one value repeated on every shown row, or a category ahead of
+ * the identifier (Section, Record Type) move to the end. Only the grid's
+ * display order changes — exports and the record drawer keep the dataset's
+ * own order. */
+export function arrangeColumns(
+  columns: StagingColumn[],
+  shown: StagingRecord[],
+  records: StagingRecord[],
+): { columns: StagingColumn[]; trailing: Set<string> } {
+  const identifier = columns.findIndex((column, index) => index < 6 && IDENTIFIER.test(column.display_label.trim()));
+  const trailing = new Set<string>();
+  columns.forEach((column, index) => {
+    if (index === identifier) return;
+    const onScreen = distinctValues(column, shown, 2).size;
+    const repeated = onScreen === 0 || (onScreen === 1 && shown.length > 1);
+    const category =
+      index < identifier &&
+      (() => {
+        const count = distinctValues(column, records, CATEGORY_MAX_VALUES + 1).size;
+        return count <= CATEGORY_MAX_VALUES && count * 5 <= records.length;
+      })();
+    if (repeated || category) trailing.add(column.canonical_field);
+  });
+  if (trailing.size >= columns.length) return { columns, trailing: new Set() };
+  // Of the rest, columns filled on only a few shown rows follow the well-filled ones.
+  const sparse = new Set(
+    columns
+      .filter((column, index) => index !== identifier && !trailing.has(column.canonical_field))
+      .filter((column) => filledShare(column, shown) < SPARSE_SHARE)
+      .map((column) => column.canonical_field),
+  );
+  const tier = (column: StagingColumn) =>
+    trailing.has(column.canonical_field) ? 2 : sparse.has(column.canonical_field) ? 1 : 0;
+  return {
+    columns: [0, 1, 2].flatMap((rank) => columns.filter((column) => tier(column) === rank)),
+    trailing,
+  };
+}
+
+/** Below this share of shown rows with a value, a column is sparse. */
+const SPARSE_SHARE = 0.25;
+
+function filledShare(column: StagingColumn, records: StagingRecord[]): number {
+  if (records.length === 0) return 0;
+  const filled = records.filter((record) => text(record.cells[column.canonical_field]?.value)).length;
+  return filled / records.length;
 }
 
 /** Left offsets (px) of the frozen columns. */

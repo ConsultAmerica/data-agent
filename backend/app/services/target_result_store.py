@@ -51,8 +51,11 @@ def _stringify_value(value: Any) -> str:
 
 def _evidence_dict(evidence: Any) -> dict:
     if evidence is None:
+        # No evidence → no page. 0 is the "no source page" convention
+        # (see contract_metadata_extractor._persisted_evidence); never
+        # point a reviewer at page 1 the value did not come from.
         return {
-            "page_number": 1,
+            "page_number": 0,
             "source_text": "",
             "source_reference": "",
         }
@@ -377,7 +380,7 @@ def load_persisted_extract_results(
         evidence = SourceEvidence.model_validate(
             raw_evidence
             or {
-                "page_number": 1,
+                "page_number": 0,
                 "source_text": "",
                 "source_reference": "",
             }

@@ -37,6 +37,7 @@ def map_ai_value(
         return None, f"AI returned invalid page {page_number}."
 
     verified = validate_source_value(
+        strict=True,  # AI-produced value: the quote alone is not evidence
         value=ai_value.get("value"),
         source_text=source_text,
         page_text=getattr(page, "final_text", "") or "",

@@ -538,6 +538,8 @@ def _export(capability_id: str, label: str, fmt: str, export_id: str) -> ExportC
 
 
 FAR_PART_52_PROFILE = StagingProfile(
+    # Published regulation text.
+    data_class="public",
     profile_id="far_part_52",
     profile_version=1,
     display_name="FAR Regulation",

@@ -9,7 +9,9 @@
 import { apiUrl } from "@/lib/api";
 
 /** Bounded exponential backoff for cold-start wake (not aggressive polling). */
-export const HEALTH_BACKOFF_MS = [2000, 3000, 5000, 8000, 13000, 21000, 34000];
+// Short first steps: a local or warm host (e.g. mid-reload) answers within
+// a second, and Render cold starts still get the long tail.
+export const HEALTH_BACKOFF_MS = [500, 1000, 2000, 3000, 5000, 8000, 13000, 21000, 34000];
 
 /** Per-attempt health timeout — short timeouts falsely mark a booting host down. */
 export const HEALTH_ATTEMPT_TIMEOUT_MS = 60_000;
@@ -63,7 +65,7 @@ function mark(label: string, field: keyof WarmupTimings) {
   if (typeof console !== "undefined" && console.debug) {
     const opened = timings.pageOpenedAt;
     const delta = opened != null ? ` (+${now - opened}ms)` : "";
-    console.debug(`[data-agent timing] ${label}${delta}`);
+    console.debug(`[dataomatix timing] ${label}${delta}`);
   }
 }
 
@@ -101,7 +103,7 @@ function logWarmupSummary(when: string) {
   const delta = (at: number | null) =>
     at == null ? "—" : `${at - opened}ms`;
   console.info(
-    `[data-agent timing summary ${when}]`,
+    `[dataomatix timing summary ${when}]`,
     `page→healthy=${delta(t.healthyAt)}`,
     `page→uploadStart=${delta(t.uploadStartedAt)}`,
     `page→uploadDone=${delta(t.uploadCompletedAt)}`,
@@ -172,6 +174,13 @@ async function runWarmupLoop(): Promise<void> {
   throw new Error(
     "Processing service did not become ready in time. Your file is still selected — retry in a moment.",
   );
+}
+
+/** Any successful API response proves the backend is up — skip the probe loop. */
+export function markBackendHealthy() {
+  if (status === "healthy") return;
+  mark("backend healthy (API response)", "healthyAt");
+  setStatus("healthy");
 }
 
 /**

@@ -4,7 +4,7 @@ Source of truth: `reference/schemas/part_52_FAR_Master_FINAL.xlsx` (read directl
 2026-09-22). This is **read-only reference data** — a normalized extraction of FAR Part 52 (Solicitation
 Provisions and Contract Clauses) from `part_52(1).html`, SHA-256 `97773555ed68fdcb91d2f74974876e841e554206d40a6b0dcefa316f4483e38f`,
 extraction version `FAR-MASTER-1.0`. Per the workbook's own README sheet: "Production-oriented reference
-master for Data Agent ingestion after verification."
+master for Dataomatix ingestion after verification."
 
 7 sheets, all visible, no hidden sheets.
 

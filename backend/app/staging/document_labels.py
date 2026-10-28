@@ -19,6 +19,7 @@ from app.models.document import Document
 from app.models.document_page import DocumentPage
 from app.models.document_staging_workbook import DocumentStagingWorkbook
 from app.staging import registry
+from app.staging.document_categories import category_fields
 
 # Professional names where a profile's own display name is too terse.
 _PROFILE_LABELS = {
@@ -78,10 +79,17 @@ def document_labels(database: Session, document: Document) -> dict:
         select(DocumentStagingWorkbook).where(DocumentStagingWorkbook.document_id == document.id)
     ).first()
     if pin is None:
-        return {"profile_id": None, "profile_label": None, "type_label": None, "staging_status": "not_staged"}
+        return {
+            "profile_id": None,
+            "profile_label": None,
+            "type_label": None,
+            "staging_status": "not_staged",
+            **category_fields(None, classified=False),
+        }
     return {
         "profile_id": pin.profile_id,
         "profile_label": profile_label(pin.profile_id),
         "type_label": type_label(database, document, pin),
         "staging_status": "staged",
+        **category_fields(pin.document_family),
     }

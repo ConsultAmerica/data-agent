@@ -279,5 +279,9 @@ def persist_resolution(
     record.document_family_label = resolution.family_label
     record.resolution_reasons = resolution.reasons
     record.resolved_at = datetime.now(timezone.utc)
+    if document.data_class_source != "user":
+        # A person's classification stands; otherwise the profile decides.
+        document.data_class = resolution.profile.data_class
+        document.data_class_source = "profile"
     database.commit()
     return record

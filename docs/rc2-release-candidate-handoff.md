@@ -1,4 +1,4 @@
-# Data Agent RC2 — Release Candidate Handoff
+# Dataomatix RC2 — Release Candidate Handoff
 
 **Date:** 2026-10-09  
 **Decision accepted:** RC2-08 **CONDITIONAL GO**  

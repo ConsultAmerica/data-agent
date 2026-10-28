@@ -4,7 +4,7 @@ import Image from "next/image";
  * Brand mark + wordmark from the cyan document-stack lockup.
  * Mark uses the real logo art; type adapts for dark/light chrome.
  */
-export default function DataAgentLogo({
+export default function DataomatixLogo({
   size = 36,
   className,
   title = "Dataomatix",
@@ -62,7 +62,7 @@ function BrandMark({
 }) {
   return (
     <Image
-      src="/brand/data-agent-mark.png"
+      src="/brand/dataomatix-mark.png"
       alt={title}
       width={size}
       height={size}

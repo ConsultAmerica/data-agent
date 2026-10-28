@@ -95,7 +95,7 @@ describe("Documents repository (RC2-02)", { timeout: 15_000 }, () => {
     await screen.findByText("05_multipage_stress.pdf");
     expect(screen.getByTestId("documents-home").className).not.toMatch(/max-w-/);
     expect(screen.getByRole("heading", { name: "Documents" })).toBeTruthy();
-    expect(screen.getByText("Manage, review and export documents")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Documents" })).toBeTruthy();
     expect(screen.getByRole("link", { name: /upload document/i })).toHaveAttribute("href", "/extraction/new");
     expect(within(row("05_multipage_stress.pdf")).getAllByText("Invoice").length).toBeGreaterThan(0);
     expect(within(row("SF1442 Award_N4019223D2803.pdf")).getByText(/SF 1442 Contract Award/)).toBeTruthy();
@@ -104,23 +104,65 @@ describe("Documents repository (RC2-02)", { timeout: 15_000 }, () => {
     expect(screen.queryByText(/invoice@1|contract_v3/)).toBeNull();
   });
 
-  it("shows summary metrics and toolbar controls", async () => {
+  it("groups documents under detected categories and filters by a category tab", async () => {
+    rows[0] = { ...rows[0], category: "financial", category_label: "Financial" };
+    rows[1] = { ...rows[1], category: "financial", category_label: "Financial" };
+    rows[2] = { ...rows[2], category: "contracts", category_label: "Contracts & Awards" };
+    rows[3] = { ...rows[3], category: "unclassified", category_label: "Not yet classified" };
+    vi.mocked(getDocumentStatusCounts).mockImplementation(async () => ({
+      total,
+      by_status: {},
+      categories: [
+        { category: "contracts", label: "Contracts & Awards", count: 1200 },
+        { category: "financial", label: "Financial", count: 2000 },
+        { category: "unclassified", label: "Not yet classified", count: 9 },
+      ],
+    }));
     render(<DocumentsHome />);
     await screen.findByText("05_multipage_stress.pdf");
-    const summary = screen.getByTestId("documents-summary");
-    expect(within(summary).getByText("3,209")).toBeTruthy();
-    expect(within(summary).getByText("428")).toBeTruthy();
+
+    const tabs = within(screen.getByTestId("category-tabs")).getAllByRole("button");
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      "All types 3,209",
+      "Contracts & Awards 1,200",
+      "Financial 2,000",
+      "Not yet classified 9",
+    ]);
+    // Rows sit under their category headings, in category order.
+    const body = within(screen.getByTestId("documents-table")).getAllByRole("rowgroup")[1];
+    expect(within(body).getAllByRole("row").map((row) => row.textContent?.split(".pdf")[0])).toEqual([
+      "Contracts & Awards1",
+      expect.stringContaining("SF1442 Award_N4019223D2803"),
+      "Financial2",
+      expect.stringContaining("05_multipage_stress"),
+      expect.stringContaining("04_international_eur"),
+      "Not yet classified1",
+      expect.stringContaining("invoice_copy"),
+    ]);
+
+    fireEvent.click(tabs[2]);
+    await waitFor(() => expect(searchDocuments).toHaveBeenLastCalledWith(expect.objectContaining({ category: "financial" })));
+    expect(getDocumentStatusCounts).toHaveBeenLastCalledWith(undefined, "financial");
+    await waitFor(() => expect(screen.queryAllByTestId("documents-category")).toHaveLength(0));
+  });
+
+  it("shows status tabs with counts and toolbar controls", async () => {
+    render(<DocumentsHome />);
+    await screen.findByText("05_multipage_stress.pdf");
+    const tabs = screen.getByRole("group", { name: "Document status" });
+    expect(within(tabs).getByRole("button", { name: /All documents\s*3,209/ })).toBeTruthy();
+    expect(within(tabs).getByRole("button", { name: /Needs review\s*428/ })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Upload document/ })).toHaveAttribute("href", "/extraction/new");
     expect(screen.getByTestId("documents-toolbar")).toBeTruthy();
     expect(screen.getByLabelText("Document Type")).toBeTruthy();
     expect(screen.getByLabelText("Profile")).toBeTruthy();
-    expect(screen.getByLabelText("Status")).toBeTruthy();
     expect(screen.getByLabelText("Sort")).toBeTruthy();
   });
 
   it("searches and sorts through the API", async () => {
     render(<DocumentsHome />);
     await screen.findByText("05_multipage_stress.pdf");
-    fireEvent.change(screen.getByPlaceholderText(/search file name, contract number/i), {
+    fireEvent.change(screen.getByPlaceholderText(/search name, number, vendor/i), {
       target: { value: "SF1442" },
     });
     await waitFor(() =>
@@ -297,6 +339,35 @@ describe("Documents repository (RC2-02)", { timeout: 15_000 }, () => {
     const plain = row("plain.pdf");
     expect(within(plain).getAllByText("—").length).toBeGreaterThanOrEqual(2);
     expect(within(plain).getByText(/Complete/)).toBeTruthy();
+  });
+
+  it("hides the contract columns when no listed document has an agency or value", async () => {
+    rows = [
+      doc("p1", "passport.pdf", { profile_id: "passport", profile_label: "Passport", type_label: "Passport", page_count: 2 }),
+      doc("i1", "invoice.pdf", { profile_id: "invoice", profile_label: "Invoice", type_label: "Invoice" }),
+    ];
+    total = 2;
+    render(<DocumentsHome />);
+    await screen.findByText("passport.pdf");
+    const table = screen.getByTestId("documents-table");
+    expect(within(table).queryByText("Agency / contracting activity")).toBeNull();
+    expect(within(table).queryByText("Total contract value")).toBeNull();
+    expect(within(table).getByText("Pages")).toBeTruthy();
+    expect(within(row("passport.pdf")).getByText("2")).toBeTruthy();
+  });
+
+  it("filters by status from the header tabs", async () => {
+    render(<DocumentsHome />);
+    await screen.findByText("05_multipage_stress.pdf");
+    const tabs = screen.getByRole("group", { name: "Document status" });
+    const review = within(tabs).getByRole("button", { name: /Needs review/ });
+    fireEvent.click(review);
+    await waitFor(() =>
+      expect(searchDocuments).toHaveBeenLastCalledWith(expect.objectContaining({ status: "review_required" })),
+    );
+    expect(review.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(within(tabs).getByRole("button", { name: /All documents/ }));
+    await waitFor(() => expect(review.getAttribute("aria-pressed")).toBe("false"));
   });
 
   it("opens a quick-preview drawer on row click and closes it with Escape", async () => {

@@ -57,10 +57,10 @@
 | `frontend/components/governance/governance-ops-dashboard.tsx` | Ops dashboard |
 | `frontend/components/oracle-integration-panel.tsx` | Oracle preview/send UI |
 | `frontend/components/layout/*` (Breadcrumbs, PageHeader, Sidebar, WorkspaceTopBar, document-chrome) | Shell |
-| `frontend/components/navigation/data-agent-logo.tsx` | Brand |
+| `frontend/components/navigation/dataomatix-logo.tsx` | Brand |
 | `frontend/components/staging/sortable-header.tsx` | Grid sort UI |
 | `frontend/lib/{ops-health,workspace-nav,table-sort,text-display,extraction-workflow}.ts` | Support libs |
-| `frontend/public/data-agent-logo.svg` | Brand asset |
+| `frontend/public/dataomatix-logo.svg` | Brand asset |
 | `frontend/scripts/rc2-04-browser-verify.mjs`, `rc2-08-browser-certify.mjs` | Browser evidence |
 
 ### B.3 Untracked tests (required for RC)
@@ -271,7 +271,7 @@ git rev-parse HEAD   # expect 16b10393d162c6140b2d6fc320540a356a1a1a87 before fr
 
 # 2) Stage certified paths only (illustrative — adjust to final gate files)
 git add backend/app backend/tests
-git add frontend/components frontend/lib frontend/src frontend/public/data-agent-logo.svg
+git add frontend/components frontend/lib frontend/src frontend/public/dataomatix-logo.svg
 git add frontend/scripts/rc2-0*.mjs frontend/vitest.setup.ts frontend/types
 git add docs/rc2-*.md docs/rc2-08-browser-evidence docs/enterprise-workspace-phase1-audit.md
 git add docs/rc2-release-candidate-handoff.md docs/rc2-release-freeze-readiness.md

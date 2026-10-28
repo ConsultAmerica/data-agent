@@ -30,6 +30,9 @@ vi.mock("@/lib/documents", () => ({
   getDocumentHierarchy: vi.fn(() => Promise.resolve({ roots: [] })),
   getChildRelationships: vi.fn(() => Promise.resolve({ parent_document_id: "d1", children: [] })),
   getGlobalAuditLog: vi.fn(() => Promise.resolve({ entries: [], total: 0 })),
+  getPageRender: vi.fn(() => new Promise(() => undefined)),
+  getSourceStructure: vi.fn(() => Promise.resolve({ document_id: "d1", field_candidates: [], table_candidates: [] })),
+  getDocumentPages: vi.fn(() => Promise.resolve([])),
 }));
 // The split pane's viewer: shows which page/value it was asked to open.
 vi.mock("@/components/source-verification-panel", () => ({
@@ -124,20 +127,37 @@ function workbook(): StagingWorkbook {
 
 describe("DocumentWorkspace with a profile-declared presentation", () => {
   beforeEach(() => {
-    search = new URLSearchParams();
+    // These tests read the profile's own first view; Results is covered below.
+    search = new URLSearchParams("view=far_records");
     replace.mockReset();
   });
 
-  it("shows only the profile's tabs, the first one open", async () => {
+  it("opens on Results, followed by only the profile's tabs", async () => {
+    search = new URLSearchParams();
     render(<DocumentWorkspace documentId="d1" />);
-    const tabs = await screen.findAllByRole("tab");
-    expect(tabs.map((tab) => tab.textContent)).toEqual(["FAR Clauses & Provisions", "Oracle Output", "Source"]);
+    const tabs = within(await screen.findByRole("tablist", { name: "Document views" })).getAllByRole("tab");
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["Results", "FAR Clauses & Provisions", "Oracle Output", "Source"]);
+    // Every document opens on Results; the profile's own tabs follow.
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
     for (const generic of ["Overview", "Staging", "Canonical", "Transform", "QA"]) {
       expect(screen.queryByRole("tab", { name: generic })).toBeNull();
     }
-    fireEvent.click(tabs[1]);
+    fireEvent.click(tabs[2]);
     expect(replace).toHaveBeenCalledWith("/documents/d1?view=oracle_output");
+  });
+
+  it("Export menu offers Default and Custom; Custom opens the import-file builder", async () => {
+    render(<DocumentWorkspace documentId="d1" />);
+    await screen.findAllByRole("tab");
+    fireEvent.click(screen.getByTestId("export-menu-trigger"));
+    const menu = screen.getByTestId("export-menu");
+    const types = within(menu).getByRole("tablist", { name: "Export type" });
+    expect(within(types).getByRole("tab", { name: "Default" }).getAttribute("aria-selected")).toBe("true");
+    expect(within(menu).getByText(/Staging — Export All/i)).toBeTruthy();
+    fireEvent.click(within(types).getByRole("tab", { name: "Custom" }));
+    expect(within(menu).queryByText(/Staging — Export All/i)).toBeNull();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /Open custom export/ }));
+    expect(screen.getByRole("dialog", { name: "Custom export" })).toBeTruthy();
   });
 
   it("Export menu: scope summary, Export Selected disabled until selection, Oracle toggle", async () => {
@@ -171,8 +191,8 @@ describe("DocumentWorkspace with a profile-declared presentation", () => {
       datasets: base.datasets.map((d) => (d.dataset_id === "far_records" ? { ...d, display_name: "FAR Data" } : d)),
     } as StagingWorkbook);
     render(<DocumentWorkspace documentId="d1" />);
-    const tabs = await screen.findAllByRole("tab");
-    expect(tabs.map((tab) => tab.textContent)).toEqual(["FAR Data", "Oracle Output", "Source"]);
+    const tabs = within(await screen.findByRole("tablist", { name: "Document views" })).getAllByRole("tab");
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["Results", "FAR Data", "Oracle Output", "Source"]);
   });
 
   it("shows FAR records as a compact grid with alternates kept under their record", async () => {
@@ -207,8 +227,8 @@ describe("DocumentWorkspace with a profile-declared presentation", () => {
   it("preserves the return query when switching tabs", async () => {
     search = new URLSearchParams("return=family%3Dinvoice");
     render(<DocumentWorkspace documentId="d1" />);
-    const tabs = await screen.findAllByRole("tab");
-    fireEvent.click(tabs[1]);
+    const tabs = within(await screen.findByRole("tablist", { name: "Document views" })).getAllByRole("tab");
+    fireEvent.click(tabs[2]);
     expect(replace).toHaveBeenCalledWith("/documents/d1?view=oracle_output&return=family%3Dinvoice");
   });
 
@@ -268,7 +288,7 @@ describe("DocumentWorkspace for a contract", () => {
   }
 
   beforeEach(async () => {
-    search = new URLSearchParams();
+    search = new URLSearchParams("view=contract_data");
     const staging = await import("@/lib/staging-workbook");
     vi.mocked(staging.getStagingWorkbook).mockResolvedValue(contractWorkbook());
   });
@@ -325,11 +345,15 @@ describe("DocumentWorkspace for a contract", () => {
   });
 
   it("shows an agency tag (— when unknown) and a related-documents switcher only when links exist", async () => {
+    const documents = await import("@/lib/documents");
+    vi.mocked(documents.getDocumentHierarchy).mockClear();
     render(<DocumentWorkspace documentId="d1" />);
     expect((await screen.findByTestId("workspace-agency")).textContent).toBe("—");
+    // The first render must have fetched its (empty) hierarchy before the
+    // one-time answer below is queued, or it would take that answer itself.
+    await waitFor(() => expect(documents.getDocumentHierarchy).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByTestId("related-documents-switcher")).toBeNull());
 
-    const documents = await import("@/lib/documents");
     vi.mocked(documents.getDocumentHierarchy).mockResolvedValueOnce({
       roots: [
         {
@@ -405,7 +429,7 @@ describe("DocumentWorkspace combines small dataset tabs", () => {
     search = new URLSearchParams();
     render(<DocumentWorkspace documentId="d1" />);
     const views = within(await screen.findByRole("tablist", { name: "Document views" })).getAllByRole("tab");
-    expect(views.map((tab) => tab.textContent)).toEqual(["Summary", "Overview", "Source", "Canonical", "Transform"]);
+    expect(views.map((tab) => tab.textContent)).toEqual(["Results", "Summary", "Overview", "Source", "Canonical", "Transform"]);
     expect(views[0].getAttribute("aria-selected")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "QA" }));
     expect(replace).toHaveBeenCalledWith("/documents/d1?view=qa");

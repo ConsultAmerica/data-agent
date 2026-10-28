@@ -13,6 +13,9 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => search,
 }));
 vi.mock("@/lib/documents", () => ({
+  getPageRender: vi.fn(() => new Promise(() => undefined)),
+  getSourceStructure: vi.fn(() => Promise.resolve({ document_id: "x1", field_candidates: [], table_candidates: [] })),
+  getDocumentPages: vi.fn(() => Promise.resolve([])),
   getDocument: vi.fn(() =>
     Promise.resolve({
       document_id: "x1",
@@ -127,9 +130,34 @@ describe("column sizing and freezing", () => {
   });
 });
 
+describe("column arrangement", () => {
+  const COLUMNS: [string, string][] = [
+    ["section", "Section"], ["type", "Record Type"], ["id", "Record ID"], ["title", "Title"],
+    ["text", "Description / Text"], ["incorporation", "Incorporation Type"], ["domain", "Domain"],
+  ];
+  // 10 records in two sections: Section / Record Type are categories, Domain is blank.
+  const rows = Array.from({ length: 10 }, (_, i) => [
+    i < 5 ? "Attachments" : "FAR Clauses", i < 5 ? "Attachment" : "Clause", `R-${i}`, `Title ${i}`,
+    i < 5 ? "" : `Text ${i}`, i < 5 ? "" : i % 2 ? "Reference" : "Full Text", "",
+  ]);
+  const labels = () => screen.getAllByRole("columnheader").slice(1, 8).map((th) => th.textContent);
+
+  it("leads with the columns that vary; categories, blank and repeated columns trail", () => {
+    render(<StagingDatasetTable dataset={dataset("contract_data", "Contract Data", COLUMNS, rows)} documentId="d1" pageSize={10} />);
+    expect(labels()).toEqual(["Record ID", "Title", "Description / Text", "Incorporation Type", "Section", "Record Type", "Domain"]);
+  });
+
+  it("moves columns blank on every shown row to the end, for that page", () => {
+    render(<StagingDatasetTable dataset={dataset("contract_data", "Contract Data", COLUMNS, rows)} documentId="d1" pageSize={5} />);
+    // Page 1 is the five attachments: no text or incorporation type.
+    expect(labels()).toEqual(["Record ID", "Title", "Section", "Record Type", "Description / Text", "Incorporation Type", "Domain"]);
+  });
+});
+
 describe("compact data grid", () => {
   it("keeps the header sticky, freezes identifier columns and ellipsizes long values", () => {
-    render(<StagingDatasetTable dataset={clauses()} />);
+    // One record: nothing repeats, so the source's own column order stands.
+    render(<StagingDatasetTable dataset={clauses(1)} />);
     const headers = screen.getAllByRole("columnheader");
     expect(headers.slice(0, 18).map((th) => th.textContent)).toEqual(XML_COLUMNS.map(([, label]) => label));
     for (const th of headers) expect(th.className).toContain("sticky");
@@ -224,15 +252,15 @@ describe("compact data grid", () => {
 
 describe("document workspace", () => {
   it(
-    "uses the full width, names the document by filename and opens on its summary",
+    "uses the full width, names the document by filename and opens on its results",
     async () => {
       search = new URLSearchParams();
       const { unmount } = render(<DocumentWorkspace documentId="x1" />);
-      // Documents open on the staged Summary; technical stages follow, Transform last.
+      // Documents open on Results, then the staged Summary; technical stages follow, Transform last.
       const views = await screen.findByRole("tablist", { name: "Document views" });
       const names = within(views).getAllByRole("tab").map((tab) => tab.textContent);
-      expect(names).toEqual(["Summary", "Overview", "Source", "Canonical", "Transform"]);
-      expect(within(views).getByRole("tab", { name: "Summary" }).getAttribute("aria-selected")).toBe("true");
+      expect(names).toEqual(["Results", "Summary", "Overview", "Source", "Canonical", "Transform"]);
+      expect(within(views).getByRole("tab", { name: "Results" }).getAttribute("aria-selected")).toBe("true");
       unmount();
 
       search = new URLSearchParams("view=staging");

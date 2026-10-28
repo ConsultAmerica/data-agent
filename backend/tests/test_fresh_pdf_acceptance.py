@@ -28,6 +28,9 @@ from app.services.contract_field_schema import FieldSpec
 from app.services.generic_kv_scanner import is_internal_form_name
 
 client = TestClient(app)
+# These flows review every value via accept-all; since DI-02 that
+# includes flagged values only as an admin override with a reason.
+ACCEPT_EVERYTHING = {"include_flagged": True, "override_reason": "test: review every value"}
 
 INTERNAL_LEAK_RE = re.compile(
     r"topmostSubform|Page\d+\[|PG\d+[A-Z]|TextField|CheckBox|\[[0-9]+\]",
@@ -368,7 +371,7 @@ def test_fresh_pdf_full_acceptance_flow() -> None:
 
     accept_all = client.post(
         f"/api/documents/{document_id}/metadata-fields/accept-all",
-        json={"changed_by": "acceptance@example.com"},
+        json={"changed_by": "acceptance@example.com", **ACCEPT_EVERYTHING},
     )
     assert accept_all.status_code == 200, accept_all.text
 

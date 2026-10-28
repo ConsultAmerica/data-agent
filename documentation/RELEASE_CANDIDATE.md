@@ -3,7 +3,7 @@
 Tag `v1.0.0` only after **one clean production smoke pass**.
 
 ```bash
-git tag -a v1.0.0 -m "Data Agent enterprise document intelligence release"
+git tag -a v1.0.0 -m "Dataomatix enterprise document intelligence release"
 git push origin v1.0.0
 ```
 

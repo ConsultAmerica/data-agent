@@ -9,6 +9,7 @@ import type { ReviewQueueFieldDetail } from "@/lib/assignments";
 import { reviewMetadataField, reviewMetadataFieldById } from "@/lib/documents";
 
 import { formatQueueDate as formatDate, inspectHref, issueLabel, urgencyOf } from "./queue-filters";
+import { useReviewMutationsEnabled } from "@/lib/review-gate";
 
 const FOCUSABLE = 'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
 
@@ -30,6 +31,7 @@ export default function InspectDrawer({
   /** A corrected value was saved (the field leaves the queue). */
   onEdited: (item: ReviewQueueFieldDetail, value: string) => void;
 }) {
+  const reviewEnabled = useReviewMutationsEnabled();
   const titleId = useId();
   const panel = useRef<HTMLDivElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -155,7 +157,7 @@ export default function InspectDrawer({
                   <button
                     type="button"
                     onClick={() => void saveEdit()}
-                    disabled={saving}
+                    disabled={!reviewEnabled || saving}
                     className="btn-primary px-3 py-1 text-xs disabled:opacity-50"
                   >
                     {saving ? "Saving…" : "Save correction"}

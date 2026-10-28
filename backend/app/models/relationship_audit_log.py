@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -15,9 +15,10 @@ class RelationshipAuditLog(Base):
         autoincrement=True,
     )
 
+    # No FK to documents: the audit trail outlives the document it
+    # describes (document deletion keeps it and logs a deletion event).
     document_id: Mapped[str] = mapped_column(
         String(36),
-        ForeignKey("documents.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -45,6 +46,13 @@ class RelationshipAuditLog(Base):
     new_relationship_type: Mapped[str | None] = mapped_column(
         String(30),
         nullable=True,
+    )
+
+    # Authenticated actor; changed_by is only the display name.
+    actor_id: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        index=True,
     )
 
     changed_by: Mapped[str] = mapped_column(

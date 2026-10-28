@@ -292,7 +292,9 @@ async def run_processing_job(job_id: int) -> None:
                 (time.perf_counter() - discovery_started) * 1000
             )
         else:
-            ai_provider = start_session(create_ai_provider(settings), settings)
+            ai_provider = start_session(
+                create_ai_provider(settings), settings, database=database, document=document, job_id=job.id
+            )
             log_event(
                 "schema_discovery_start",
                 stage="discovering_fields",
@@ -416,7 +418,9 @@ async def run_extraction_job(
         # One AI enrichment session per run: timeouts, classified failures,
         # a circuit breaker, and a single ai_enrichment summary (AI never
         # fails the job — see app/services/ai_enrichment.py).
-        ai_provider = start_session(create_ai_provider(settings), settings)
+        ai_provider = start_session(
+            create_ai_provider(settings), settings, database=database, document=document, job_id=job.id
+        )
         if not use_ai_fallback:
             ai_provider.mark_not_requested()
         log_event(

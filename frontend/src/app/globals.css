@@ -1868,6 +1868,11 @@ tr:focus-within .cell-check,
   height: 12px;
   cursor: row-resize;
 }
+/* A body cell's handles stay under the sticky header and frozen columns,
+   so rows scrolling beneath them don't paint grey edges over the header. */
+td > .grid-resize {
+  z-index: 5;
+}
 .grid-resize::after {
   content: "";
   position: absolute;
@@ -3859,4 +3864,9 @@ h3 {
   border-radius: 3px;
   background-color: color-mix(in srgb, var(--field-tone) 22%, transparent);
   box-shadow: inset 2px 0 0 var(--field-tone);
+}
+
+/* Cloud-console product band (components/layout/ConsoleHeader.tsx). */
+.console-header {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--primary-soft) 55%, #ffffff) 0%, var(--primary-soft) 100%);
 }

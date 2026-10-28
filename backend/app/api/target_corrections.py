@@ -82,6 +82,9 @@ async def create_target_correction(
             request.evidence.model_dump() if request.evidence else None
         ),
         changed_by=display_name,
+        actor_id=actor.id,
+        reason_code=request.reason_code,
+        reason_text=(request.reason_text or "").strip() or None,
     )
     database.add(correction)
 

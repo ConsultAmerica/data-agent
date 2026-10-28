@@ -8,6 +8,7 @@ import EmptyState from "@/components/ui/empty-state";
 import { SkeletonText } from "@/components/ui/skeleton";
 import { getGlobalAuditLog } from "@/lib/documents";
 import type { GlobalAuditEntry } from "@/types/document";
+import { auditFieldLabel } from "@/lib/audit-label";
 
 const ACTION_LABEL: Record<string, string> = {
   accept: "accepted",
@@ -17,6 +18,9 @@ const ACTION_LABEL: Record<string, string> = {
   reject: "rejected",
   rejected: "rejected",
   revert: "reverted",
+  approve: "approved",
+  promote: "promoted",
+  delete: "deleted",
 };
 
 function when(iso: string) {
@@ -86,7 +90,7 @@ export default function DocumentAuditTrail({ documentId, refreshKey = 0 }: { doc
                   <span className="font-mono text-xs tabular-nums text-text-muted">{when(entry.changed_at)}</span>
                   <span className="font-medium text-foreground">{entry.changed_by}</span>
                   <span className="text-text-secondary">{ACTION_LABEL[entry.action] ?? entry.action}</span>
-                  <span className="font-medium text-foreground">{entry.field_key}</span>
+                  <span className="font-medium text-foreground">{auditFieldLabel(entry.field_key)}</span>
                 </p>
                 {(entry.previous_value || entry.new_value) && (
                   <p className="mt-1 break-words text-xs text-text-secondary">

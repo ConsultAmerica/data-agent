@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import fitz
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.main import app
 from app.services.ai_provider import AIProvider
@@ -11,6 +12,9 @@ from app.services.contract_field_schema import FieldSpec
 
 
 client = TestClient(app)
+# These flows review every value via accept-all; since DI-02 that
+# includes flagged values only as an admin override with a reason.
+ACCEPT_EVERYTHING = {"include_flagged": True, "override_reason": "test: review every value"}
 
 
 class StubAIProvider(AIProvider):
@@ -356,12 +360,31 @@ def test_approve_document_requires_full_review() -> None:
 
     body = approved.json()
     assert body["document_id"] == document_id
-    assert body["approved_by"] == "Consult America"
+    # The approver is the authenticated actor, never the name the client
+    # sends (the suite runs as the seeded Dev Admin).
+    assert body["approved_by"] == "Dev Admin"
     assert body["approved_at"]
 
     detail = client.get(f"/api/documents/{document_id}")
     assert detail.status_code == 200
-    assert detail.json()["approved_by"] == "Consult America"
+    assert detail.json()["approved_by"] == "Dev Admin"
+
+    from app.database.session import SessionLocal
+    from app.models.metadata_field_audit_log import MetadataFieldAuditLog
+
+    database = SessionLocal()
+    try:
+        events = database.scalars(
+            select(MetadataFieldAuditLog).where(
+                MetadataFieldAuditLog.document_id == document_id,
+                MetadataFieldAuditLog.field_key == "__document__",
+            )
+        ).all()
+    finally:
+        database.close()
+    assert [event.action for event in events] == ["approve"]
+    assert events[0].actor_id == "actor-admin-default"
+    assert events[0].actor_role == "admin"
 
 
 def test_promote_document_requires_approval_first() -> None:
@@ -421,12 +444,12 @@ def test_promote_document_requires_approval_first() -> None:
 
     body = promoted.json()
     assert body["document_id"] == document_id
-    assert body["promoted_by"] == "Consult America"
+    assert body["promoted_by"] == "Dev Admin"
     assert body["promoted_at"]
 
     detail = client.get(f"/api/documents/{document_id}")
     assert detail.status_code == 200
-    assert detail.json()["promoted_by"] == "Consult America"
+    assert detail.json()["promoted_by"] == "Dev Admin"
 
 
 def test_promote_unknown_document_returns_404() -> None:
@@ -744,7 +767,7 @@ def test_accept_all_only_touches_pending_fields() -> None:
 
     response = client.post(
         f"/api/documents/{document_id}/metadata-fields/accept-all",
-        json={"changed_by": "Asif Kamran"},
+        json={"changed_by": "Asif Kamran", **ACCEPT_EVERYTHING},
     )
 
     assert response.status_code == 200

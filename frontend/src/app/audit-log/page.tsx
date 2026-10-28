@@ -10,25 +10,32 @@ import { LoadingState } from "@/components/layout/StatusState";
 import PageHeader from "@/components/page-header";
 import { getGlobalAuditLog } from "@/lib/documents";
 import type {
+  AuditAction,
   GlobalAuditEntry,
   GlobalAuditLogFilters,
-  ReviewAction,
 } from "@/types/document";
+import { auditFieldLabel } from "@/lib/audit-label";
 
 const PAGE_SIZE = 50;
 
-const ACTION_LABELS: Record<ReviewAction, string> = {
+const ACTION_LABELS: Record<AuditAction, string> = {
   accept: "Accepted",
   edit: "Edited",
   reject: "Rejected",
   mark_unknown: "Marked Unknown",
+  approve: "Approved",
+  promote: "Promoted",
+  delete: "Deleted",
 };
 
-const ACTION_STYLES: Record<ReviewAction, string> = {
+const ACTION_STYLES: Record<AuditAction, string> = {
   accept: "bg-success/10 text-success",
   edit: "bg-primary-soft text-primary",
   reject: "bg-danger/10 text-danger",
   mark_unknown: "bg-warning/10 text-warning",
+  approve: "bg-success/10 text-success",
+  promote: "bg-primary-soft text-primary",
+  delete: "bg-danger/10 text-danger",
 };
 
 const EMPTY_FILTERS: GlobalAuditLogFilters = {
@@ -288,10 +295,10 @@ function AuditLogContent() {
                       <span
                         className={[
                           "rounded-full px-2.5 py-0.5 text-xs font-medium",
-                          ACTION_STYLES[entry.action],
+                          ACTION_STYLES[entry.action] ?? "bg-surface-soft text-text-secondary",
                         ].join(" ")}
                       >
-                        {ACTION_LABELS[entry.action]}
+                        {ACTION_LABELS[entry.action] ?? entry.action}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-text-secondary">
@@ -306,7 +313,7 @@ function AuditLogContent() {
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-text-secondary">
-                      {entry.field_key}
+                      {auditFieldLabel(entry.field_key)}
                     </td>
                     <td className="max-w-[200px] px-4 py-3 text-xs text-text-secondary">
                       <span className="block truncate">

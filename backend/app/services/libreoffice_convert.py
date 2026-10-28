@@ -53,7 +53,7 @@ def convert_legacy_office(source: Path) -> Path:
         )
 
     binary = _soffice_bin()
-    out_dir = Path(tempfile.mkdtemp(prefix="data-agent-lo-"))
+    out_dir = Path(tempfile.mkdtemp(prefix="dataomatix-lo-"))
 
     try:
         completed = subprocess.run(

@@ -47,7 +47,7 @@ pg_dump "$SRC_DATABASE_URL" \
   --no-acl \
   --verbose \
   --schema=public \
-  --file="data-agent-public-$(date -u +%Y%m%dT%H%M%SZ).dump"
+  --file="dataomatix-public-$(date -u +%Y%m%dT%H%M%SZ).dump"
 ```
 
 Also capture schema-only SQL for review:
@@ -58,7 +58,7 @@ pg_dump "$SRC_DATABASE_URL" \
   --schema-only \
   --no-owner \
   --no-acl \
-  --file="data-agent-public-schema-only.sql"
+  --file="dataomatix-public-schema-only.sql"
 ```
 
 ### 1.3 Backup of Storage (unchanged)
@@ -74,7 +74,7 @@ Encrypt and store dump off-repo (secure bucket / secrets manager). Retain until 
 ## 2. Neon target schema preparation
 
 1. Create Neon project (Postgres version **≥ source major** when possible).  
-2. Create branch `staging/data-agent-migrate` (empty).  
+2. Create branch `staging/dataomatix-migrate` (empty).  
 3. Note two connection strings (store in password manager only):  
    - **Direct** (migrations / `pg_restore`)  
    - **Pooled** (Render runtime)  
@@ -102,7 +102,7 @@ pg_restore \
   --no-acl \
   --verbose \
   --exit-on-error \
-  data-agent-public-YYYYMMDD.dump
+  dataomatix-public-YYYYMMDD.dump
 ```
 
 ### Option B — Empty Neon + Alembic + data-only load

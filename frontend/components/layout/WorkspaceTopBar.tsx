@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Menu, Plus, Sparkles } from "lucide-react";
 
-import DataAgentLogo from "@/components/navigation/data-agent-logo";
+import DataomatixLogo from "@/components/navigation/dataomatix-logo";
 import BackendStatusPill from "@/components/navigation/BackendStatusPill";
 import CommandTrigger from "@/components/navigation/command-trigger";
 import UserChip from "@/components/navigation/user-chip";
@@ -28,7 +28,7 @@ export default function WorkspaceTopBar({ onOpenSearch, onOpenMobileNav }: Works
           <Menu className="h-4 w-4" strokeWidth={1.75} />
         </button>
         <Link href="/" className="header-brand-link" aria-label="Dataomatix home">
-          <DataAgentLogo variant="wordmark" tone="onDark" size={36} />
+          <DataomatixLogo variant="wordmark" tone="onDark" size={36} />
         </Link>
       </div>
 

@@ -84,7 +84,7 @@ export default function QueueFilterBar({
           onChange={(event) => set("contractType", event.target.value)}
           className={`${SELECT} max-w-[12rem]`}
         >
-          <option value="all">Any contract type</option>
+          <option value="all">Any document type</option>
           {contractTypes.map((type) => (
             <option key={type} value={type}>
               {type}

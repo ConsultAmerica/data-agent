@@ -184,6 +184,7 @@ def extract_page(
     settings: Settings,
     run_ocr: bool,
     force_ocr: bool = False,
+    page_ocr=None,
 ) -> PageExtractionData:
     page = document.load_page(page_index)
     page_number = page_index + 1
@@ -243,7 +244,57 @@ def extract_page(
     # stored with the word layout for QA and performance review.
     ocr_passes: dict = {}
 
-    if should_run_ocr:
+    # Pluggable OCR (app/recognition/page_ocr.py): a configured, policy-
+    # approved external engine reads the page image first. Its boxes are in
+    # that image's pixel space, like Tesseract's. If it returns nothing,
+    # the built-in Tesseract path below runs unchanged.
+    external_ocr = False
+    if should_run_ocr and page_ocr is not None:
+        ocr_attempted = True
+        layout_dpi = min(_bounded_ocr_dpi(page, settings.ocr_dpi), 220)
+        pixmap = page.get_pixmap(dpi=layout_dpi)
+        external_layout = page_ocr.ocr(pixmap.tobytes("png"), page_number=page_number)
+        if external_layout is not None and external_layout.lines:
+            external_ocr = True
+            ocr_succeeded = True
+            ocr_text = "\n".join(line.text for line in external_layout.lines)
+            if force_ocr or len(ocr_text) > len(native_text):
+                scale = 72.0 / layout_dpi
+                final_text = ocr_text
+                final_blocks = [
+                    TextBlockData(
+                        block_index=index,
+                        block_type="text",
+                        text=line.text,
+                        x0=line.x0 * scale,
+                        y0=line.y0 * scale,
+                        x1=line.x1 * scale,
+                        y1=line.y1 * scale,
+                        extraction_method="ocr",
+                    )
+                    for index, line in enumerate(external_layout.lines)
+                ]
+                extraction_method = "ocr"
+            ocr_layout_payload = external_layout.to_json()
+            ocr_layout_payload["preprocess"] = [f"engine:{page_ocr.engine_id}"]
+            ocr_layout_payload["ocr_passes"] = {"engine": page_ocr.engine_id}
+            ocr_layout_payload["coordinate_space"] = {
+                "unit": "px",
+                "dpi": layout_dpi,
+                "image_width": pixmap.width,
+                "image_height": pixmap.height,
+                "deskew_degrees": 0.0,
+            }
+            log_event(
+                "ocr_external",
+                stage="rendering_ocr",
+                status="ok",
+                page=page_number,
+                ocr_engine=page_ocr.engine_id,
+                word_count=len(external_layout.words),
+            )
+
+    if should_run_ocr and not external_ocr:
         ocr_attempted = True
         mupdf_started = time.perf_counter()
 

@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 
 import BackendStatusPill from "@/components/navigation/BackendStatusPill";
 import CommandTrigger from "@/components/navigation/command-trigger";
-import DataAgentLogo from "@/components/navigation/data-agent-logo";
+import DataomatixLogo from "@/components/navigation/dataomatix-logo";
 import MobileNavigation from "@/components/navigation/MobileNavigation";
 import NavDropdown from "@/components/navigation/NavDropdown";
 import UserChip from "@/components/navigation/user-chip";
@@ -27,7 +27,7 @@ export default function GlobalHeader({ onOpenSearch }: GlobalHeaderProps) {
         {/* Brand — never shrink */}
         <div className="header-left">
           <Link href="/" className="header-brand-link" aria-label="Dataomatix home">
-            <DataAgentLogo variant="wordmark" tone="onDark" size={42} />
+            <DataomatixLogo variant="wordmark" tone="onDark" size={42} />
           </Link>
         </div>
 

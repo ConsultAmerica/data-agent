@@ -18,6 +18,8 @@ import type { SourceViewRequest } from "@/components/source-verification-panel";
 import type { EvidenceTarget } from "@/components/staging/evidence-drawer";
 import DocumentActionsMenu from "@/components/actions/document-actions-menu";
 import DocumentObligationsPanel from "@/components/obligations/document-obligations-panel";
+import ExpiryTag from "@/components/documents/expiry-tag";
+import InvoiceRecognitionPanel from "@/components/documents/invoice-recognition-panel";
 import DocumentPlaybookPanel from "@/components/playbook/document-playbook-panel";
 import DocumentValidationPanel from "@/components/validation/document-validation-panel";
 import FarRecordsView from "@/components/staging/far-records-view";
@@ -29,6 +31,8 @@ import StagingDatasetTable from "@/components/staging/staging-dataset-table";
 import StagingFieldList from "@/components/staging/staging-field-list";
 import { getDocument, startProcessingJob } from "@/lib/documents";
 import { FAMILY_LABELS } from "@/lib/document-families";
+import ResultsView from "@/components/documents/results-view";
+import CustomExportDialog from "@/components/documents/custom-export-dialog";
 import { presentDocument, statusMark } from "@/lib/document-presentation";
 import { downloadJson } from "@/lib/export";
 import {
@@ -64,6 +68,8 @@ import type { DocumentStatus, UploadedDocument } from "@/types/document";
 
 /** One metadata tag in the workspace's context bar. */
 const TAG = "flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-0.5";
+const GENERIC_FAMILY_IDS = new Set(["unknown", "generic_business"]);
+const RESULTS_VIEW = { id: "results", label: "Results" } as const;
 
 /** Generic tabs, for profiles that don't declare their own presentation:
  * the staged summary, the overview and the document itself first, then the
@@ -90,6 +96,9 @@ const DOCUMENT_MODES = { original: "Original", text: "Extracted Text" };
 
 function laneOf(dataset: StagingDataset): GenericViewId | "advanced" {
   const id = dataset.dataset_id;
+  // Recalculated credits/GPA explain why stated totals need review: shown
+  // with the summary although they are checks, not extracted values.
+  if (id === "academic_checks") return "staging";
   if (dataset.role === "qa" || id.includes("qa")) return "qa";
   if (id.includes("canonical")) return "canonical";
   if (dataset.role === "transform" || id.includes("oracle") || id.includes("map")) return "transform";
@@ -114,6 +123,9 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const [exportOpen, setExportOpen] = useState(false);
+  // Export menu tab, and the custom export builder.
+  const [exportMode, setExportMode] = useState<"default" | "custom">("default");
+  const [customExportOpen, setCustomExportOpen] = useState(false);
   const [exportError, setExportError] = useState("");
   const [exportBusy, setExportBusy] = useState(false);
   const [exportNotice, setExportNotice] = useState("");
@@ -213,9 +225,11 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
 
   useEffect(() => {
     if (laneDatasets.length === 0) return;
-    if (!laneDatasets.some((dataset) => dataset.dataset_id === activeDataset)) {
-      setActiveDataset(laneDatasets[0].dataset_id);
-    }
+    // Check the current selection, not this render's copy: a dataset tab
+    // clicked before this effect ran must not be reset to the first one.
+    setActiveDataset((current) =>
+      laneDatasets.some((dataset) => dataset.dataset_id === current) ? current : laneDatasets[0].dataset_id,
+    );
   }, [laneDatasets, activeDataset]);
 
   function openView(next: string) {
@@ -282,7 +296,11 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
         return { id: item.view_id, label: only?.display_name ?? item.label };
       })
     : GENERIC_VIEWS.map((item) => ({ id: item.id, label: item.label }));
-  const activeTab = profileView?.view_id ?? genericView;
+  // Results (fields, key-value pairs, tables, OCR text) is the first tab
+  // for every document and where a document opens.
+  const showResults = !requestedView || requestedView === RESULTS_VIEW.id;
+  const allTabs = [{ id: RESULTS_VIEW.id, label: RESULTS_VIEW.label }, ...tabs];
+  const activeTab = showResults ? RESULTS_VIEW.id : (profileView?.view_id ?? genericView);
 
   async function runExport(task: () => Promise<void>, successMessage: string) {
     setExportOpen(false);
@@ -364,8 +382,16 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
   const splitSource = split ? openSource : undefined;
 
   const docStatus = (documentMeta?.status ?? "completed") as DocumentStatus;
-  const familyId = profile.document_families?.[0] ?? "";
-  const typeLabel = (familyId && FAMILY_LABELS[familyId]) || profile.display_name;
+  // The family this document was detected as (a pay stub staged with the
+  // generic profile is still a pay stub); the profile's own family only
+  // when no resolution was recorded.
+  const resolved = workbook.processing_metadata?.document_family;
+  const resolvedLabel = workbook.processing_metadata?.document_family_label;
+  const familyId = resolved ?? profile.document_families?.[0] ?? "";
+  const typeLabel =
+    (resolved && !GENERIC_FAMILY_IDS.has(resolved) && (resolvedLabel || FAMILY_LABELS[resolved])) ||
+    (familyId && FAMILY_LABELS[familyId]) ||
+    profile.display_name;
   const presentation = presentDocument({
     document_id: documentId,
     original_filename: filename || workbook.document_filename,
@@ -457,6 +483,7 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
                   )}
                 </dd>
               </div>
+              <ExpiryTag documentId={documentId} className={TAG} />
             </dl>
             <RelatedDocumentsSwitcher documentId={documentId} returnQs={returnQs} />
           </div>
@@ -519,6 +546,51 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
                 role="menu"
                 data-testid="export-menu"
               >
+                <div className="flex gap-1 border-b border-border px-2 pt-1" role="tablist" aria-label="Export type">
+                  {(
+                    [
+                      ["default", "Default"],
+                      ["custom", "Custom"],
+                    ] as const
+                  ).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      role="tab"
+                      aria-selected={exportMode === mode}
+                      onClick={() => setExportMode(mode)}
+                      className={[
+                        "-mb-px flex-1 border-b-2 px-3 py-2 text-sm",
+                        exportMode === mode
+                          ? "border-primary font-semibold text-primary"
+                          : "border-transparent text-text-secondary hover:text-foreground",
+                      ].join(" ")}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {exportMode === "custom" ? (
+                  <div className="space-y-3 px-3 py-3 text-sm" data-testid="export-custom-tab">
+                    <p className="text-text-secondary">
+                      Build your own file for importing elsewhere: pick fields, rename them to your system&apos;s
+                      headers, combine fields into one column and set the order. Save the mapping as a template to
+                      reuse it for every {profile.display_name} document.
+                    </p>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setExportOpen(false);
+                        setCustomExportOpen(true);
+                      }}
+                      className="btn-primary w-full justify-center py-2 text-sm"
+                    >
+                      Open custom export…
+                    </button>
+                  </div>
+                ) : (
+                <>
                 <div className="border-b border-border px-3 py-2 text-[11px] text-text-secondary">
                   <p className="font-semibold uppercase tracking-wide text-text-muted">Export scope</p>
                   <p className="mt-1 text-foreground">
@@ -624,6 +696,8 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
                 >
                   Open Oracle preview / send…
                 </button>
+                </>
+                )}
               </div>
             )}
             <div className="mt-1 max-w-xs text-right text-xs" aria-live="polite">
@@ -646,6 +720,19 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
       {notice && (
         <div className="mt-3 rounded-lg border border-border bg-surface-soft px-3 py-2 text-sm text-text-secondary" role="status">
           {notice}
+        </div>
+      )}
+
+      {profile.profile_id === "invoice" && (
+        <div className="mt-4">
+          <InvoiceRecognitionPanel
+            documentId={documentId}
+            workbook={workbook}
+            onChanged={(message) => {
+              setNotice(message);
+              setReloadKey((key) => key + 1);
+            }}
+          />
         </div>
       )}
 
@@ -680,7 +767,7 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
         <div className="mt-4 flex items-end gap-1 border-b border-border">
           {/* One row that scrolls sideways on narrow screens, never wraps. */}
           <div className="scrollbar-none -mb-px flex min-w-0 flex-1 items-end gap-1 overflow-x-auto" role="tablist" aria-label="Document views">
-            {tabs.map((item) => (
+            {allTabs.map((item) => (
               <Fragment key={item.id}>
                 {!profileView && item.id === FIRST_TECHNICAL_VIEW && (
                   <span className="mx-1 mb-2.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
@@ -747,8 +834,29 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
           )}
         </div>
 
+        {customExportOpen && (
+        <CustomExportDialog
+          documentId={documentId}
+          workbook={workbook}
+          filename={filename || workbook.document_filename}
+          onClose={() => setCustomExportOpen(false)}
+          onDownloaded={(message) => {
+            setCustomExportOpen(false);
+            setExportNotice(message);
+            window.setTimeout(() => setExportNotice(""), 3500);
+          }}
+        />
+        )}
+
         <div className="mt-5">
-          {profileView ? (
+          {showResults ? (
+            <ResultsView
+              documentId={documentId}
+              workbook={workbook}
+              typeLabel={typeLabel}
+              pageCount={Math.max(1, documentMeta?.page_count ?? 1)}
+            />
+          ) : profileView ? (
             <ProfileViewBody
               documentId={documentId}
               filename={filename || workbook.document_filename}

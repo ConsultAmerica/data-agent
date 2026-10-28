@@ -67,6 +67,7 @@ async def extract_contract_clauses(
         extracted_text = str(raw_clause.get("extracted_text", ""))
 
         if not validate_source_value(
+            strict=True,  # AI-produced value: the quote alone is not evidence
             value=extracted_text,
             source_text=extracted_text,
             page_text=page.final_text or "",

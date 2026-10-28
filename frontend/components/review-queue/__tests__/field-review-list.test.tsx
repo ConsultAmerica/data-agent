@@ -169,3 +169,21 @@ describe("FieldReviewList batch actions", () => {
     expect(screen.queryByRole("button", { name: "Approve selected" })).toBeNull();
   });
 });
+
+describe("FieldReviewList grouping", () => {
+  it("names a document once, on the first of its consecutive rows", () => {
+    const items = [
+      item({ metadata_field_id: 1, label: "Amount" }),
+      item({ metadata_field_id: 2, label: "Date" }),
+      item({ metadata_field_id: 3, label: "Total", document_id: "d2", original_filename: "invoice.pdf" }),
+    ];
+    render(<FieldReviewList items={items} reviewer="R" issueLabel={(i) => i.reason_labels[0]} onDecided={vi.fn()} />);
+    // Visible once (the second award.pdf row keeps its name for screen readers only).
+    const names = screen.getAllByText("award.pdf");
+    expect(names).toHaveLength(2);
+    expect(names.filter((node) => node.classList.contains("sr-only"))).toHaveLength(1);
+    expect(screen.getByText("invoice.pdf")).toBeInTheDocument();
+    // Actions are always present, not only on hover.
+    expect(screen.getByRole("button", { name: "Approve Date" })).toBeInTheDocument();
+  });
+});

@@ -7,7 +7,7 @@ import type { OperationalStatus } from "@/lib/document-presentation";
 /** What the repository search matches — keep in step with the backend
  * /api/documents/search (file name, contract number / title, supplier /
  * customer metadata, and page text). */
-export const DOCUMENT_SEARCH_PLACEHOLDER = "Search file name, contract number, title, vendor or document text…";
+export const DOCUMENT_SEARCH_PLACEHOLDER = "Search name, number, vendor or text…";
 
 /** "$1,250,000.00" for a dollar amount; a bare number is grouped without a
  * currency symbol (the currency isn't known); anything else (EUR 10.000,

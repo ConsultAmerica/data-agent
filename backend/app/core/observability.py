@@ -16,7 +16,7 @@ request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 document_id_var: ContextVar[str | None] = ContextVar("document_id", default=None)
 job_id_var: ContextVar[int | None] = ContextVar("job_id", default=None)
 
-logger = logging.getLogger("data_agent.obs")
+logger = logging.getLogger("dataomatix.obs")
 
 # Fields that must never appear in structured logs.
 _SENSITIVE_KEYS = {

@@ -494,3 +494,57 @@ def test_recognizer_needs_academic_structure():
         }
     )
     assert recognize_transcript(transcript).score >= 0.6
+
+
+# --- credit and GPA arithmetic (DI: transcript validation) ---------------------------------
+
+
+def _checks(wb: dict) -> dict[str, dict]:
+    rows = _dataset(wb, "academic_checks")["records"]
+    return {r["cells"]["transcript.check.name"]["value"]: {k.split(".")[-1]: v["value"] for k, v in r["cells"].items()} for r in rows}
+
+
+def test_credits_and_gpa_are_recalculated_on_the_printed_scale():
+    from demo.synthetic import transcript_pdf
+
+    wb = _workbook(f"transcript-{uuid4()}.pdf", transcript_pdf())
+    checks = _checks(wb)
+    assert checks["Total credits"]["result"] == "PASS"
+    gpa = checks["Cumulative GPA"]
+    assert (gpa["computed"], gpa["stated"], gpa["result"]) == ("3.555", "3.55", "PASS")
+    assert "printed on the transcript" in gpa["details"]
+    summary = _fields(wb, "academic_summary")
+    assert summary["Cumulative GPA"]["value"]["review_status"] == "Verified"
+
+
+def test_a_wrong_stated_gpa_or_credit_total_needs_review():
+    from demo.synthetic import transcript_pdf
+
+    wb = _workbook(f"transcript-{uuid4()}.pdf", transcript_pdf(stated_gpa="3.72", stated_credits="25"))
+    checks = _checks(wb)
+    assert checks["Cumulative GPA"]["result"] == "REVIEW"
+    assert "3.55" in checks["Cumulative GPA"]["details"]
+    assert checks["Total credits"]["result"] == "REVIEW"
+    summary = _fields(wb, "academic_summary")
+    assert summary["Cumulative GPA"]["value"]["review_status"] == "Needs Review"
+    assert summary["Total Credits"]["value"]["review_status"] == "Needs Review"
+
+
+def test_gpa_is_not_recalculated_without_a_known_scale():
+    from app.staging.profile import RawRecord
+    from app.staging.profiles.transcript_checks import academic_checks
+
+    courses = [RawRecord("c1", {"credits": "4", "grade": "Distinction"}), RawRecord("c2", {"credits": "3", "grade": "Merit"})]
+    rows = {r.values["check"]: r.values for r in academic_checks(courses, [], "")}
+    assert rows["Cumulative GPA"]["result"] == "NOT CHECKED"
+
+
+def test_us_scale_is_assumed_only_for_letter_grades():
+    from app.staging.profile import RawRecord
+    from app.staging.profiles.transcript_checks import academic_checks
+
+    courses = [RawRecord("c1", {"credits": "3", "grade": "A"}), RawRecord("c2", {"credits": "3", "grade": "B"})]
+    summary = [RawRecord("s", {"field_id": "transcript.summary.cumulative_gpa", "value": "3.50"})]
+    rows = {r.values["check"]: r.values for r in academic_checks(courses, summary, "")}
+    assert rows["Cumulative GPA"]["result"] == "PASS"
+    assert "assumed" in rows["Cumulative GPA"]["details"]

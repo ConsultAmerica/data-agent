@@ -23,6 +23,7 @@ import type { ReviewAction, ReviewQueueFieldItem } from "@/types/document";
 import AssignPopover from "./assign-popover";
 import InspectDrawer from "./inspect-drawer";
 import { formatQueueDate, inspectHref, queueCsv, severity, urgencyOf } from "./queue-filters";
+import { useReviewMutationsEnabled } from "@/lib/review-gate";
 
 export { inspectHref };
 
@@ -102,6 +103,7 @@ export default function FieldReviewList({
   /** Assignments were saved for these items (an empty list: cleared). */
   onAssigned?: (items: ReviewQueueFieldDetail[], saved: Assignment[]) => void;
 }) {
+  const reviewEnabled = useReviewMutationsEnabled();
   const [density, setDensity] = useTableDensity("review-queue");
   const stickyTop = useChromeBarHeight();
   const [pending, setPending] = useState<Pending[]>([]);
@@ -296,7 +298,8 @@ export default function FieldReviewList({
                 <button
                   type="button"
                   onClick={() => decide(selectedRows, "accept")}
-                  className="inline-flex items-center gap-1 rounded-md border border-[var(--success)]/40 bg-[var(--success)]/10 px-2.5 py-1 font-semibold text-[var(--success)] hover:border-[var(--success)]"
+                  disabled={!reviewEnabled}
+                  className="disabled:cursor-not-allowed disabled:opacity-50 inline-flex items-center gap-1 rounded-md border border-[var(--success)]/40 bg-[var(--success)]/10 px-2.5 py-1 font-semibold text-[var(--success)] hover:border-[var(--success)]"
                 >
                   <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
                   Approve selected
@@ -304,7 +307,8 @@ export default function FieldReviewList({
                 <button
                   type="button"
                   onClick={() => decide(selectedRows, "reject")}
-                  className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2.5 py-1 font-semibold text-[var(--danger)] hover:border-[var(--danger)]"
+                  disabled={!reviewEnabled}
+                  className="disabled:cursor-not-allowed disabled:opacity-50 inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2.5 py-1 font-semibold text-[var(--danger)] hover:border-[var(--danger)]"
                 >
                   <X className="h-3.5 w-3.5" aria-hidden="true" />
                   Reject selected
@@ -357,7 +361,8 @@ export default function FieldReviewList({
               <button
                 type="button"
                 onClick={() => undo(entry.key)}
-                className="inline-flex shrink-0 items-center gap-1 font-semibold text-primary hover:underline"
+                disabled={!reviewEnabled}
+                className="disabled:cursor-not-allowed disabled:opacity-50 inline-flex shrink-0 items-center gap-1 font-semibold text-primary hover:underline"
               >
                 <Undo2 className="h-3.5 w-3.5" aria-hidden="true" />
                 Undo
@@ -386,8 +391,11 @@ export default function FieldReviewList({
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {visible.map(({ key, item }) => {
+              {visible.map(({ key, item }, index) => {
                 const picked = selected.has(key);
+                // Rows of one document read as a group: its name once, on
+                // the first of its rows.
+                const continues = index > 0 && visible[index - 1].item.document_id === item.document_id;
                 const critical = severity(item) === "critical";
                 const urgency = urgencyOf(item);
                 return (
@@ -400,6 +408,7 @@ export default function FieldReviewList({
                     className={[
                       "group cursor-pointer align-top hover:bg-surface-soft focus-within:bg-surface-soft",
                       picked ? "bg-primary/[0.05]" : "",
+                      continues ? "border-t-border/40" : "",
                     ].join(" ")}
                   >
                     {/* Left accent: red for critical compliance items, amber otherwise. */}
@@ -409,10 +418,16 @@ export default function FieldReviewList({
                       <SelectCheckbox checked={picked} onChange={() => toggle(key)} label={`Select ${item.label}`} />
                     </td>
                     <td className={`${cell} max-w-[14rem]`}>
-                      <p className="truncate text-foreground" title={item.original_filename}>
-                        {item.original_filename}
-                      </p>
-                      <p className="font-id text-[11px] text-text-muted">{item.document_id.slice(0, 8)}</p>
+                      {continues ? (
+                        <span className="sr-only">{item.original_filename}</span>
+                      ) : (
+                        <>
+                          <p className="truncate font-medium text-foreground" title={item.original_filename}>
+                            {item.original_filename}
+                          </p>
+                          <p className="font-id text-[11px] text-text-muted">{item.document_id.slice(0, 8)}</p>
+                        </>
+                      )}
                     </td>
                     <td className={`${cell} max-w-[22rem]`}>
                       <button
@@ -459,14 +474,15 @@ export default function FieldReviewList({
                       {item.uploaded_at ? formatQueueDate(item.uploaded_at) : "—"}
                     </td>
                     <td className={cell}>
-                      {/* Always visible on touch / narrow screens; on desktop they appear on hover or keyboard focus. */}
-                      <div className="flex items-center justify-end gap-1 transition-opacity lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100">
+                      {/* Always visible (never an empty column); full strength on hover or keyboard focus. */}
+                      <div className="flex items-center justify-end gap-1 opacity-70 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                         <button
                           type="button"
                           onClick={() => decide([{ key, item }], "accept")}
+                          disabled={!reviewEnabled}
                           aria-label={`Approve ${item.label}`}
                           title="Approve"
-                          className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-surface px-2 text-xs font-medium text-[var(--success)] hover:border-[var(--success)]"
+                          className="disabled:cursor-not-allowed disabled:opacity-50 inline-flex h-7 items-center gap-1 rounded-md border border-border bg-surface px-2 text-xs font-medium text-[var(--success)] hover:border-[var(--success)]"
                         >
                           <Check className="h-3.5 w-3.5" aria-hidden="true" />
                           <span className="hidden xl:inline">Approve</span>
@@ -474,9 +490,10 @@ export default function FieldReviewList({
                         <button
                           type="button"
                           onClick={() => decide([{ key, item }], "reject")}
+                          disabled={!reviewEnabled}
                           aria-label={`Reject ${item.label}`}
                           title="Reject"
-                          className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-surface px-2 text-xs font-medium text-[var(--danger)] hover:border-[var(--danger)]"
+                          className="disabled:cursor-not-allowed disabled:opacity-50 inline-flex h-7 items-center gap-1 rounded-md border border-border bg-surface px-2 text-xs font-medium text-[var(--danger)] hover:border-[var(--danger)]"
                         >
                           <X className="h-3.5 w-3.5" aria-hidden="true" />
                           <span className="hidden xl:inline">Reject</span>

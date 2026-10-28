@@ -14,7 +14,7 @@ from app.models.classification_audit_log import ClassificationAuditLog
 from app.models.document import Document
 from app.models.document_metadata_field import DocumentMetadataField
 from app.models.document_page import DocumentPage
-from app.models.metadata_field_audit_log import MetadataFieldAuditLog
+from app.models.metadata_field_audit_log import DOCUMENT_EVENT_FIELD_KEY, MetadataFieldAuditLog
 from app.models.extraction_model import ExtractionField
 from app.models.relationship_audit_log import RelationshipAuditLog
 from app.staging.document_labels import document_labels
@@ -82,6 +82,7 @@ from app.services.contract_table_extractor import (
 )
 from app.services.dashboard_stats import compute_document_status
 from app.services.document_status import compute_document_status_label
+from app.services.review_routing import low_risk_blockers
 from app.services.relationship_detector import (
     DetectedRelationshipMatch,
     detect_relationship,
@@ -260,7 +261,9 @@ async def analyze_contract(
             for field in custom_fields
         ]
 
-    ai_provider = start_session(create_ai_provider(settings), settings)
+    ai_provider = start_session(
+        create_ai_provider(settings), settings, database=database, document=document
+    )
 
     try:
         classification = await classify_contract(
@@ -444,6 +447,7 @@ async def confirm_relationship(
     document_id: str,
     payload: ConfirmRelationshipRequest,
     database: Session = Depends(get_database),
+    actor: ActorContext = Depends(get_current_actor),
 ) -> ConfirmRelationshipResponse:
     document = database.get(Document, document_id)
 
@@ -494,6 +498,7 @@ async def confirm_relationship(
                 ),
                 new_relationship_type=document.parent_relationship_type,
                 changed_by=changed_by,
+                actor_id=actor.id,
             )
         )
         database.commit()
@@ -520,6 +525,7 @@ async def confirm_relationship(
             previous_relationship_type=document.parent_relationship_type,
             new_relationship_type=None,
             changed_by=changed_by,
+            actor_id=actor.id,
         )
     )
 
@@ -673,6 +679,7 @@ async def assign_relationship(
             previous_relationship_type=document.parent_relationship_type,
             new_relationship_type=payload.relationship_type,
             changed_by=payload.changed_by,
+            actor_id=actor.id,
         )
     )
 
@@ -701,6 +708,7 @@ async def remove_relationship(
     document_id: str,
     payload: RemoveRelationshipRequest,
     database: Session = Depends(get_database),
+    actor: ActorContext = Depends(get_current_actor),
 ) -> dict[str, str]:
     document = database.get(Document, document_id)
 
@@ -725,6 +733,7 @@ async def remove_relationship(
             previous_relationship_type=document.parent_relationship_type,
             new_relationship_type=None,
             changed_by=payload.changed_by,
+            actor_id=actor.id,
         )
     )
 
@@ -749,6 +758,7 @@ async def update_classification(
     document_id: str,
     payload: ClassificationUpdateRequest,
     database: Session = Depends(get_database),
+    actor: ActorContext = Depends(get_current_actor),
 ) -> ContractClassification:
     document = database.get(Document, document_id)
 
@@ -807,6 +817,7 @@ async def update_classification(
                 previous_value=previous_value,
                 new_value=new_value,
                 changed_by=payload.changed_by,
+                actor_id=actor.id,
             )
         )
 
@@ -871,6 +882,39 @@ async def get_classification_history(
     ]
 
 
+def _require_document_review_permission(actor: ActorContext) -> None:
+    """Approve/promote are review mutations: same gate and permission as
+    accepting a field."""
+
+    from app.core.feature_gates import require_metadata_review_mutations_enabled
+
+    require_metadata_review_mutations_enabled()
+    if not actor.has("review.accept"):
+        raise HTTPException(
+            status_code=403,
+            detail="Permission denied: review.accept",
+        )
+
+
+def _record_document_review_event(
+    database: Session, *, document_id: str, action: str, actor: ActorContext
+) -> None:
+    database.add(
+        MetadataFieldAuditLog(
+            document_id=document_id,
+            field_key=DOCUMENT_EVENT_FIELD_KEY,
+            metadata_field_id=None,
+            action=action,
+            reason={"approve": "Document approved", "promote": "Document promoted"}[action],
+            request_id=get_request_id(),
+            actor_id=actor.id,
+            actor_type=actor.actor_type,
+            actor_role=actor.role,
+            changed_by=actor.display_name,
+        )
+    )
+
+
 @router.post(
     "/{document_id}/approve",
     response_model=ApproveDocumentResponse,
@@ -879,7 +923,9 @@ async def approve_document(
     document_id: str,
     payload: ApproveDocumentRequest,
     database: Session = Depends(get_database),
+    actor: ActorContext = Depends(get_current_actor),
 ) -> ApproveDocumentResponse:
+    _require_document_review_permission(actor)
     document = database.get(Document, document_id)
 
     if document is None:
@@ -898,8 +944,11 @@ async def approve_document(
             ),
         )
 
-    document.approved_by = payload.changed_by
+    document.approved_by = actor.display_name
     document.approved_at = datetime.now(timezone.utc)
+    _record_document_review_event(
+        database, document_id=document.id, action="approve", actor=actor
+    )
     database.commit()
 
     return ApproveDocumentResponse(
@@ -917,7 +966,9 @@ async def promote_document(
     document_id: str,
     payload: PromoteDocumentRequest,
     database: Session = Depends(get_database),
+    actor: ActorContext = Depends(get_current_actor),
 ) -> PromoteDocumentResponse:
+    _require_document_review_permission(actor)
     document = database.get(Document, document_id)
 
     if document is None:
@@ -935,8 +986,11 @@ async def promote_document(
             ),
         )
 
-    document.promoted_by = payload.changed_by
+    document.promoted_by = actor.display_name
     document.promoted_at = datetime.now(timezone.utc)
+    _record_document_review_event(
+        database, document_id=document.id, action="promote", actor=actor
+    )
     database.commit()
 
     return PromoteDocumentResponse(
@@ -1248,10 +1302,26 @@ async def accept_all_metadata_fields(
             detail="No metadata fields found for this document.",
         )
 
+    override_reason = (payload.override_reason or "").strip()
+    if payload.include_flagged:
+        if actor.role != "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="Accepting flagged values in bulk is an admin override.",
+            )
+        if not override_reason:
+            raise HTTPException(
+                status_code=400,
+                detail="An override reason is required to accept flagged values in bulk.",
+            )
+
     display_name = payload.changed_by or actor.display_name
 
     for field in fields:
         if field.review_status != "pending":
+            continue
+        if not payload.include_flagged and low_risk_blockers(field):
+            # Flagged values stay pending for an individual decision.
             continue
 
         previous_status = field.review_status
@@ -1268,7 +1338,11 @@ async def accept_all_metadata_fields(
                 new_value=field.value,
                 previous_status=previous_status,
                 new_status=field.review_status,
-                reason="Accept all pending fields",
+                reason=(
+                    f"Bulk accept (admin override): {override_reason}"
+                    if payload.include_flagged
+                    else "Bulk accept of low-risk pending fields"
+                ),
                 request_id=get_request_id(),
                 actor_id=actor.id,
                 actor_type=actor.actor_type,
@@ -1316,7 +1390,9 @@ async def extract_clauses(
     document = _load_ready_document(database, document_id)
     pages = _load_pages(database, document_id)
 
-    ai_provider = start_session(create_ai_provider(settings), settings)
+    ai_provider = start_session(
+        create_ai_provider(settings), settings, database=database, document=document
+    )
 
     clauses, warnings = await extract_contract_clauses(
         database=database,
@@ -1396,7 +1472,9 @@ async def extract_signatures(
     document = _load_ready_document(database, document_id)
     pages = _load_pages(database, document_id)
 
-    ai_provider = start_session(create_ai_provider(settings), settings)
+    ai_provider = start_session(
+        create_ai_provider(settings), settings, database=database, document=document
+    )
 
     signatures, warnings = await extract_contract_signatures(
         database=database,
@@ -1451,7 +1529,9 @@ async def extract_structured_tables(
     document = _load_ready_document(database, document_id)
     pages = _load_pages(database, document_id)
 
-    ai_provider = start_session(create_ai_provider(settings), settings)
+    ai_provider = start_session(
+        create_ai_provider(settings), settings, database=database, document=document
+    )
 
     results, warnings = await extract_document_structured_tables(
         database=database,

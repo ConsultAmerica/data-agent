@@ -186,9 +186,11 @@ describe("BatchIntakePortal", () => {
       <BatchIntakePortal config={config} fields={fields} onFieldsChange={vi.fn()} onFiles={vi.fn()} />,
     );
     expect(screen.getByTestId("upload-limit").textContent).toContain("Up to 100 MB per file");
-    expect(screen.getByText(/Drop federal contract PDFs, SF 1442s, or modification packages here/)).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Auto-detect" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Government Contract" })).toBeInTheDocument();
+    expect(screen.getByText("Drag and drop files here")).toBeInTheDocument();
+    expect(screen.queryByText(/Default agency|Contracting officer/)).not.toBeInTheDocument();
+    const types = screen.getByRole("radiogroup", { name: "Profile" });
+    expect(within(types).getByRole("radio", { name: "Auto-detect" })).toHaveAttribute("aria-checked", "true");
+    expect(within(types).getByRole("radio", { name: "Government Contract" })).toHaveAttribute("aria-checked", "false");
     expect(screen.queryByText(/classification/i)).not.toBeInTheDocument();
   });
 
@@ -248,6 +250,9 @@ function item(extra: Partial<QueueItem>): QueueItem {
     portfolio: null,
     staged: null,
     profileLabel: null,
+    typeLabel: null,
+    category: null,
+    categoryLabel: null,
     fieldsExtracted: null,
     note: null,
     ...extra,
@@ -262,6 +267,46 @@ describe("ProcessingQueue", () => {
     onResolveDuplicate: vi.fn(),
     onSelectPortfolioFile: vi.fn(),
   };
+
+  it("labels each file with its detected document type", () => {
+    render(<ProcessingQueue items={[item({ typeLabel: "Pay Stub / Paycheck", status: "processed" })]} {...handlers} />);
+    expect(screen.getByTestId("queue-type-label").textContent).toBe("Pay Stub / Paycheck");
+  });
+
+  it("groups files under their detected category, unrecognized files last", () => {
+    render(
+      <ProcessingQueue
+        items={[
+          item({ id: "a", name: "award.pdf", category: "contracts", categoryLabel: "Contracts & Awards" }),
+          item({ id: "b", name: "pending.pdf" }),
+          item({ id: "c", name: "invoice.pdf", category: "financial", categoryLabel: "Financial" }),
+          item({ id: "d", name: "sf1442.pdf", category: "contracts", categoryLabel: "Contracts & Awards" }),
+        ]}
+        {...handlers}
+      />,
+    );
+    const groups = screen.getAllByTestId("queue-category");
+    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual([
+      "Contracts & Awards",
+      "Financial",
+      "Recognizing type…",
+    ]);
+    expect(within(groups[0]).getAllByTestId("queue-row").map((row) => row.textContent)).toEqual([
+      expect.stringContaining("award.pdf"),
+      expect.stringContaining("sf1442.pdf"),
+    ]);
+    expect(within(groups[0]).getByRole("heading").textContent).toBe("Contracts & Awards2");
+  });
+
+  it("keeps a flat list while no file's category is known", () => {
+    render(<ProcessingQueue items={[item({ id: "a" }), item({ id: "b", name: "b.pdf" })]} {...handlers} />);
+    expect(screen.queryByTestId("queue-category")).not.toBeInTheDocument();
+  });
+
+  it("shows no type badge before the type is known", () => {
+    render(<ProcessingQueue items={[item({})]} {...handlers} />);
+    expect(screen.queryByTestId("queue-type-label")).not.toBeInTheDocument();
+  });
 
   it("shows each file's reported stage and OCR page counts", () => {
     render(<ProcessingQueue items={[item({})]} {...handlers} />);
@@ -428,5 +473,14 @@ describe("UcfFieldReview", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: /^Part III:/ }));
     expect(screen.getByText(/No extracted fields were located in this part/)).toBeInTheDocument();
+  });
+});
+
+describe("BatchIntakePortal document-type chips", () => {
+  it("selects a document type by its chip", () => {
+    const onFieldsChange = vi.fn();
+    render(<BatchIntakePortal config={config} fields={fields} onFieldsChange={onFieldsChange} onFiles={vi.fn()} />);
+    fireEvent.click(screen.getByRole("radio", { name: "Government Contract" }));
+    expect(onFieldsChange).toHaveBeenCalledWith(expect.objectContaining({ extraction_profile: "contract_v3" }));
   });
 });

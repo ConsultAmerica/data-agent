@@ -59,6 +59,58 @@ class Settings(BaseSettings):
 
     ai_fallback_enabled: bool = True
 
+    # Which documents an external provider (Gemini, OpenAI, Convera, a
+    # remote Ollama) may see — app/recognition/policy.py:
+    #   legacy      public/internal/confidential allowed (the behaviour
+    #               before data classes); restricted needs an approval
+    #   enterprise  confidential and restricted both need an approval
+    external_ai_policy: str = "legacy"
+
+    # Recognition engines (app/recognition/). External engines are off
+    # until configured, and then still subject to external_ai_policy.
+    # OCR engine for scanned pages: tesseract (local) | rapidocr (local,
+    # pip-installed; used automatically when Tesseract is missing) |
+    # azure_di | google_docai | oci_document. A failed or refused external OCR falls back to
+    # Tesseract for that page.
+    ocr_engine: str = "tesseract"
+    azure_di_endpoint: str | None = None
+    azure_di_key: str | None = None
+    azure_di_model: str = "prebuilt-layout"
+    azure_di_api_version: str = "2024-11-30"
+    # Prices are the operator's contract rates (none are assumed); used
+    # for the per-document cost estimate and budget.
+    azure_di_price_per_page_usd: float | None = None
+    google_docai_project: str | None = None
+    google_docai_location: str = "us"
+    google_docai_processor_id: str | None = None
+    google_docai_processor_version: str | None = None
+    # ocr | invoice — what the configured processor is.
+    google_docai_processor_kind: str = "ocr"
+    google_docai_credentials_file: str | None = None
+    google_docai_price_per_page_usd: float | None = None
+    # OCI Document Understanding (Oracle Cloud; not Fusion Payables IDR).
+    # Signed with an OCI API key; document type unset = OCR/layout only,
+    # INVOICE or PASSPORT adds prebuilt key-value extraction.
+    oci_document_region: str | None = None
+    oci_document_compartment_id: str | None = None
+    oci_document_type: str | None = None
+    oci_document_language: str | None = None
+    oci_tenancy_ocid: str | None = None
+    oci_user_ocid: str | None = None
+    oci_key_fingerprint: str | None = None
+    oci_private_key_file: str | None = None
+    oci_private_key_passphrase: str | None = None
+    oci_document_price_per_page_usd: float | None = None
+    # Stop calling paid engines for a document once its estimated spend
+    # reaches this (unset = no cap).
+    recognition_budget_usd_per_document: float | None = None
+
+    # Invoice PO number formats (regular expressions, full match),
+    # separated by ";;". Unset = the format check is not configured.
+    invoice_po_formats: str | None = None
+    # Key dates: how far ahead an expiry counts as "expiring soon".
+    key_date_expiring_days: int = 90
+
     # When true, discover-schema may ask the AI provider to refine
     # display names / groups for generic heuristic targets only.
     ai_schema_enrichment_enabled: bool = True
@@ -100,6 +152,13 @@ class Settings(BaseSettings):
     # permissions still require a real credential; an invalid credential is
     # still rejected. Set false to require a credential for every request.
     public_workspace_access: bool = True
+
+    # Built-in dev/test actors (Dev Admin, default reviewer/analyst/
+    # viewer/service). None = unset: seeded outside production, never in
+    # production (where earlier-seeded ones are retired on startup).
+    seed_default_actors: bool | None = None
+    # API key for the seeded service actor; unset = it has no key.
+    seed_service_api_key: str | None = None
 
     # SQLAlchemy pool for Postgres (ignored for SQLite).
     db_pool_size: int = 5
@@ -187,6 +246,16 @@ class Settings(BaseSettings):
         if (self.app_env or "").strip().lower() == "production":
             return True
         return bool(self.rbac_enforced)
+
+    @property
+    def effective_seed_default_actors(self) -> bool:
+        """Production never runs with the built-in dev/test actors."""
+
+        if (self.app_env or "").strip().lower() == "production":
+            return False
+        if self.seed_default_actors is not None:
+            return bool(self.seed_default_actors)
+        return True
 
     @property
     def effective_metadata_review_mutations_enabled(self) -> bool:

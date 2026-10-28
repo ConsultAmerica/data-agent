@@ -8,7 +8,7 @@ import CompactMenu from "@/components/navigation/CompactMenu";
 import type { MegaMenuSection } from "@/components/navigation/nav-config";
 
 /** Only one header menu is open at a time: opening one tells the others. */
-const OPEN_EVENT = "data-agent:nav-menu-open";
+const OPEN_EVENT = "dataomatix:nav-menu-open";
 const PANEL_WIDTH = 680;
 
 interface NavDropdownProps {

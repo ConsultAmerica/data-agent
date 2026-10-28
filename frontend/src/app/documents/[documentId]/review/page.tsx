@@ -58,6 +58,7 @@ import type {
   SignatureResult,
   UploadedDocument,
 } from "@/types/document";
+import { useReviewMutationsEnabled } from "@/lib/review-gate";
 
 interface ReviewPageProps {
   params: Promise<{ documentId: string }>;
@@ -66,6 +67,7 @@ interface ReviewPageProps {
 export default function ReviewWorkspacePage({
   params,
 }: ReviewPageProps) {
+  const reviewEnabled = useReviewMutationsEnabled();
   const { documentId } = use(params);
   const { setDocumentTitle } = useDocumentChrome();
 
@@ -854,7 +856,7 @@ export default function ReviewWorkspacePage({
               <button
                 type="button"
                 onClick={handleApprove}
-                disabled={!humanReviewComplete || approving}
+                disabled={!reviewEnabled || !humanReviewComplete || approving}
                 className="btn-primary px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <BadgeCheck className="h-3.5 w-3.5" />
@@ -865,7 +867,7 @@ export default function ReviewWorkspacePage({
               <button
                 type="button"
                 onClick={handlePromote}
-                disabled={promoting}
+                disabled={!reviewEnabled || promoting}
                 className="btn-secondary px-3 py-1.5 text-xs disabled:opacity-40"
               >
                 <ArchiveIcon className="h-3.5 w-3.5" />

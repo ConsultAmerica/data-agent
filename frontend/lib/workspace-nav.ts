@@ -14,6 +14,7 @@ export type WorkspaceNavId =
   | "analytics"
   | "clauses"
   | "obligations"
+  | "expirations"
   | "compare"
   | "actions"
   | "playbook"
@@ -70,6 +71,7 @@ export const WORKSPACE_NAV: WorkspaceNavItem[] = [
   // Compliance & Controls: what contracts owe, the rules they are held to,
   // and what leaves the system.
   { id: "obligations", label: "Obligations", href: "/obligations", group: "Compliance & Controls" },
+  { id: "expirations", label: "Expirations", href: "/expirations" },
   { id: "playbook", label: "Clause playbook", href: "/playbook" },
   { id: "integrations", label: "Exports & Oracle", href: "/integrations" },
   // Administration: audit, access and configuration.
@@ -201,6 +203,7 @@ export function breadcrumbsForPath(
     "/search": [...crumbs, { label: "Search" }],
     "/clauses": [...crumbs, { label: "FAR / DFARS" }],
     "/obligations": [...crumbs, { label: "Obligations" }],
+    "/expirations": [...crumbs, { label: "Expirations" }],
     "/compare": [...crumbs, { label: "Compare" }],
     "/actions": [...crumbs, { label: "Agent actions" }],
     "/playbook": [...crumbs, { label: "Clause playbook" }],

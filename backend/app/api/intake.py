@@ -74,6 +74,10 @@ class IntakeBatchDocument(BaseModel):
     document_type: str | None = None
     profile_id: str | None = None
     profile_label: str | None = None
+    # The detected document type (e.g. Receipt, Pay Stub / Paycheck).
+    type_label: str | None = None
+    category: str | None = None
+    category_label: str | None = None
     agency: str | None = None
     contracting_officer: str | None = None
     extraction_profile: str
@@ -180,6 +184,9 @@ def get_batch(
                 document_type=document.document_type,
                 profile_id=labels.get("profile_id"),
                 profile_label=labels.get("profile_label"),
+                type_label=labels.get("type_label"),
+                category=labels.get("category"),
+                category_label=labels.get("category_label"),
                 agency=intake.agency,
                 contracting_officer=intake.contracting_officer,
                 extraction_profile=intake.extraction_profile or AUTO_PROFILE,

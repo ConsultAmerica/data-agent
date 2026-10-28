@@ -1,35 +1,35 @@
 import { Check, Minus } from "lucide-react";
 
-const ROWS: { capability: string; generic: string; dataAgent: string }[] = [
+const ROWS: { capability: string; generic: string; dataomatix: string }[] = [
   {
     capability: "Where a value came from",
     generic: "Text output, sometimes with a page number",
-    dataAgent: "Boxed on the source page, with page, region and method",
+    dataomatix: "Boxed on the source page, with page, region and method",
   },
   {
     capability: "When it isn't sure",
     generic: "Returns its best guess",
-    dataAgent: "Sends the field to a reviewer with the reason",
+    dataomatix: "Sends the field to a reviewer with the reason",
   },
   {
     capability: "Repeating records (CLINs, funding, clauses)",
     generic: "Flattened into prose or one long table",
-    dataAgent: "One record per row, with the source's own column headings",
+    dataomatix: "One record per row, with the source's own column headings",
   },
   {
     capability: "Corrections",
     generic: "Lost when you re-run the prompt",
-    dataAgent: "Append-only audit trail; exports use the reviewed value",
+    dataomatix: "Append-only audit trail; exports use the reviewed value",
   },
   {
     capability: "FAR / DFARS coverage",
     generic: "Whatever the model happens to recall",
-    dataAgent: "Clause references matched to the FAR and checked against your playbook",
+    dataomatix: "Clause references matched to the FAR and checked against your playbook",
   },
   {
     capability: "Downstream systems",
     generic: "Copy and paste",
-    dataAgent: "Staging workbook, CSV/Excel and an Oracle payload preview behind RBAC",
+    dataomatix: "Staging workbook, CSV/Excel and an Oracle payload preview behind RBAC",
   },
 ];
 
@@ -69,7 +69,7 @@ export default function ComparisonSection() {
                 <td className="px-5 py-4 text-foreground">
                   <span className="flex gap-2">
                     <Check className="mt-0.5 h-4 w-4 shrink-0 text-success" />
-                    {row.dataAgent}
+                    {row.dataomatix}
                   </span>
                 </td>
               </tr>

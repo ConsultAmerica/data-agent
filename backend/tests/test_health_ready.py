@@ -14,7 +14,7 @@ def test_health_is_cheap_liveness() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["service"] == "data-agent"
+    assert body["service"] == "dataomatix"
     # Must stay lean — no dependency probes on /health.
     assert "checks" not in body
     assert "database" not in body

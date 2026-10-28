@@ -197,6 +197,20 @@ class Document(Base):
         index=True,
     )
 
+    # Sensitivity class (public | internal | confidential | restricted —
+    # docs/di-01-document-taxonomy.md §4). Set from the resolved staging
+    # profile unless a person set it ("user"); NULL = not yet classified,
+    # treated as confidential. Decides whether any external provider may
+    # see the document (app/recognition/policy.py).
+    data_class: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+    )
+    data_class_source: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+    )
+
     # Repository promotion — deliberately separate from Approve; see
     # services/document_status.py's compute_repository_status.
     promoted_by: Mapped[str | None] = mapped_column(

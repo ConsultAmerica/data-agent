@@ -29,6 +29,27 @@ engine = create_engine(
     **engine_kwargs,
 )
 
+if settings.resolved_database_url.startswith("sqlite"):
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _sqlite_concurrency(dbapi_connection, _record) -> None:
+        """WAL lets job-status reads, page writes and background enrichment
+        run side by side instead of queueing on one file lock (in the default
+        journal mode a reader blocks a writer: uploads stalled for a minute).
+        NORMAL sync is safe in WAL (no corruption; an OS crash can drop only
+        the last commits) and avoids a disk flush per page commit. A busy
+        timeout turns the remaining short contention into a wait, not an
+        error."""
+
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=30000")
+        finally:
+            cursor.close()
+
 SessionLocal = sessionmaker(
     bind=engine,
     autoflush=False,

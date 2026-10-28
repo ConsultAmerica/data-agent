@@ -1,4 +1,4 @@
-# Data Agent — Enterprise Workspace Transformation  
+# Dataomatix — Enterprise Workspace Transformation  
 ## Phase 1: Audit, Design Foundation & Implementation Backlog
 
 **Status:** Assessment complete — awaiting approval before Phase 2  
@@ -9,7 +9,7 @@
 
 ## 1. Executive summary
 
-Data Agent already has strong foundations for an enterprise Document Intelligence Workspace: a persisted staging workbook pin, profile adapters (contract, FAR, invoice, academic, generic, XML), dense data grids with resize/sort/selection/export, human review on metadata fields, selective export, and RBAC-gated Oracle preview/send.
+Dataomatix already has strong foundations for an enterprise Document Intelligence Workspace: a persisted staging workbook pin, profile adapters (contract, FAR, invoice, academic, generic, XML), dense data grids with resize/sort/selection/export, human review on metadata fields, selective export, and RBAC-gated Oracle preview/send.
 
 The product does **not** yet feel like one cohesive workspace. The highest-leverage gaps are:
 

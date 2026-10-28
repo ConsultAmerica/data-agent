@@ -29,6 +29,7 @@ from app.schemas.universal_extraction import (
     UniversalExtractionRequest,
     UniversalExtractionResponse,
 )
+from app.staging.document_categories import document_category
 from app.services.ai_enrichment import start_session
 from app.services.ai_provider_factory import (
     create_ai_provider,
@@ -106,7 +107,9 @@ async def extract_anything(
             ),
         )
 
-    ai_provider = start_session(create_ai_provider(settings), settings)
+    ai_provider = start_session(
+        create_ai_provider(settings), settings, database=database, document=document
+    )
 
     return await universal_extract(
         database=database,
@@ -161,7 +164,9 @@ async def detect_structures(
         )
     )
 
-    ai_provider = start_session(create_ai_provider(settings), settings)
+    ai_provider = start_session(
+        create_ai_provider(settings), settings, database=database, document=document
+    )
 
     return await detect_document_structures(
         document=document,
@@ -221,7 +226,9 @@ async def discover_schema(
         )
     )
 
-    ai_provider = start_session(create_ai_provider(settings), settings)
+    ai_provider = start_session(
+        create_ai_provider(settings), settings, database=database, document=document
+    )
 
     try:
         result = await discover_document_schema(
@@ -264,7 +271,7 @@ async def get_targets(
     database: Session = Depends(get_database),
 ) -> DiscoverSchemaResponse:
 
-    _load_document_or_404(database, document_id)
+    document = _load_document_or_404(database, document_id)
 
     result = load_document_targets(database=database, document_id=document_id)
 
@@ -275,7 +282,8 @@ async def get_targets(
             "No discovered targets yet. Call discover-schema first.",
         )
 
-    return result
+    # Lets an intake queue group the file by category before it is staged.
+    return result.model_copy(update=document_category(database, document))
 
 
 @router.post(
@@ -387,7 +395,9 @@ async def extract_targets(
 
     document = _load_document_or_404(database, document_id)
 
-    ai_provider = start_session(create_ai_provider(settings), settings)
+    ai_provider = start_session(
+        create_ai_provider(settings), settings, database=database, document=document
+    )
 
     result = await extract_by_targets(
         database=database,

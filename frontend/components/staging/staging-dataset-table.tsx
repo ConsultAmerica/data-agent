@@ -16,7 +16,14 @@ import SortableHeader from "@/components/staging/sortable-header";
 import StagingRecordDrawer from "@/components/staging/staging-record-drawer";
 import DensityToggle from "@/components/ui/density-toggle";
 import FieldToneLegend from "@/components/ui/field-tone-legend";
-import { MIN_COLUMN_WIDTH, columnWidth, frozenColumnCount, frozenOffsets } from "@/lib/data-grid";
+import {
+  MIN_COLUMN_WIDTH,
+  TRAILING_MAX_WIDTH,
+  arrangeColumns,
+  columnWidth,
+  frozenColumnCount,
+  frozenOffsets,
+} from "@/lib/data-grid";
 import { fieldToneClass, toneFromStagingCell } from "@/lib/field-tone";
 import type { StagingColumn, StagingDataset, StagingRecord } from "@/lib/staging-workbook";
 import {
@@ -132,42 +139,22 @@ export default function StagingDatasetTable({
   useEffect(() => {
     setHiddenFields((current) => (current.size === 0 ? current : new Set()));
   }, [columnKey]);
-  const columns = useMemo(
+  const shownColumns = useMemo(
     () => allColumns.filter((column) => !hiddenFields.has(column.canonical_field)),
     [allColumns, hiddenFields],
   );
   // Excel-style column widths / row heights set by dragging an edge.
   const sizes = useGridSizes();
-  // Dense grids trade width for more columns on screen (values ellipsize).
-  const widths = useMemo(
-    () =>
-      columns.map((column) => {
-        const set = sizes.columns[column.canonical_field];
-        if (set) return set;
-        const width = columnWidth(column, dataset.records);
-        return dense ? Math.max(MIN_COLUMN_WIDTH, Math.min(DENSE_MAX_WIDTH, Math.round(width * 0.85))) : width;
-      }),
-    [columns, dataset.records, dense, sizes.columns],
-  );
-  const frozen = frozenColumnCount(columns, widths);
   // Selection needs the document (exports are read server-side by id).
   const selecting = selectable && Boolean(documentId);
   const checkWidth = selecting ? CHECK_WIDTH : 0;
-  const offsets = frozenOffsets(widths, frozen).map((offset) => offset + checkWidth);
   const [selection, setSelection] = useTableSelection(documentId, dataset.dataset_id, dataset.display_name);
   const [anchor, setAnchor] = useState<{ recordId: string; field: string } | null>(null);
-  const fieldIds = useMemo(() => columns.map((column) => column.canonical_field), [columns]);
   // Every record opens in full; a compact dataset loads it by id.
   const canOpen = !dataset.compact || Boolean(documentId);
   const isBusiness = dataset.role === "business";
   const hasStatus = isBusiness && dataset.records.some((r) => r.record_status != null);
   const hasLinks = dataset.records.some((r) => r.links_to_dataset);
-  const tableWidth =
-    checkWidth +
-    widths.reduce((sum, width) => sum + width, 0) +
-    (isBusiness ? STATUS_WIDTH : 0) +
-    (canOpen ? DETAILS_WIDTH : 0) +
-    (hasLinks ? LINK_WIDTH : 0);
 
   const isClin = dataset.dataset_id === "clins";
 
@@ -248,7 +235,37 @@ export default function StagingDatasetTable({
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / effectivePageSize));
   const clampedPage = Math.min(page, totalPages - 1);
-  const paged = sorted.slice(clampedPage * effectivePageSize, clampedPage * effectivePageSize + effectivePageSize);
+  const paged = useMemo(
+    () => sorted.slice(clampedPage * effectivePageSize, clampedPage * effectivePageSize + effectivePageSize),
+    [sorted, clampedPage, effectivePageSize],
+  );
+  // Columns that tell this page's rows apart lead; blank / repeated ones and
+  // leading categories (Section, Record Type) trail, narrow.
+  const { columns, trailing } = useMemo(
+    () => arrangeColumns(shownColumns, paged, dataset.records),
+    [shownColumns, paged, dataset.records],
+  );
+  // Dense grids trade width for more columns on screen (values ellipsize).
+  const widths = useMemo(
+    () =>
+      columns.map((column) => {
+        const set = sizes.columns[column.canonical_field];
+        if (set) return set;
+        let width = columnWidth(column, dataset.records);
+        if (trailing.has(column.canonical_field)) width = Math.min(width, TRAILING_MAX_WIDTH);
+        return dense ? Math.max(MIN_COLUMN_WIDTH, Math.min(DENSE_MAX_WIDTH, Math.round(width * 0.85))) : width;
+      }),
+    [columns, trailing, dataset.records, dense, sizes.columns],
+  );
+  const frozen = frozenColumnCount(columns, widths);
+  const offsets = frozenOffsets(widths, frozen).map((offset) => offset + checkWidth);
+  const fieldIds = useMemo(() => columns.map((column) => column.canonical_field), [columns]);
+  const tableWidth =
+    checkWidth +
+    widths.reduce((sum, width) => sum + width, 0) +
+    (isBusiness ? STATUS_WIDTH : 0) +
+    (canOpen ? DETAILS_WIDTH : 0) +
+    (hasLinks ? LINK_WIDTH : 0);
   // A column header selects the field for every record of the current
   // (searched / filtered / sorted) dataset — not just this page.
   const filteredIds = useMemo(() => sorted.map((record) => record.record_id), [sorted]);

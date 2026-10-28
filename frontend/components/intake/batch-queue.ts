@@ -70,6 +70,11 @@ export interface QueueItem {
   /** Pinned staging profile (restored files): true/false, null = unknown. */
   staged: boolean | null;
   profileLabel: string | null;
+  /** Detected document type (Invoice, Passport, Receipt…). */
+  typeLabel: string | null;
+  /** Broad category of that type (the queue groups files by it). */
+  category: string | null;
+  categoryLabel: string | null;
   fieldsExtracted: number | null;
   /** E.g. "reused the existing document". */
   note: string | null;
@@ -133,6 +138,8 @@ export const defaultBatchQueueDeps: BatchQueueDeps = {
 
 const MAX_CONCURRENT = 2;
 const OCR_STAGES = new Set(["reading_document", "rendering_ocr", "running_ocr", "processing_document"]);
+/** Families that are "no specific type" — not shown as a type badge. */
+const GENERIC_FAMILIES = new Set(["unknown", "generic_business"]);
 
 function message(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -160,6 +167,9 @@ function newItem(file: File | null, name: string, size: number): QueueItem {
     portfolio: null,
     staged: null,
     profileLabel: null,
+    typeLabel: null,
+    category: null,
+    categoryLabel: null,
     fieldsExtracted: null,
     note: null,
   };
@@ -238,6 +248,9 @@ export class BatchQueue {
           error: failed ? "Processing failed on the server." : null,
           staged: document.profile_id != null,
           profileLabel: document.profile_label,
+          typeLabel: document.type_label ?? null,
+          category: document.category ?? null,
+          categoryLabel: document.category_label ?? null,
         };
       });
     if (restored.length === 0) return;
@@ -286,7 +299,9 @@ export class BatchQueue {
     const item = this.find(id);
     if (!item?.file) return;
     try {
+      this.patch(id, { note: "Connecting to the server…" });
       await this.deps.ensureReady();
+      this.patch(id, { note: null });
       const result = await this.deps.upload(
         item.file,
         intakeFormFields(this.getFields()),
@@ -453,6 +468,12 @@ export class BatchQueue {
         this.patch(item.id, { status: "extracting", pipelineStage: "extracting_data", error: null });
         try {
           const schema = await this.deps.targets(documentId);
+          if (schema.document_family_label && !GENERIC_FAMILIES.has(schema.document_family)) {
+            this.patch(item.id, { typeLabel: schema.document_family_label });
+          }
+          if (schema.category) {
+            this.patch(item.id, { category: schema.category, categoryLabel: schema.category_label ?? null });
+          }
           const ids = extractableTargets(schema.targets ?? []).map((target) => target.id);
           if (ids.length === 0) {
             this.patch(item.id, {

@@ -333,6 +333,42 @@ export async function downloadSelectedFieldsExport(
   );
 }
 
+/** Custom export (backend app/staging/custom_export.py): output columns,
+ * each a label and one or more source fields by id. A source with a
+ * record_id is one value; without, a column of one repeating dataset (the
+ * file then has a row per record). Values are read on the server. */
+export interface CustomExportSource {
+  dataset_id: string;
+  field: string;
+  record_id: string | null;
+}
+
+export interface CustomExportColumn {
+  label: string;
+  sources: CustomExportSource[];
+  separator: string;
+}
+
+export interface CustomExportManifest {
+  format: SelectedExportFormat;
+  columns: CustomExportColumn[];
+  include_header: boolean;
+  file_name: string | null;
+}
+
+export async function downloadCustomExport(
+  documentId: string,
+  manifest: CustomExportManifest,
+  fallbackName: string,
+): Promise<void> {
+  await postSelectedExport(
+    `/api/documents/${documentId}/staging-workbook/export-custom`,
+    manifest,
+    manifest.format,
+    `${manifest.file_name || `${fallbackName.replace(/\.[A-Za-z0-9]{2,5}$/, "")}_custom`}.${manifest.format}`,
+  );
+}
+
 async function postSelectedExport(
   url: string,
   body: object,

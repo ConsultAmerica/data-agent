@@ -16,6 +16,7 @@ the capability — it only avoids paying for it up front.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 
@@ -30,6 +31,8 @@ from app.source_structure.service import (
 from app.staging import registry
 from app.staging.profile import StagingProfile
 from app.staging.resolver import persist_resolution, refine_with_structure, resolve_profile
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -82,6 +85,16 @@ def prepare_staging(database: Session, document: Document) -> StagingPreparation
         materialize_started = time.perf_counter()
         profile.materializer(database, document)
         timings_ms["profile_materialize_ms"] = int((time.perf_counter() - materialize_started) * 1000)
+
+    # Expiry and other key dates (app/key_dates/): any document type.
+    key_dates_started = time.perf_counter()
+    try:
+        from app.key_dates.service import refresh_key_dates
+
+        refresh_key_dates(database, document)
+    except Exception:  # noqa: BLE001 - key dates must never fail staging
+        logger.exception("Key date detection failed for document %s", document.id)
+    timings_ms["key_dates_ms"] = int((time.perf_counter() - key_dates_started) * 1000)
 
     return StagingPreparation(
         record=record,

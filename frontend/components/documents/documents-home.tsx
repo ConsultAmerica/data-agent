@@ -4,21 +4,26 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   FileText,
+  FolderOpen,
+  Loader2,
   LayoutGrid,
   List,
   MoreHorizontal,
   Plus,
   Search,
   X,
+  XCircle,
 } from "lucide-react";
 
 import DocumentPreviewDrawer from "@/components/documents/document-preview-drawer";
-import PageHeader from "@/components/layout/PageHeader";
+import ConsoleHeader from "@/components/layout/ConsoleHeader";
 import { ErrorState } from "@/components/layout/StatusState";
 import DensityToggle from "@/components/ui/density-toggle";
 import { HIGH_BAND_MIN } from "@/lib/confidence-policy";
@@ -46,7 +51,8 @@ import { getDocumentTypeAppearance } from "@/lib/document-type-icon";
 import { useTableDensity } from "@/lib/table-density";
 import { presentDocument, statusMark } from "@/lib/document-presentation";
 import { downloadExport, getStagingProfile } from "@/lib/staging-workbook";
-import type { DocumentStatus, DocumentSummary } from "@/types/document";
+import type { CategoryCount, DocumentStatus, DocumentSummary } from "@/types/document";
+import { useReviewMutationsEnabled } from "@/lib/review-gate";
 
 export { FAMILY_LABELS };
 
@@ -89,6 +95,7 @@ type RepositoryView = "table" | "grid";
 const REPOSITORY_VIEWS: readonly RepositoryView[] = ["table", "grid"];
 
 export default function DocumentsHome() {
+  const reviewEnabled = useReviewMutationsEnabled();
   const router = useRouter();
   const [density, setDensity] = useTableDensity("documents");
   const [view, setView] = useBrowserPreference<RepositoryView>("dx-documents-view", REPOSITORY_VIEWS, "table");
@@ -98,6 +105,7 @@ export default function DocumentsHome() {
   const urlFilter = params.get("filter");
   const urlFamily = params.get("family") ?? "";
   const urlProfile = params.get("profile") ?? "";
+  const urlCategory = params.get("category") ?? "";
   const urlQ = params.get("q") ?? "";
   const urlSort = params.get("sort");
   const urlDir = params.get("dir");
@@ -105,6 +113,8 @@ export default function DocumentsHome() {
   const [filter, setFilter] = useState<StatusFilter>(isStatusFilter(urlFilter) ? urlFilter : "all");
   const [family, setFamily] = useState(urlFamily);
   const [profileId, setProfileId] = useState(urlProfile);
+  const [category, setCategory] = useState(urlCategory);
+  const [categories, setCategories] = useState<CategoryCount[]>([]);
   const [query, setQuery] = useState(urlQ);
   const [debouncedQuery, setDebouncedQuery] = useState(urlQ.trim());
   // RC2-08: updated_at sort uses a capped scan window and is not globally
@@ -135,6 +145,7 @@ export default function DocumentsHome() {
     setFilter(isStatusFilter(urlFilter) ? urlFilter : "all");
     setFamily(urlFamily);
     setProfileId(urlProfile);
+    setCategory(urlCategory);
     setQuery(urlQ);
     setDebouncedQuery(urlQ.trim());
     // Ignore legacy sort=updated_at deep links (capped scan; not globally accurate).
@@ -142,7 +153,7 @@ export default function DocumentsHome() {
     setSortDir(isSortDir(urlDir) ? urlDir : "desc");
     const nextOffset = Number(params.get("offset") || 0) || 0;
     setOffset(nextOffset);
-  }, [params, urlFilter, urlFamily, urlProfile, urlQ, urlSort, urlDir]);
+  }, [params, urlFilter, urlFamily, urlProfile, urlCategory, urlQ, urlSort, urlDir]);
 
   // Persist filters in the URL so returning from a document keeps the view.
   useEffect(() => {
@@ -151,6 +162,7 @@ export default function DocumentsHome() {
     if (filter !== "all") next.set("filter", filter);
     if (family) next.set("family", family);
     if (profileId) next.set("profile", profileId);
+    if (category) next.set("category", category);
     if (sortBy !== "uploaded_at") next.set("sort", sortBy);
     if (sortDir !== "desc") next.set("dir", sortDir);
     if (offset > 0) next.set("offset", String(offset));
@@ -161,13 +173,14 @@ export default function DocumentsHome() {
     }
     lastWrittenUrl.current = qs;
     router.replace(qs ? `/documents?${qs}` : "/documents", { scroll: false });
-  }, [debouncedQuery, filter, family, profileId, sortBy, sortDir, offset, router, params]);
+  }, [debouncedQuery, filter, family, profileId, category, sortBy, sortDir, offset, router, params]);
 
   useEffect(() => {
     let active = true;
-    getDocumentStatusCounts(family || undefined)
-      .then(({ total: all, by_status }) => {
+    getDocumentStatusCounts(family || undefined, category || undefined)
+      .then(({ total: all, by_status, categories: byCategory }) => {
         if (!active) return;
+        setCategories(byCategory ?? []);
         setCounts({
           all,
           review: by_status.review_required ?? 0,
@@ -182,7 +195,7 @@ export default function DocumentsHome() {
     return () => {
       active = false;
     };
-  }, [family, reloadKey]);
+  }, [family, category, reloadKey]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -205,6 +218,7 @@ export default function DocumentsHome() {
           status,
           family: family || undefined,
           profileId: profileId || undefined,
+          category: category || undefined,
           sortBy,
           sortDir,
           limit: PAGE_SIZE,
@@ -226,15 +240,17 @@ export default function DocumentsHome() {
     return () => {
       active = false;
     };
-  }, [filter, debouncedQuery, offset, reloadKey, family, profileId, sortBy, sortDir]);
+  }, [filter, debouncedQuery, offset, reloadKey, family, profileId, category, sortBy, sortDir]);
 
   const from = total === 0 ? 0 : offset + 1;
   const to = Math.min(offset + PAGE_SIZE, total);
   const pageIds = useMemo(() => documents.map((document) => document.document_id), [documents]);
   const allSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
   const someSelected = pageIds.some((id) => selected.has(id));
-  const filtersActive = Boolean(debouncedQuery || filter !== "all" || family || profileId || sortBy !== "uploaded_at" || sortDir !== "desc");
+  const filtersActive = Boolean(debouncedQuery || filter !== "all" || family || profileId || category || sortBy !== "uploaded_at" || sortDir !== "desc");
   const selectedList = useMemo(() => Array.from(selected.values()), [selected]);
+  // "All types" groups this page's rows under their category headings.
+  const sections = useMemo(() => groupByCategory(documents, category ? [] : categories, !category), [documents, categories, category]);
 
   const clearFilters = useCallback(() => {
     setQuery("");
@@ -242,6 +258,7 @@ export default function DocumentsHome() {
     setFilter("all");
     setFamily("");
     setProfileId("");
+    setCategory("");
     setSortBy("uploaded_at");
     setSortDir("desc");
     setOffset(0);
@@ -253,6 +270,7 @@ export default function DocumentsHome() {
     if (filter !== "all") next.set("filter", filter);
     if (family) next.set("family", family);
     if (profileId) next.set("profile", profileId);
+    if (category) next.set("category", category);
     if (sortBy !== "uploaded_at") next.set("sort", sortBy);
     if (sortDir !== "desc") next.set("dir", sortDir);
     if (offset > 0) next.set("offset", String(offset));
@@ -421,27 +439,43 @@ export default function DocumentsHome() {
     }
   }
 
+  // Agency / contract value are contract facts: shown only when a listed
+  // document has one, so invoices, IDs and pay stubs don't get empty columns.
+  const showContractColumns = documents.some((document) => document.agency || document.contract_value);
+
   return (
-    <div className="workspace-page w-full px-4 py-5 sm:px-6" data-testid="documents-home">
-      <PageHeader
+    <div className="workspace-page w-full" data-testid="documents-home">
+      <ConsoleHeader
+        icon={FolderOpen}
         title="Documents"
-        description="Manage, review and export documents"
+        description="Every uploaded document with its detected type, extraction status and review state."
+        actions={
+          <Link href="/extraction/new" className="btn-primary h-9 px-4 text-sm">
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            Upload document
+          </Link>
+        }
+        tabsLabel="Document status"
+        tabs={STATUS_FILTERS.map((item) => ({
+          id: item.id,
+          label: item.id === "all" ? "All documents" : item.label,
+          count: counts?.[item.id],
+          active: filter === item.id,
+          onSelect: () => {
+            setFilter(item.id);
+            setOffset(0);
+          },
+        }))}
       />
 
-      <dl className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="documents-summary">
-        <Metric label="Total Documents" value={counts?.all} />
-        <Metric label="Documents to review" value={counts?.review} tone="text-warning" />
-        <Metric label="Ready" value={counts?.ready} tone="text-success" />
-        <Metric label="Failed" value={counts?.failed} tone="text-danger" />
-      </dl>
-
+      <div className="px-4 py-5 sm:px-6">
       <div
-        className="mt-5 flex flex-wrap items-end gap-2 rounded-xl border border-border bg-surface p-3"
+        className="flex flex-wrap items-end gap-2 rounded-xl border border-border bg-surface p-3 shadow-sm"
         role="search"
         aria-label="Document filters"
         data-testid="documents-toolbar"
       >
-        <label className="relative min-w-[12rem] flex-1">
+        <label className="relative min-w-[18rem] flex-[2]">
           <span className="sr-only">Search documents</span>
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
           <input
@@ -481,16 +515,6 @@ export default function DocumentsHome() {
         />
 
         <FilterSelect
-          label="Status"
-          value={filter}
-          onChange={(value) => {
-            setFilter(value as StatusFilter);
-            setOffset(0);
-          }}
-          options={STATUS_FILTERS.map((item) => ({ id: item.id, label: item.label }))}
-        />
-
-        <FilterSelect
           label="Sort"
           value={`${sortBy}:${sortDir}`}
           onChange={(value) => {
@@ -514,12 +538,19 @@ export default function DocumentsHome() {
         <div className="ml-auto flex items-center gap-2 self-end">
           {view === "table" && <DensityToggle value={density} onChange={setDensity} />}
           <ViewToggle value={view} onChange={setView} />
-          <Link href="/extraction/new" className="btn-hero-primary !w-auto h-8 px-3 text-xs">
-            <Plus className="h-4 w-4" />
-            Upload document
-          </Link>
         </div>
       </div>
+
+      {categories.length > 0 && (
+        <CategoryTabs
+          categories={categories}
+          value={category}
+          onChange={(next) => {
+            setCategory(next);
+            setOffset(0);
+          }}
+        />
+      )}
 
       {notice && (
         <div
@@ -549,7 +580,7 @@ export default function DocumentsHome() {
           </button>
           <button
             type="button"
-            disabled={acceptingLowRisk}
+            disabled={!reviewEnabled || acceptingLowRisk}
             onClick={() => void acceptLowRiskSelected()}
             title={`Accept every unflagged pending value scoring ${Math.round(HIGH_BAND_MIN * 100)}% or higher in the selected documents`}
             className="rounded-md border border-success/40 bg-success/10 px-2.5 py-1 text-xs font-semibold text-success hover:border-success disabled:opacity-50"
@@ -591,7 +622,13 @@ export default function DocumentsHome() {
           <EmptyState hasFilters={filtersActive} onClear={clearFilters} />
         ) : view === "grid" ? (
           <ul className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" data-testid="documents-grid">
-            {documents.map((document) => (
+            {sections.flatMap((section) => [
+              section.label ? (
+                <li key={`category-${section.key}`} className="col-span-full" data-testid="documents-category">
+                  <CategoryHeading label={section.label} count={section.documents.length} />
+                </li>
+              ) : null,
+              ...section.documents.map((document) => (
               <li key={document.document_id}>
                 <DocumentCard
                   document={document}
@@ -605,7 +642,8 @@ export default function DocumentsHome() {
                   menu={rowMenu(document)}
                 />
               </li>
-            ))}
+              )),
+            ])}
           </ul>
         ) : (
           <table
@@ -637,8 +675,13 @@ export default function DocumentsHome() {
                   />
                 </th>
                 <th className="px-3 py-2.5">File name</th>
-                <th className="hidden px-3 py-2.5 lg:table-cell">Agency / contracting activity</th>
-                <th className="hidden px-3 py-2.5 text-right md:table-cell">Total contract value</th>
+                {showContractColumns && (
+                  <>
+                    <th className="hidden px-3 py-2.5 lg:table-cell">Agency / contracting activity</th>
+                    <th className="hidden px-3 py-2.5 text-right md:table-cell">Total contract value</th>
+                  </>
+                )}
+                <th className="hidden px-3 py-2.5 text-right md:table-cell">Pages</th>
                 <th className="px-3 py-2.5">Extracted status</th>
                 <SortableTh label="Upload date" active={sortBy === "uploaded_at"} dir={sortDir} onClick={() => toggleSort("uploaded_at")} className="hidden sm:table-cell" />
                 <th className="w-12 px-3 py-2.5">
@@ -647,7 +690,15 @@ export default function DocumentsHome() {
               </tr>
             </thead>
             <tbody>
-              {documents.map((document) => {
+              {sections.flatMap((section) => [
+                section.label ? (
+                  <tr key={`category-${section.key}`} className="border-b border-border bg-surface-soft/60" data-testid="documents-category">
+                    <td colSpan={showContractColumns ? 8 : 6} className="px-3 py-1.5">
+                      <CategoryHeading label={section.label} count={section.documents.length} />
+                    </td>
+                  </tr>
+                ) : null,
+                ...section.documents.map((document) => {
                 const row = presentDocument(document);
                 const { Icon, iconClass } = getDocumentTypeAppearance(document.original_filename, document.document_type);
                 return (
@@ -663,7 +714,7 @@ export default function DocumentsHome() {
                     }}
                     tabIndex={0}
                     aria-label={`Preview ${document.original_filename}`}
-                    className="h-11 cursor-pointer border-b border-border/70 outline-none last:border-0 hover:bg-[var(--color-row-hover)] focus-visible:bg-[var(--color-row-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40"
+                    className="group/row h-12 cursor-pointer border-b border-border/70 outline-none last:border-0 hover:bg-[var(--color-row-hover)] focus-visible:bg-[var(--color-row-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40"
                   >
                     <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
                       <input
@@ -674,22 +725,31 @@ export default function DocumentsHome() {
                       />
                     </td>
                     <td className="max-w-[24rem] px-3 py-2" title={document.original_filename}>
-                      <span className="flex min-w-0 items-center gap-2">
-                        <Icon className={`h-4 w-4 shrink-0 ${iconClass}`} aria-hidden="true" />
+                      <span className="flex min-w-0 items-center gap-3">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-soft ring-1 ring-border/70">
+                          <Icon className={`h-4 w-4 ${iconClass}`} aria-hidden="true" />
+                        </span>
                         <span className="min-w-0">
-                          <span className="block truncate font-medium text-foreground">{document.original_filename}</span>
+                          <span className="block truncate font-medium text-primary group-hover/row:underline">{document.original_filename}</span>
                           <TypeLine document={document} />
                         </span>
                       </span>
                     </td>
-                    <td className={`hidden max-w-[16rem] truncate px-3 py-2 lg:table-cell ${document.agency ? "text-text-secondary" : "text-text-muted"}`}>
-                      {document.agency || "—"}
+                    {showContractColumns && (
+                      <>
+                        <td className={`hidden max-w-[16rem] truncate px-3 py-2 lg:table-cell ${document.agency ? "text-text-secondary" : "text-text-muted"}`}>
+                          {document.agency || "—"}
+                        </td>
+                        <td className={`hidden px-3 py-2 text-right tabular-nums md:table-cell ${document.contract_value ? "text-foreground" : "text-text-muted"}`}>
+                          {formatContractValue(document.contract_value)}
+                        </td>
+                      </>
+                    )}
+                    <td className="hidden px-3 py-2 text-right tabular-nums text-text-secondary md:table-cell">
+                      {document.page_count ? document.page_count.toLocaleString() : "—"}
                     </td>
-                    <td className={`hidden px-3 py-2 text-right tabular-nums md:table-cell ${document.contract_value ? "text-foreground" : "text-text-muted"}`}>
-                      {formatContractValue(document.contract_value)}
-                    </td>
-                    <td className={`whitespace-nowrap px-3 py-2 font-medium ${EXTRACTED_STATUS_TONE[row.status]}`}>
-                      {statusMark(row.status)} {extractedStatusLabel(row.status)}
+                    <td className="whitespace-nowrap px-3 py-2">
+                      <StatusCell status={row.status} />
                     </td>
                     <td className="hidden whitespace-nowrap px-3 py-2 tabular-nums text-text-secondary sm:table-cell">
                       {formatDocumentDate(document.uploaded_at)}
@@ -715,7 +775,8 @@ export default function DocumentsHome() {
                     </td>
                   </tr>
                 );
-              })}
+              }),
+              ])}
             </tbody>
           </table>
         )}
@@ -759,6 +820,7 @@ export default function DocumentsHome() {
           onClose={closePreview}
         />
       )}
+      </div>
     </div>
   );
 }
@@ -1117,21 +1179,89 @@ function DeleteDialog({
   );
 }
 
-function Metric({
-  label,
-  value,
-  tone = "text-foreground",
-}: {
-  label: string;
-  value: number | undefined;
-  tone?: string;
-}) {
+const STATUS_ICON: Record<keyof typeof EXTRACTED_STATUS_TONE, typeof FileText> = {
+  ready: CheckCircle2,
+  verified: CheckCircle2,
+  review: AlertTriangle,
+  failed: XCircle,
+  processing: Loader2,
+};
+
+/** Console-style status: a coloured icon and the label (Complete, Review needed…). */
+function StatusCell({ status }: { status: keyof typeof EXTRACTED_STATUS_TONE }) {
+  const Icon = STATUS_ICON[status];
   return (
-    <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
-      <dt className="text-xs text-text-muted">{label}</dt>
-      <dd className={`text-lg font-semibold tabular-nums ${tone}`}>
-        {value === undefined ? <span className="text-text-muted">—</span> : value.toLocaleString()}
-      </dd>
+    <span className={`inline-flex items-center gap-1.5 text-[13px] font-medium ${EXTRACTED_STATUS_TONE[status]}`}>
+      <Icon className={`h-4 w-4 ${status === "processing" ? "animate-spin" : ""}`} aria-hidden="true" />
+      <span className="sr-only">{statusMark(status)} </span>
+      {extractedStatusLabel(status)}
+    </span>
+  );
+}
+
+interface CategorySection {
+  key: string;
+  /** Null when the list isn't grouped (one category is selected). */
+  label: string | null;
+  documents: DocumentSummary[];
+}
+
+/** A page's documents under their categories, in the categories' display
+ * order (any not in the counts follow, in page order). */
+function groupByCategory(documents: DocumentSummary[], order: CategoryCount[], grouped: boolean): CategorySection[] {
+  if (!grouped) return [{ key: "all", label: null, documents }];
+  const sections = new Map<string, CategorySection>();
+  for (const item of order) sections.set(item.category, { key: item.category, label: item.label, documents: [] });
+  for (const document of documents) {
+    const key = document.category ?? "unclassified";
+    const section = sections.get(key) ?? { key, label: document.category_label ?? key, documents: [] };
+    section.documents.push(document);
+    sections.set(key, section);
+  }
+  return [...sections.values()].filter((section) => section.documents.length > 0);
+}
+
+function CategoryHeading({ label, count }: { label: string; count: number }) {
+  return (
+    <span className="flex items-baseline gap-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
+      {label}
+      <span className="font-normal tabular-nums text-text-muted">{count}</span>
+    </span>
+  );
+}
+
+/** One tab per detected category with its document count. */
+function CategoryTabs({
+  categories,
+  value,
+  onChange,
+}: {
+  categories: CategoryCount[];
+  value: string;
+  onChange: (category: string) => void;
+}) {
+  const total = categories.reduce((sum, item) => sum + item.count, 0);
+  const options = [{ category: "", label: "All types", count: total }, ...categories];
+  return (
+    <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Document categories" data-testid="category-tabs">
+      {options.map((item) => {
+        const active = value === item.category;
+        return (
+          <button
+            key={item.category || "all"}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(item.category)}
+            className={[
+              "h-8 rounded-full px-3 text-xs font-medium",
+              active ? "bg-primary text-white" : "border border-border bg-surface text-text-secondary hover:bg-surface-soft",
+            ].join(" ")}
+          >
+            {item.label} <span className="tabular-nums opacity-70">{item.count.toLocaleString()}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
+

@@ -19,7 +19,7 @@ def main() -> None:
     response = client.get("/health")
     print(response.status_code, response.headers.get("x-request-id"), response.json())
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "service": "data-agent"}
+    assert response.json() == {"status": "ok", "service": "dataomatix"}
     assert response.headers.get("x-request-id")
 
     print("2) GET /ready")

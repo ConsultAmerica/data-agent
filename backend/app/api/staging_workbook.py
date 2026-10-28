@@ -27,6 +27,7 @@ from app.source_structure.service import get_or_build_source_structure, page_tra
 from app.staging import registry
 from app.staging.engine import profile_descriptor
 from app.staging.document_labels import document_labels
+from app.staging.custom_export import CustomExportManifest, build_custom_export
 from app.staging.export import build_dataset_csv, build_profile_xlsx, build_workbook_xlsx, find_dataset
 from app.staging.models import ProfileDescriptor, StagingRecord, StagingWorkbook
 from app.staging.selection_export import (
@@ -219,6 +220,31 @@ def export_staging_field_selection(
     workbook = _workbook_or_404(database, document_id)
     try:
         content, media_type, filename = build_selected_fields_export(workbook, manifest)
+    except SelectionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if manifest.format == "csv":
+        content, media_type = excel_csv(content), "text/csv; charset=utf-8"
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": attachment_header(filename)},
+    )
+
+
+@router.post("/{document_id}/staging-workbook/export-custom")
+def export_staging_custom(
+    document_id: str,
+    manifest: CustomExportManifest,
+    database: Session = Depends(get_database),
+    actor: ActorContext = Depends(require_permission("export.read")),
+) -> Response:
+    """A reviewer-defined import file: chosen fields under their own labels,
+    combined where asked, one row per table record (or one row). The
+    manifest names fields by id; values come from the staging workbook."""
+
+    workbook = _workbook_or_404(database, document_id)
+    try:
+        content, media_type, filename = build_custom_export(workbook, manifest)
     except SelectionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if manifest.format == "csv":

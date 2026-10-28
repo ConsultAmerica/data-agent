@@ -33,6 +33,11 @@ export interface IntakeBatchDocument {
   document_type: string | null;
   profile_id: string | null;
   profile_label: string | null;
+  /** Detected document type, e.g. "Receipt". */
+  type_label?: string | null;
+  /** Broad category of that type, e.g. "Financial". */
+  category?: string | null;
+  category_label?: string | null;
   agency: string | null;
   contracting_officer: string | null;
   extraction_profile: string;
@@ -144,7 +149,7 @@ export const FILE_STAGES: { id: FileStage; label: string }[] = [
   { id: "upload", label: "Upload" },
   { id: "ocr", label: "OCR" },
   { id: "layout", label: "Layout analysis" },
-  { id: "extraction", label: "Clause/field extraction" },
+  { id: "extraction", label: "Field extraction" },
   { id: "indexing", label: "Indexing" },
 ];
 

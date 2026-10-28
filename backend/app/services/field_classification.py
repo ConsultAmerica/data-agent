@@ -115,6 +115,38 @@ def is_key_contract_field(*, key: str | None, label: str | None = None) -> bool:
     return bool(_KEY_CONTRACT_LABEL_HINTS.search(haystack))
 
 
+# "Total 9.16", "Change Due 10.84": a two-decimal amount under a money
+# label is a value, not a paragraph number like "11.1" (which has the
+# same shape). Both conditions are required so contract numbering next
+# to an ordinary heading is still caught.
+_MONEY_VALUE = re.compile(r"^\(?-?\$?\d[\d,]*\.\d{2}\)?$")
+_MONEY_LABEL = re.compile(
+    r"\b(sub)?totals?\b|\btax(es)?\b|\bamount\b|\bdue\b|\bbalance\b|\btendered\b"
+    r"|\bchange\b|\bfees?\b|\bprice\b|\bcost\b|\bcharges?\b|\bdeductions?\b"
+    r"|\bdiscount\b|\btip\b|\bgross\b|\bnet\b|\bpay\b|\bpaid\b|\bpayment\b"
+    r"|\bcredits?\b|\bdebits?\b|\bdeposits?\b|\bwithdrawals?\b|\bwages?\b"
+    r"|\bsalary\b|\bmedicare\b|\bsocial security\b|\bwithholding\b|\bytd\b",
+    re.IGNORECASE,
+)
+
+
+# "Cumulative GPA: 3.62", "Term GPA 3.50": a small decimal under a
+# score/rate label is a measurement, not paragraph numbering.
+_METRIC_VALUE = re.compile(r"^\d{1,3}\.\d{1,3}%?$")
+_METRIC_LABEL = re.compile(
+    r"\bgpa\b|\bgrade point\b|\baverage\b|\bscore\b|\brate\b|\bratio\b"
+    r"|\bpercent(age)?\b|\bhours\b|\bcredits?\b|\bunits\b|\bkwh\b",
+    re.IGNORECASE,
+)
+
+
+def _is_money_field(label: str, value: str) -> bool:
+    value = value.strip()
+    if _MONEY_VALUE.match(value) and _MONEY_LABEL.search(label):
+        return True
+    return bool(_METRIC_VALUE.match(value) and _METRIC_LABEL.search(label))
+
+
 def is_narrative_or_section_field(
     *,
     key: str | None,
@@ -158,7 +190,11 @@ def is_narrative_or_section_field(
         # not a value) don't get every kv_ field rerouted to "section".
         if value_text and looks_like_narrative_fragment(value_text):
             return True
-        if value_text and looks_like_paragraph_reference_value(value_text):
+        if (
+            value_text
+            and looks_like_paragraph_reference_value(value_text)
+            and not _is_money_field(label_text, value_text)
+        ):
             return True
         if _SOW_KV_SLUG.match(slug) and (len(value_text) >= 40 or not value_text):
             return True

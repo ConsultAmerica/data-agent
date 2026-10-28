@@ -11,6 +11,9 @@ from app.services.contract_field_schema import FieldSpec
 
 
 client = TestClient(app)
+# These flows review every value via accept-all; since DI-02 that
+# includes flagged values only as an admin override with a reason.
+ACCEPT_EVERYTHING = {"include_flagged": True, "override_reason": "test: review every value"}
 
 
 class DashboardStubAIProvider(AIProvider):
@@ -151,7 +154,7 @@ def test_document_becomes_completed_after_full_review() -> None:
 
     accept_response = client.post(
         f"/api/documents/{document_id}/metadata-fields/accept-all",
-        json={"changed_by": "Test Reviewer"},
+        json={"changed_by": "Test Reviewer", **ACCEPT_EVERYTHING},
     )
     assert accept_response.status_code == 200
 
@@ -226,7 +229,7 @@ def test_document_list_includes_page_and_field_counts() -> None:
 
     client.post(
         f"/api/documents/{document_id}/metadata-fields/accept-all",
-        json={"changed_by": "Test Reviewer"},
+        json={"changed_by": "Test Reviewer", **ACCEPT_EVERYTHING},
     )
 
     document = find_document(document_id)

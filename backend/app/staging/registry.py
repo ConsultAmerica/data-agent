@@ -64,11 +64,13 @@ def generic_profile() -> StagingProfile:
 def _register_builtin_profiles() -> None:
     from app.staging.profiles.academic_transcript import ACADEMIC_TRANSCRIPT_PROFILE
     from app.staging.profiles.contract_v3 import CONTRACT_V3_PROFILE
+    from app.staging.profiles.driving_licence import DRIVING_LICENCE_PROFILE
     from app.staging.profiles.far_part_52 import FAR_PART_52_PROFILE
     from app.staging.profiles.far_regulatory_change import FAR_REGULATORY_CHANGE_PROFILE
     from app.staging.profiles.generic_business_document import GENERIC_PROFILE
     from app.staging.profiles.generic_business_document_v1 import GENERIC_PROFILE_V1
     from app.staging.profiles.invoice_v1 import INVOICE_V1_PROFILE
+    from app.staging.profiles.passport import PASSPORT_PROFILE
     from app.staging.profiles.xml_document import XML_DOCUMENT_PROFILE
 
     register(CONTRACT_V3_PROFILE)
@@ -79,6 +81,8 @@ def _register_builtin_profiles() -> None:
     register(FAR_REGULATORY_CHANGE_PROFILE)
     register(ACADEMIC_TRANSCRIPT_PROFILE)
     register(XML_DOCUMENT_PROFILE)
+    register(PASSPORT_PROFILE)
+    register(DRIVING_LICENCE_PROFILE)
 
 
 _register_builtin_profiles()

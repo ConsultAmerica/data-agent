@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.models.document import Document
 from app.models.document_staging_workbook import DocumentStagingWorkbook
+from app.services.invoice_matching import match_supplier, validate_po
 from app.services.v3_reader import get_normalized_v3_document
 from app.source_structure.models import (
     FieldCandidate,
@@ -69,6 +70,7 @@ from app.staging.structure_provenance import (
     source_column,
     table_cell_provenance,
 )
+from app.staging.provenance import system_provenance
 from app.staging.validation import to_number
 
 F = FieldDefinition
@@ -266,6 +268,44 @@ QA_REVIEW = DatasetDefinition(
     ),
 )
 
+INVOICE_VALIDATION = DatasetDefinition(
+    dataset_id="invoice_validation",
+    display_name="Supplier & PO Validation",
+    cardinality="repeating",
+    role="qa",
+    description="The invoice matched against the supplier master and purchase orders.",
+    identity_fields=("invoice.validation.check",),
+    fields=(
+        F("invoice.validation.check", "check", "Check", grounding="none"),
+        F("invoice.validation.result", "result", "Result", grounding="none"),
+        F("invoice.validation.details", "details", "Details", grounding="none"),
+    ),
+)
+
+ERP_STAGING = DatasetDefinition(
+    dataset_id="erp_staging",
+    display_name="ERP Staging",
+    cardinality="repeating",
+    # The invoice reshaped for the ERP (like FAR's Oracle output), not
+    # extracted data: its values' evidence is on the business datasets.
+    role="transform",
+    description=(
+        "The Payables header staged for the ERP: extracted values joined to supplier master and PO data. "
+        "\"Not Validated\" = every expected field recognized and matched (ready for ERP validation); "
+        "\"Incomplete\" = needs attention. The Oracle import file layout comes from your FBDI/REST template."
+    ),
+    identity_fields=("invoice.erp.field",),
+    fields=(
+        F("invoice.erp.field", "field", "Field", grounding="none"),
+        F("invoice.erp.value", "value", "Value", grounding="none"),
+        F("invoice.erp.source", "source", "Source", grounding="none"),
+        F("invoice.erp.status", "status", "Status", grounding="none"),
+    ),
+)
+
+RECOGNITION_COMPLETE = "Not Validated"
+RECOGNITION_INCOMPLETE = "Incomplete"
+
 _SCALAR_DATASET = {
     "invoice.invoice_number": ("invoice_summary", "invoice_number"),
     "invoice.invoice_date": ("invoice_summary", "invoice_date"),
@@ -342,10 +382,22 @@ def _order_key(item: Labeled) -> tuple:
 # --- collecting labelled values ------------------------------------------------------
 
 
+# A whole value that is only a document title ("INVOICE", "Credit Memo").
+_TITLE_ONLY = re.compile(r"^\s*(?:tax\s+)?(?:invoice|credit\s+(?:memo|note)|debit\s+note|statement|receipt|bill)\s*$", re.I)
+
+
+def _is_title_pair(candidate) -> bool:
+    """A letterhead name and the document title on one line read as a
+    label/value pair ("Fabrikam Partners  …  INVOICE"); it is neither a
+    field nor a value."""
+
+    return bool(_TITLE_ONLY.match(candidate.raw_value or "")) and not _TITLE_WORDS.search(candidate.label_text or "")
+
+
 def _from_candidates(document: Document, structure: StructuredSourceDocument) -> list[Labeled]:
     items = []
     for candidate in structure.field_candidates:
-        if candidate.acceptance != "accepted":
+        if candidate.acceptance != "accepted" or _is_title_pair(candidate):
             continue
         items.append(
             Labeled(
@@ -604,6 +656,19 @@ def _letterhead(structure: StructuredSourceDocument):
         if h.page == first_page and h.bbox and h.bbox[1] < 250
         and not _TITLE_WORDS.search(h.text) and len(re.findall(r"[A-Za-z]", h.text)) >= 3
     ]
+    # The issuer's name typeset on the same line as the title can come out
+    # as a label/value pair instead of a heading: its "label" is the name.
+    by_id = {r.region_id: r for r in structure.regions}
+    for candidate in structure.field_candidates:
+        if (
+            candidate.page == first_page and candidate.label_bbox and candidate.label_bbox[1] < 250
+            and _is_title_pair(candidate) and len(re.findall(r"[A-Za-z]", candidate.label_text)) >= 3
+        ):
+            source = next((by_id[i] for i in candidate.source_region_ids if i in by_id), None)
+            if source is not None:
+                candidates.append(
+                    source.model_copy(update={"text": candidate.label_text, "bbox": candidate.label_bbox, "region_type": "HEADING"})
+                )
     if not candidates:
         return None, []
     name_region = min(candidates, key=lambda h: (round(h.bbox[1] / 10), h.bbox[0]))
@@ -1274,6 +1339,97 @@ def adapt_invoice(database: Session, document: Document) -> AdapterResult:
         if conflict:
             currency.checks.append(_fail("currency_conflict", f"Stated currency {stated} but amounts use {', '.join(conflict)}."))
 
+    # Supplier master, PO and recognition status (IDR) ------------------------------------
+    def _value(canonical: str):
+        assigned = scalars.assigned.get(canonical)
+        return assigned.value if assigned else None
+
+    def _prov(canonical: str):
+        assigned = scalars.assigned.get(canonical)
+        return assigned.provenance if assigned else None
+
+    supplier_match = match_supplier(
+        database,
+        name=supplier_values.get("name"),
+        address=supplier_values.get("remit_to") or supplier_values.get("address"),
+        tax_id=supplier_values.get("tax_id"),
+    )
+    validation_rows: list[tuple[str, str, str]] = []
+    if supplier_match.status == "matched":
+        site = f", site {supplier_match.site.site_code}" if supplier_match.site else ""
+        validation_rows.append(("Supplier", "PASS", f"{supplier_match.supplier.name} ({supplier_match.supplier.supplier_number}) by {supplier_match.method}{site}."))
+        if supplier_match.method == "similar name":
+            supplier_checks.setdefault("name", []).append(
+                _fail("supplier_master", supplier_match.messages[0])
+            )
+    elif supplier_match.status != "no_master":
+        message = " ".join(supplier_match.messages)
+        if supplier_match.candidates:
+            message += " Closest: " + ", ".join(f"{s.name} ({score:.0%})" for s, score in supplier_match.candidates) + "."
+        validation_rows.append(("Supplier", "REVIEW", message))
+        if "name" in supplier_values:
+            supplier_checks.setdefault("name", []).append(_fail("supplier_master", message))
+    else:
+        validation_rows.append(("Supplier", "INFO", supplier_match.messages[0]))
+    for message in supplier_match.messages if supplier_match.status == "matched" else []:
+        if "site" in message.lower() or "address" in message.lower():
+            validation_rows.append(("Supplier site", "REVIEW", message))
+
+    po_number = _value("invoice.reference.po_number")
+    po = validate_po(database, po_number, supplier_match.supplier if supplier_match.status == "matched" else None)
+    validation_rows.extend(po.checks)
+    if po.failed and "invoice.reference.po_number" in scalars.assigned:
+        scalars.assigned["invoice.reference.po_number"].checks.append(_fail("po_validation", " ".join(po.failed)))
+
+    business_unit = (po.purchase_order.business_unit if po.purchase_order else None) or (
+        supplier_match.site.business_unit if supplier_match.site else None
+    )
+    amount = _value("invoice.total.invoice_amount") or totals_values.get("invoice_amount") or _value("invoice.total.amount_due")
+    currency_value = _value("invoice.currency")
+    missing = [
+        label for label, value in (
+            ("invoice number", _value("invoice.invoice_number")),
+            ("invoice date", _value("invoice.invoice_date")),
+            ("invoice amount", amount),
+            ("currency", currency_value),
+        ) if not value
+    ]
+    issues = [f"missing {', '.join(missing)}"] if missing else []
+    if supplier_match.status != "matched":
+        issues.append("supplier not matched to the supplier master")
+    elif supplier_match.method == "similar name":
+        issues.append("supplier matched only by a similar name")
+    issues.extend(po.failed)
+    issues.extend(f"{check} needs review" for check, result, _ in qa_rows if result == "REVIEW")
+    recognition = RECOGNITION_INCOMPLETE if issues else RECOGNITION_COMPLETE
+    validation_rows.insert(0, (
+        "Recognition status", recognition,
+        "Every expected field recognized and matched." if not issues else "Needs attention: " + "; ".join(issues) + ".",
+    ))
+    matched = supplier_match.supplier if supplier_match.status == "matched" else None
+    # (field, value, source, status, provenance): invoice values keep the
+    # provenance of the value they came from; master/derived values are
+    # marked as platform (system) facts.
+    system = system_provenance(document)
+    amount_prov = _prov("invoice.total.invoice_amount") or totals_prov.get("invoice_amount") or _prov("invoice.total.amount_due")
+    erp_rows = [
+        ("Recognition Status", recognition, "Dataomatix", "; ".join(issues) if issues else "Ready for ERP validation", system),
+        ("Supplier", matched.name if matched else supplier_values.get("name"),
+         "Supplier master" if matched else "Invoice", f"Matched by {supplier_match.method}" if matched else "Not matched",
+         supplier_prov.get("name") or system),
+        ("Supplier Number", matched.supplier_number if matched else None, "Supplier master", None, system),
+        ("Supplier Site", supplier_match.site.site_code if supplier_match.site else None, "Supplier master", None, system),
+        ("Business Unit", business_unit, "Purchase order" if po.purchase_order and po.purchase_order.business_unit else "Supplier site",
+         None if business_unit else "Not derived", system),
+        ("Invoice Number", _value("invoice.invoice_number"), "Invoice", None, _prov("invoice.invoice_number") or system),
+        ("Invoice Date", _value("invoice.invoice_date"), "Invoice", None, _prov("invoice.invoice_date") or system),
+        ("Invoice Amount", amount, "Invoice", None, amount_prov or system),
+        ("Currency", currency_value, "Invoice", None, _prov("invoice.currency") or system),
+        ("PO Number", po_number, "Invoice",
+         ("Validated" if po.purchase_order and not po.failed else "; ".join(po.failed) or None) if po_number else "Non-PO invoice",
+         _prov("invoice.reference.po_number") or system),
+    ]
+
     # Assemble records ---------------------------------------------------------------------
     def single(dataset_id: str, extra_values=None, extra_prov=None, extra_checks=None) -> RawRecord:
         values, prov, checks = dict(extra_values or {}), dict(extra_prov or {}), dict(extra_checks or {})
@@ -1354,6 +1510,14 @@ def adapt_invoice(database: Session, document: Document) -> AdapterResult:
             RawRecord(record_id=f"source:{i}", values=row.model_dump())
             for i, row in enumerate(v3.source_documents if v3 else [])
         ],
+        "erp_staging": [
+            RawRecord(record_id=f"erp:{i}", values={"field": f, "value": v, "source": src, "status": st}, provenance=prov)
+            for i, (f, v, src, st, prov) in enumerate(erp_rows)
+        ],
+        "invoice_validation": [
+            RawRecord(record_id=f"validation:{i}", values={"check": c, "result": r, "details": d})
+            for i, (c, r, d) in enumerate(validation_rows)
+        ],
         "qa_review": [
             RawRecord(
                 record_id=f"qa:invoice:{i}",
@@ -1386,6 +1550,8 @@ INVOICE_V1_PROFILE = StagingProfile(
         OTHER_FIELDS,
         ALL_FIELDS,
         SOURCE_DOCUMENTS,
+        ERP_STAGING,
+        INVOICE_VALIDATION,
         QA_REVIEW,
     ),
     adapter=adapt_invoice,
@@ -1395,6 +1561,8 @@ INVOICE_V1_PROFILE = StagingProfile(
         ExportSheet("Line Items", ("invoice_lines", "distributions")),
         ExportSheet("Charges & Totals", ("taxes_charges", "totals")),
         ExportSheet("Other Information", ("other_fields",)),
+        ExportSheet("ERP Staging", ("erp_staging",)),
+        ExportSheet("Supplier & PO Validation", ("invoice_validation",)),
         ExportSheet(SOURCE_SHEET, ()),
     ),
     export_capabilities=(

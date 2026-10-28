@@ -25,9 +25,11 @@ from __future__ import annotations
 import re
 from collections import Counter
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.document import Document
+from app.models.document_page import DocumentPage
 from app.source_structure.models import StructuredSourceDocument, TableCandidate
 from app.source_structure.service import document_page_words, get_or_build_source_structure
 from app.staging.labels import humanize_label
@@ -43,6 +45,7 @@ from app.staging.profile import (
     StagingProfile,
 )
 from app.staging.profiles import transcript_vocabulary as V
+from app.staging.profiles.transcript_checks import academic_checks
 from app.staging.profiles.transcript_layout import (
     Column,
     CourseRow,
@@ -163,6 +166,23 @@ ALL_FIELDS = DatasetDefinition(
     description="Every logical field of the transcript, flattened.",
     identity_fields=_identity("all_fields"),
     fields=_field_columns("all_fields"),
+)
+
+ACADEMIC_CHECKS = DatasetDefinition(
+    dataset_id="academic_checks",
+    display_name="Credit & GPA Checks",
+    cardinality="repeating",
+    # Recalculated, not extracted: shown with the review checks.
+    role="qa",
+    description="Total credits and the cumulative GPA recalculated from the course rows and compared with what the transcript states.",
+    identity_fields=("transcript.check.name",),
+    fields=(
+        F("transcript.check.name", "check", "Check", grounding="none"),
+        F("transcript.check.computed", "computed", "Recalculated", grounding="none"),
+        F("transcript.check.stated", "stated", "Stated on Transcript", grounding="none"),
+        F("transcript.check.result", "result", "Result", grounding="none"),
+        F("transcript.check.details", "details", "Details", grounding="none"),
+    ),
 )
 
 QA_REVIEW = DatasetDefinition(
@@ -638,12 +658,21 @@ def adapt_transcript(database: Session, document: Document) -> AdapterResult:
         for record in fields:
             add(_dataset_for(str(record.values["category"])), record)
 
+    page_text = "\n".join(
+        text or ""
+        for text in database.scalars(
+            select(DocumentPage.final_text).where(DocumentPage.document_id == document.id)
+        )
+    )
+    # Before flattening: failed checks mark the stated summary cells.
+    checks = academic_checks(courses, buckets["academic_summary"], page_text)
     all_fields = _flatten(buckets, courses, course_labels)
     return AdapterResult(
         records={
             "student_program": buckets["student_program"],
             "academic_record": courses,
             "academic_summary": buckets["academic_summary"],
+            "academic_checks": checks,
             "other_information": buckets["other_information"],
             "all_fields": all_fields,
         },
@@ -781,6 +810,8 @@ def recognize_transcript(structure: StructuredSourceDocument) -> Recognition:
 # --- profile ------------------------------------------------------------------------------------------
 
 ACADEMIC_TRANSCRIPT_PROFILE = StagingProfile(
+    # Education records (student identifiers, grades).
+    data_class="restricted",
     profile_id="academic_transcript",
     profile_version=1,
     display_name="Academic Transcript",
@@ -790,12 +821,13 @@ ACADEMIC_TRANSCRIPT_PROFILE = StagingProfile(
         "secondary information like grading scales and certification."
     ),
     document_families=("academic_transcript",),
-    datasets=(STUDENT_PROGRAM, ACADEMIC_RECORD, ACADEMIC_SUMMARY, OTHER_INFORMATION, ALL_FIELDS, QA_REVIEW),
+    datasets=(STUDENT_PROGRAM, ACADEMIC_RECORD, ACADEMIC_SUMMARY, ACADEMIC_CHECKS, OTHER_INFORMATION, ALL_FIELDS, QA_REVIEW),
     adapter=adapt_transcript,
     export_sheets=(
         ExportSheet("Student & Program", ("student_program",)),
         ExportSheet("Academic Record", ("academic_record",)),
         ExportSheet("Academic Summary", ("academic_summary",)),
+        ExportSheet("Credit & GPA Checks", ("academic_checks",)),
         ExportSheet("Other Information", ("other_information",)),
         ExportSheet(SOURCE_SHEET, ()),
     ),

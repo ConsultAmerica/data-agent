@@ -213,6 +213,7 @@ async def universal_extract(
                 continue
 
             verified = validate_source_value(
+                strict=True,  # AI-produced value: the quote alone is not evidence
                 value=ai_value.get(
                     "value"
                 ),

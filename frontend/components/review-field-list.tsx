@@ -21,6 +21,8 @@ import type {
   MetadataField,
   ReviewAction,
 } from "@/types/document";
+import ReviewReadOnlyNotice from "@/components/review/review-read-only-notice";
+import { useReviewMutationsEnabled } from "@/lib/review-gate";
 
 interface ReviewFieldListProps {
   documentId: string;
@@ -100,6 +102,7 @@ export default function ReviewFieldList({
 
   const pendingCount = fields.filter((field) => field.review_status === "pending").length;
   const reviewedCount = fields.length - pendingCount;
+  const reviewEnabled = useReviewMutationsEnabled();
 
   return (
     <div className="flex h-full flex-col" data-testid="metadata-review-list">
@@ -119,13 +122,15 @@ export default function ReviewFieldList({
         <button
           type="button"
           onClick={onAcceptAll}
-          disabled={acceptingAll || allReviewed || pendingCount === 0}
+          disabled={!reviewEnabled || acceptingAll || allReviewed || pendingCount === 0}
           className="btn-primary px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
         >
           <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
-          {allReviewed ? "All reviewed" : "Accept all pending"}
+          {allReviewed ? "All reviewed" : "Accept low-risk pending"}
         </button>
       </div>
+
+      <ReviewReadOnlyNotice className="mx-6 mt-3" />
 
       <div className="flex-1 overflow-auto">
         <table className="w-full min-w-[720px] border-collapse text-left text-sm">
@@ -181,6 +186,7 @@ function FieldGroupRows({
     value?: string,
   ) => Promise<void> | void;
 }) {
+  const reviewEnabled = useReviewMutationsEnabled();
   return (
     <>
       <tr>
@@ -198,7 +204,7 @@ function FieldGroupRows({
           documentId={documentId}
           field={field}
           active={field.id != null && field.id === activeFieldId}
-          busy={field.id != null && field.id === reviewingFieldId}
+          busy={!reviewEnabled || (field.id != null && field.id === reviewingFieldId)}
           onSelect={() => onSelectField(field)}
           onReview={onReviewField}
         />

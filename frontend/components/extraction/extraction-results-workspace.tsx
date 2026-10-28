@@ -34,6 +34,7 @@ import type {
   UniversalExtractionResult,
   UploadedDocument,
 } from "@/types/document";
+import { hasSourcePage, sourcePageLabel } from "@/lib/source-page";
 
 const KEY_FIELD_KEYS = [
   "contract_number",
@@ -271,7 +272,7 @@ export default function ExtractionResultsWorkspace({
             }
             clausePageNumbers={
               clausesLoaded
-                ? clauses.map((clause) => clause.evidence.page_number)
+                ? clauses.map((clause) => clause.evidence.page_number).filter(hasSourcePage)
                 : undefined
             }
           />
@@ -665,7 +666,7 @@ function ClausesTab({
                   <div className="border-t border-border/60 bg-surface-soft/40 px-4 py-3 text-sm leading-6 text-text-secondary">
                     <p className="whitespace-pre-wrap">{clause.extracted_text}</p>
                     <p className="mt-2 text-xs text-text-muted">
-                      Page {clause.evidence.page_number}
+                      {sourcePageLabel(clause.evidence.page_number)}
                     </p>
                   </div>
                 )}

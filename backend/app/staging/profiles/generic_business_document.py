@@ -753,6 +753,61 @@ def _document_sections(document: Document, structure) -> list[RawRecord]:
     return records
 
 
+def _scanned_label_pairs(
+    database: Session,
+    document: Document,
+    seen: set[tuple[str, str]],
+    table_row_labels: set[str],
+    ocr_pages: set[int],
+) -> list[RawRecord]:
+    """Label/value lines the structural passes leave out — "Gross Pay
+    2,000.00", "Subtotal 8.48  Tax 0.68  Total 9.16" on pay stubs and
+    receipts — from the page-text scanner schema discovery already uses,
+    under the same reliability gates. Labels already listed (or held in an
+    accepted table) are skipped."""
+
+    from app.services.field_classification import is_narrative_or_section_field
+    from app.services.generic_kv_scanner import is_plausible_kv_label, scan_page_for_labeled_pairs
+    from app.services.structure_detection import _looks_like_reliable_kv_label
+
+    listed = {label for label, _ in seen}
+    records: list[RawRecord] = []
+    pages = database.scalars(
+        select(DocumentPage).where(DocumentPage.document_id == document.id).order_by(DocumentPage.page_number)
+    )
+    for page in pages:
+        for pair in scan_page_for_labeled_pairs(page=page):
+            label = normalize_space(pair.raw_label)
+            if label.lower() in listed or label.lower() in table_row_labels:
+                continue
+            if not is_plausible_kv_label(pair.raw_label) or not _looks_like_reliable_kv_label(pair):
+                continue
+            if is_narrative_or_section_field(key=f"kv_{label.lower()}", label=label, value=pair.value, field_group="field"):
+                continue
+            listed.add(label.lower())
+            seen.add((label.lower(), normalize_space(pair.value).lower()))
+            evidence = next(
+                (line for line in (page.final_text or "").splitlines() if pair.value in line), pair.value
+            )
+            record = RawRecord(
+                record_id=f"scan:{page.page_number}:{label.lower()}",
+                values={
+                    "name": label,
+                    "value": pair.value,
+                    "value_type": None,
+                    "extraction_method": pair.method.replace("_", " "),
+                    "category": "Key Field",
+                },
+                provenance=make_provenance(
+                    document, page=page.page_number, evidence=evidence, extraction_method=f"page_text:{pair.method}",
+                ),
+            )
+            if page.page_number in ocr_pages:
+                record.provenance.ocr_gate = True
+            records.append(record)
+    return records
+
+
 def adapt_generic(database: Session, document: Document) -> AdapterResult:
     structure = get_or_build_source_structure(database, document)
     staging_record = database.scalars(
@@ -847,6 +902,10 @@ def adapt_generic(database: Session, document: Document) -> AdapterResult:
             # No per-word confidence for these — OCR-read, so never Verified
             # on the strength of the text alone.
             key_fields[-1].provenance.ocr_gate = True
+
+    key_fields.extend(
+        _scanned_label_pairs(database, document, seen, table_row_labels, ocr_pages)
+    )
 
     for region in structure.regions:
         if region.region_type != "CONTACT_BLOCK":

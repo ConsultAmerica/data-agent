@@ -39,7 +39,7 @@
 
 | Created | Reused |
 |---|---|
-| `SidebarNavigation`, `WorkspaceTopBar`, `Breadcrumbs`, `PageHeader`, `DocumentChromeProvider` | `AppShell`, `DataAgentLogo`, `BackendStatusPill`, `GlobalHeader` + `AnnouncementBar` (marketing only), `GlobalSearch`, `StatusState`, existing btn/nav CSS |
+| `SidebarNavigation`, `WorkspaceTopBar`, `Breadcrumbs`, `PageHeader`, `DocumentChromeProvider` | `AppShell`, `DataomatixLogo`, `BackendStatusPill`, `GlobalHeader` + `AnnouncementBar` (marketing only), `GlobalSearch`, `StatusState`, existing btn/nav CSS |
 
 No new npm dependencies.
 

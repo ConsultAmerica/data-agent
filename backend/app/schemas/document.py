@@ -50,6 +50,9 @@ class UploadedDocumentResponse(BaseModel):
     # Intake tags given at upload (GET /documents/{id} only; null otherwise).
     agency: str | None = None
     contracting_officer: str | None = None
+    # Sensitivity class (GET /documents/{id}); null until classified.
+    data_class: str | None = None
+    data_class_source: str | None = None
 
 
 class ResolveDuplicateRequest(BaseModel):
@@ -90,6 +93,10 @@ class DocumentSummaryResponse(BaseModel):
     profile_label: str | None = None
     type_label: str | None = None
     staging_status: Literal["staged", "not_staged"] = "not_staged"
+    # The broad category the resolved type is grouped under
+    # (app/staging/document_categories.py); "unclassified" until staged.
+    category: str = "unclassified"
+    category_label: str = "Not yet classified"
     # Intake tagging from the upload (models/document_intake.py); all None
     # for a document uploaded without intake fields.
     agency: str | None = None
@@ -103,11 +110,21 @@ class DocumentSearchResponse(BaseModel):
     total: int
 
 
+class CategoryCount(BaseModel):
+    category: str
+    label: str
+    count: int
+
+
 class DocumentStatusCountsResponse(BaseModel):
     total: int
     # Computed summary status -> count, over the same capped scan window
     # /search uses for status filters.
     by_status: dict[str, int]
+    # Category -> count, over every matching document (not capped).
+    by_category: dict[str, int] = Field(default_factory=dict)
+    # The same counts with labels, in display order (categories with none left out).
+    categories: list[CategoryCount] = Field(default_factory=list)
 
 
 class HierarchyNode(BaseModel):

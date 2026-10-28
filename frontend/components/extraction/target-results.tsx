@@ -45,6 +45,7 @@ import type {
   TargetType,
   UniversalTable,
 } from "@/types/document";
+import { useReviewMutationsEnabled } from "@/lib/review-gate";
 
 /** Shown only when optional AI enrichment was unavailable: the document
  * still processed deterministically, so this is a quiet note, not an error. */
@@ -261,6 +262,7 @@ export default function TargetResults({
   selectedResultId = null,
   onViewSource,
 }: TargetResultsProps) {
+  const reviewEnabled = useReviewMutationsEnabled();
   const [searchQuery, setSearchQuery] = useState("");
   const [confidenceFilter, setConfidenceFilter] = useState<
     "all" | "high" | "medium" | "low"
@@ -942,9 +944,9 @@ export default function TargetResults({
           pageCount={pageCount}
           request={sourceRequest}
           activeRow={activeRow}
-          onSaveCorrection={handleSaveCorrection}
-          onMarkVerified={handleMarkVerified}
-          onReject={handleReject}
+          onSaveCorrection={reviewEnabled ? handleSaveCorrection : undefined}
+          onMarkVerified={reviewEnabled ? handleMarkVerified : undefined}
+          onReject={reviewEnabled ? handleReject : undefined}
         />
       )}
     </div>

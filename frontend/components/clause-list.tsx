@@ -2,6 +2,7 @@ import { Eye, ScrollText } from "lucide-react";
 
 import ConfidenceBadge from "@/components/confidence-badge";
 import type { ClauseResult } from "@/types/document";
+import { sourcePageLabel } from "@/lib/source-page";
 
 interface ClauseListProps {
   clauses: ClauseResult[];
@@ -63,7 +64,7 @@ export default function ClauseList({
               className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 hover:text-blue-800"
             >
               <Eye className="h-3.5 w-3.5" />
-              View Source (Page {clause.evidence.page_number})
+              View Source ({sourcePageLabel(clause.evidence.page_number)})
             </button>
           </div>
         ))}

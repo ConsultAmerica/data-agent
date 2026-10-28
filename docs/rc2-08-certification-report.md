@@ -27,7 +27,7 @@ Companion artifacts:
 ### Versions
 | Component | Version |
 |---|---|
-| Frontend package | `data-agent@0.1.0` |
+| Frontend package | `dataomatix@0.1.0` |
 | Next.js | 16.3.0 |
 | React | 19.2.8 |
 | Vitest | 4.1.11 |

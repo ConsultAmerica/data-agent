@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -117,11 +118,19 @@ class AIEnrichmentSession(AIProvider):
     failure: AIFailure | None = None
     calls: int = 0
     succeeded: int = 0
+    # Provenance: every call is recorded as a RecognitionRun row in
+    # `database` (added, committed with the caller's work).
+    database: Session | None = field(default=None, repr=False)
+    document_id: str | None = None
+    job_id: int | None = None
+    data_class: str | None = None
+    policy_reason: str | None = None
+    run_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     _breaker_open: bool = field(default=False, repr=False)
 
     def __post_init__(self) -> None:
         self.provider_id = f"session({getattr(self.provider, 'provider_id', 'ai')})"
-        if isinstance(self.provider, DisabledAIProvider):
+        if isinstance(self.provider, DisabledAIProvider) and self.reason is None:
             self.status, self.reason = SKIPPED, "AI enrichment is disabled or not configured."
 
     # --- state --------------------------------------------------------------
@@ -156,7 +165,45 @@ class AIEnrichmentSession(AIProvider):
             "error_detail": self.failure.detail[:2000] if self.failure else None,
             "calls_attempted": self.calls,
             "calls_succeeded": self.succeeded,
+            "run_id": self.run_id,
+            "data_class": self.data_class,
+            "policy": self.policy_reason,
         }
+
+    def _record(
+        self,
+        *,
+        method: str | None,
+        status: str,
+        started: float | None = None,
+        error_kind: str | None = None,
+    ) -> None:
+        if self.database is None:
+            return
+        from app.models.recognition_run import RecognitionRun
+        from app.recognition.policy import provider_locality
+        from app.services.processing_versions import EXTRACTION_PROCESSOR_VERSION
+
+        answered = getattr(self.provider, "last_provider", None) if status == "ok" else None
+        source = answered or self.provider
+        provider_id = getattr(source, "provider_id", "ai")
+        self.database.add(
+            RecognitionRun(
+                run_id=self.run_id,
+                document_id=self.document_id,
+                extraction_job_id=self.job_id,
+                provider_id=provider_id[:40],
+                model=getattr(source, "model", None) if answered else self.model,
+                locality=provider_locality(provider_id, _settings()),
+                method=method,
+                status=status,
+                error_kind=error_kind,
+                data_class=self.data_class,
+                policy_reason=self.policy_reason if status == "blocked_by_policy" else None,
+                pipeline_version=EXTRACTION_PROCESSOR_VERSION,
+                duration_ms=int((time.perf_counter() - started) * 1000) if started else None,
+            )
+        )
 
     # --- the guarded call -------------------------------------------------------
 
@@ -178,6 +225,7 @@ class AIEnrichmentSession(AIProvider):
                 )
             except Exception as exc:  # noqa: BLE001 — classified, never re-raised raw
                 failure = classify_ai_error(exc)
+                self._record(method=method, status="error", started=started, error_kind=failure.kind)
                 log_event(
                     "ai_enrichment_call",
                     stage="ai",
@@ -206,6 +254,7 @@ class AIEnrichmentSession(AIProvider):
                 self.reason = _NOTICE_REASON.get(failure.kind)
                 raise AIProviderError(self.reason or "AI enrichment unavailable.") from None
             self.succeeded += 1
+            self._record(method=method, status="ok", started=started)
             if self.status not in (UNAVAILABLE, FAILED):
                 self.status, self.reason = COMPLETED, None
             return result
@@ -234,14 +283,76 @@ class AIEnrichmentSession(AIProvider):
         return await self._call("enrich_schema", targets_json=targets_json, page_context=page_context)
 
 
-def start_session(provider: AIProvider, settings) -> AIEnrichmentSession:
+def _settings():
+    from app.core.config import get_settings
+
+    return get_settings()
+
+
+def _model_label(provider: AIProvider) -> str | None:
+    """The configured model(s): a fallback chain lists its members'."""
+
+    members = getattr(provider, "providers", None)
+    if members:
+        models = [getattr(member, "model", None) for member in members]
+        return "+".join(m for m in models if m) or None
+    return getattr(provider, "model", None)
+
+
+def start_session(
+    provider: AIProvider,
+    settings,
+    *,
+    database: Session | None = None,
+    document: Document | None = None,
+    job_id: int | None = None,
+) -> AIEnrichmentSession:
+    """One run's AI session. With `document`, the provider policy decides
+    whether this document may be sent to the configured provider(s) at all
+    (app/recognition/policy.py); a refusal makes the session a disabled
+    one with the policy's reason, recorded as a blocked run."""
+
+    from app.recognition.policy import (
+        classify_for_policy,
+        decide_external_processing,
+        member_provider_ids,
+    )
     from app.services.ai_provider_factory import describe_ai_provider
 
+    session_kwargs = dict(
+        provider_label=describe_ai_provider(provider),
+        model=_model_label(provider),
+        timeout_seconds=float(getattr(settings, "ai_provider_attempt_timeout_seconds", 45.0) or 45.0),
+        database=database,
+        document_id=getattr(document, "id", None),
+        job_id=job_id,
+    )
+    if isinstance(provider, DisabledAIProvider):
+        return AIEnrichmentSession(provider=provider, **session_kwargs)
+
+    decision = decide_external_processing(
+        database,
+        data_class=classify_for_policy(database, document) if document is not None else None,
+        provider_ids=member_provider_ids(provider),
+        settings=settings,
+    )
+    if not decision.allowed:
+        session = AIEnrichmentSession(
+            provider=DisabledAIProvider(),
+            status=SKIPPED,
+            reason=decision.reason,
+            data_class=decision.data_class,
+            policy_reason=decision.reason,
+            **session_kwargs,
+        )
+        session._record(method=None, status="blocked_by_policy")
+        log_event("ai_policy_blocked", stage="ai", status="skipped", data_class=decision.data_class)
+        return session
     return AIEnrichmentSession(
         provider=provider,
-        provider_label=describe_ai_provider(provider),
-        model=getattr(provider, "model", None) or getattr(settings, "gemini_model", None),
-        timeout_seconds=float(getattr(settings, "ai_provider_attempt_timeout_seconds", 45.0) or 45.0),
+        data_class=decision.data_class,
+        policy_reason=decision.reason,
+        **session_kwargs,
     )
 
 

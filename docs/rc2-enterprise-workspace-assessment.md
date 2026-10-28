@@ -1,4 +1,4 @@
-# Data Agent RC2 — Enterprise Workspace Experience  
+# Dataomatix RC2 — Enterprise Workspace Experience  
 ## Required First Response (A–L)
 
 **Status:** Assessment approved; **RC2-01 implemented locally** — see `docs/rc2-01-completion-report.md`  
@@ -11,7 +11,7 @@
 
 ## Executive verdict
 
-Data Agent already has a **usable enterprise core**: staging workbook, profile adapters, dense grids with selection/export, metadata-field Accept/Edit/Reject, selective export by stable IDs, RBAC, and Oracle preview/send gates.
+Dataomatix already has a **usable enterprise core**: staging workbook, profile adapters, dense grids with selection/export, metadata-field Accept/Edit/Reject, selective export by stable IDs, RBAC, and Oracle preview/send gates.
 
 RC2 is **not a rebuild**. It is shell consistency, repository polish, staging flagship parity, honest dual-contract labeling, and ops/Oracle UI wiring.
 
@@ -38,7 +38,7 @@ RC2 is **not a rebuild**. It is shell consistency, repository polish, staging fl
 - PDF review path (`/documents/[id]/review`) has Accept / Edit / Reject.
 - Export Selected is server-validated (manifest of IDs → persisted values).
 - Design tokens exist in `globals.css` (Sirion teal / purple identity).
-- Recent local work: Data Agent logo, column resize hardening, TextBlock → resizable table, bullet glyph normalize.
+- Recent local work: Dataomatix logo, column resize hardening, TextBlock → resizable table, bullet glyph normalize.
 
 ### Defects / friction
 1. **Shell inconsistency** — Hero + 80rem vs full-width workspace vs 1440px extraction bars; `.page-container-wide` is not wider than narrow.

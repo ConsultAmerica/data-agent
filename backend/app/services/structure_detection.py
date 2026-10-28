@@ -57,6 +57,35 @@ FAMILY_DEFAULT_KEYS: dict[str, list[str]] = {
         "financial_summary",
     ],
     "government_contract": ["clins", "supplies_services", "wawf_routing_data"],
+    # The fields a reviewer checks first on each document type.
+    "pay_stub": [
+        "kv_employee", "kv_employee_name", "kv_pay_period", "kv_pay_date",
+        "kv_gross_pay", "kv_net_pay", "kv_total_deductions",
+    ],
+    "receipt": [
+        "kv_receipt_no", "kv_receipt_number", "kv_date", "kv_total",
+        "kv_subtotal", "kv_tax", "kv_payment_method",
+    ],
+    "bank_check": [
+        "kv_pay_to_the_order_of", "kv_date", "kv_amount", "kv_check_no",
+        "kv_check_number", "kv_memo",
+    ],
+    "passport": [
+        "kv_surname", "kv_given_names", "kv_passport_no", "kv_nationality",
+        "kv_date_of_birth", "kv_date_of_expiry",
+    ],
+    "statement": [
+        "kv_account_number", "kv_statement_period", "kv_beginning_balance",
+        "kv_ending_balance", "kv_total_deposits", "kv_total_withdrawals",
+    ],
+    "utility_bill": [
+        "kv_account_number", "kv_service_address", "kv_billing_period",
+        "kv_amount_due", "kv_due_date",
+    ],
+    "tax_form": [
+        "kv_employer_identification_number", "kv_wages_tips_other_compensation",
+        "kv_federal_income_tax_withheld",
+    ],
     "rate_card": ["rate_card", "labor_categories", "hourly_rates"],
 }
 
@@ -367,7 +396,8 @@ DOCUMENT_FAMILIES: dict[str, tuple[str, list[str]]] = {
     "statement": (
         "Statement",
         ["statement of account", "account statement",
-         "beginning balance", "ending balance"],
+         "beginning balance", "ending balance", "statement period",
+         "total deposits", "total withdrawals"],
     ),
     "purchase_order": (
         "Purchase Order",
@@ -420,6 +450,87 @@ DOCUMENT_FAMILIES: dict[str, tuple[str, list[str]]] = {
         ["complete blood count", "cbc", "iron studies", "reference range",
          "patient information", "specimen", "hematology",
          "laboratory report"],
+    ),
+    # Personal, payment and records documents. Keywords are phrases a
+    # document of that type prints on its face; generic words shared with
+    # invoices or contracts ("total", "date of birth") are left out so
+    # the score margin stays meaningful.
+    "passport": (
+        "Passport",
+        ["passport no", "passport number", "type/type", "date of expiry",
+         "place of birth", "given names", "nationality", "passport",
+         "country code", "date of issue", "issuing authority"],
+    ),
+    "driving_licence": (
+        "Driving Licence",
+        ["driver license", "driver's license", "drivers license",
+         "driving licence", "driving license", "license class",
+         "permis de conduire", "endorsements", "restrictions", "dln"],
+    ),
+    "identity_card": (
+        "Identity Card",
+        ["identity card", "national id", "id card", "national identity",
+         "card number", "carte d'identite"],
+    ),
+    "academic_transcript": (
+        "Academic Transcript",
+        ["official transcript", "academic transcript", "academic record",
+         "cumulative gpa", "grade point average", "credits attempted",
+         "credits earned", "credit hours", "term gpa", "registrar"],
+    ),
+    "pay_stub": (
+        "Pay Stub / Paycheck",
+        ["pay stub", "paystub", "earnings statement", "pay period",
+         "pay date", "gross pay", "net pay", "ytd", "year to date",
+         "federal income tax", "social security", "medicare"],
+    ),
+    "bank_check": (
+        "Bank Cheque",
+        ["pay to the order of", "pay to the order", "void after",
+         "not valid after", "authorized signature", "⑆", "⑈"],
+    ),
+    "receipt": (
+        "Receipt",
+        ["receipt", "receipt number", "receipt no", "payment receipt",
+         "sales receipt", "thank you for your purchase", "change due",
+         "cash tendered", "amount tendered", "card ending", "auth code"],
+    ),
+    "tax_form": (
+        "Tax Form",
+        ["form w-2", "wage and tax statement", "form 1099", "form w-9",
+         "form 1040", "employer identification number",
+         "taxpayer identification number", "internal revenue service"],
+    ),
+    "utility_bill": (
+        "Utility Bill",
+        ["service address", "meter number", "meter reading",
+         "previous reading", "current reading", "kwh", "billing period",
+         "usage history"],
+    ),
+    "insurance_policy": (
+        "Insurance Policy",
+        ["policy number", "policyholder", "declarations page",
+         "named insured", "deductible", "coverage limit"],
+    ),
+    "quotation": (
+        "Quotation",
+        ["quotation", "quote number", "quote no", "price quote",
+         "valid until", "estimate number", "quote date"],
+    ),
+    "credit_note": (
+        "Credit Note",
+        ["credit note", "credit memo", "credit memorandum"],
+    ),
+    "shipping_document": (
+        "Shipping Document",
+        ["bill of lading", "packing slip", "packing list", "delivery note",
+         "consignee", "shipper", "waybill"],
+    ),
+    "resume": (
+        "Resume / CV",
+        ["curriculum vitae", "work experience", "professional experience",
+         "professional summary", "technical skills", "employment history",
+         "references available"],
     ),
     "business_requirements": (
         "Business Requirements Document",

@@ -645,6 +645,12 @@ def _is_header_row(cells: list[list[Segment]], data_rows: list[list[list[Segment
 
 
 def _ruled_tables(page, page_number: int):
+    from app.services.generic_table_extractor import page_may_have_ruled_table
+
+    # Without two horizontal and two vertical rules there is no cell to find;
+    # skipping the (slow) finder there changes nothing it would return.
+    if not page_may_have_ruled_table(page):
+        return []
     try:
         # lines_strict: only real vector rules form cell borders — text
         # background rectangles don't invent columns.

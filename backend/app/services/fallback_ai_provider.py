@@ -43,6 +43,9 @@ class FallbackAIProvider(AIProvider):
             for item in self.providers
         ]
         self.provider_id = "fallback(" + "+".join(parts) + ")"
+        # The member that answered the most recent call (recorded per call
+        # by AIEnrichmentSession so a run names the model actually used).
+        self.last_provider: AIProvider | None = None
 
     async def _execute_with_fallback(
         self,
@@ -71,6 +74,7 @@ class FallbackAIProvider(AIProvider):
                     provider_attempt=idx + 1,
                     method=method_name,
                 )
+                self.last_provider = provider
                 if idx > 0:
                     logger.info(
                         "Fallback provider %s succeeded for %s after prior failures.",

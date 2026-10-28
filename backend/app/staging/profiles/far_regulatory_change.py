@@ -405,6 +405,8 @@ def _dataset_csv(definition: DatasetDefinition) -> ExportCapability:
 
 
 FAR_REGULATORY_CHANGE_PROFILE = StagingProfile(
+    # Published regulation text.
+    data_class="public",
     profile_id="far_regulatory_change",
     profile_version=1,
     display_name=DOCUMENT_LABEL,

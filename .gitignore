@@ -42,3 +42,10 @@ reference/regression/generated_v3.xlsx
 
 # The frontend's public production API URL is committed.
 !frontend/.env.production
+
+# Generated demo PDFs (scripts/demo_seed.py)
+backend/demo/output/
+
+# SQLite write-ahead files next to the local database
+*.db-shm
+*.db-wal

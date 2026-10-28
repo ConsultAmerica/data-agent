@@ -18,9 +18,13 @@ from app.api import (
     insights_search,
     intake,
     jobs,
+    key_dates,
     obligations,
     page_extraction,
     playbook,
+    provider_approvals,
+    recognition,
+    reference_data,
     reviewed_export,
     system,
     target_corrections,
@@ -35,15 +39,18 @@ from app.core.document_access import enforce_document_access
 from app.core.config import get_settings
 from app.core.observability import RequestIdMiddleware
 from app.core.security_headers import SecurityHeadersMiddleware
+from app.core.masking import install_log_redaction
 from app.core.version import get_version_metadata, resolve_git_sha
 from app.database.base import Base
 from app.database.migrate import (
+    ensure_actor_audit_log_columns,
     ensure_detected_target_columns,
     ensure_document_metadata_field_columns,
     ensure_document_page_columns,
     ensure_documents_columns,
     ensure_extraction_model_columns,
     ensure_metadata_field_audit_log_columns,
+    ensure_recognition_run_columns,
     ensure_target_correction_columns,
     run_alembic_upgrade,
 )
@@ -75,6 +82,10 @@ from app.models import document_source_structure as document_source_structure_mo
 from app.models import document_far_record as document_far_record_model  # noqa: F401
 from app.models import document_contract_structure as document_contract_structure_model  # noqa: F401
 from app.models import staged_upload as staged_upload_model  # noqa: F401
+from app.models import provider_approval as provider_approval_model  # noqa: F401
+from app.models import recognition_run as recognition_run_model  # noqa: F401
+from app.models import reference_data as reference_data_model  # noqa: F401
+from app.models import document_key_date as document_key_date_model  # noqa: F401
 from app.models import far_master_clause as far_master_clause_model  # noqa: F401
 from app.models import (  # noqa: F401
     document_delivery_schedule as document_delivery_schedule_model,
@@ -129,6 +140,8 @@ from app.models import (  # noqa: F401
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+# Mask account/SSN/IBAN/MRZ shapes in every log message (core/masking.py).
+install_log_redaction()
 
 app = FastAPI(
     title=settings.app_name,
@@ -281,6 +294,54 @@ app.include_router(
 )
 
 app.include_router(
+    provider_approvals.router,
+    prefix="/api/admin/provider-approvals",
+    tags=["Provider approvals"],
+)
+
+app.include_router(
+    recognition.router,
+    prefix="/api/recognition",
+    tags=["Recognition"],
+)
+
+app.include_router(
+    reference_data.router,
+    prefix="/api/reference",
+    tags=["Reference data"],
+)
+
+app.include_router(
+    key_dates.router,
+    prefix="/api/key-dates",
+    tags=["Key dates"],
+)
+
+app.include_router(
+    key_dates.documents_router,
+    prefix="/api/documents",
+    # Document isolation for every /{document_id} route (core/document_access.py).
+    dependencies=[Depends(enforce_document_access)],
+    tags=["Key dates"],
+)
+
+app.include_router(
+    reference_data.documents_router,
+    prefix="/api/documents",
+    # Document isolation for every /{document_id} route (core/document_access.py).
+    dependencies=[Depends(enforce_document_access)],
+    tags=["Reference data"],
+)
+
+app.include_router(
+    recognition.documents_router,
+    prefix="/api/documents",
+    # Document isolation for every /{document_id} route (core/document_access.py).
+    dependencies=[Depends(enforce_document_access)],
+    tags=["Recognition"],
+)
+
+app.include_router(
     obligations.router,
     prefix="/api/documents",
     # Document isolation for every /{document_id} route (core/document_access.py).
@@ -390,6 +451,8 @@ async def create_database_tables() -> None:
     ensure_extraction_model_columns(engine)
     ensure_target_correction_columns(engine)
     ensure_metadata_field_audit_log_columns(engine)
+    ensure_actor_audit_log_columns(engine)
+    ensure_recognition_run_columns(engine)
     ensure_detected_target_columns(engine)
     ensure_clause_playbook_rule_columns(engine)
 
@@ -472,7 +535,7 @@ async def version() -> dict[str, str]:
         # Back-compat aliases for existing callers/scripts.
         "git_sha": metadata["git_commit_sha"],
         "environment": settings.app_env,
-        "service": "data-agent",
+        "service": "dataomatix",
         **metadata,
     }
 
@@ -483,7 +546,7 @@ async def health_check() -> dict[str, str]:
 
     return {
         "status": "ok",
-        "service": "data-agent",
+        "service": "dataomatix",
     }
 
 
@@ -670,7 +733,7 @@ async def readiness_check(response: Response) -> dict[str, object]:
 
     return {
         "status": "ready" if ready else "not_ready",
-        "service": "data-agent",
+        "service": "dataomatix",
         "environment": settings.app_env,
         "git_sha": resolve_git_sha(),
         "oracle_dry_run": settings.oracle_dry_run,

@@ -29,6 +29,12 @@ from app.staging.models import (
     ValueType,
 )
 
+# Sensitivity of a profile's documents (docs/di-01-document-taxonomy.md
+# §4). Restricted documents are never sent to an external provider without
+# an explicit approval (app/recognition/policy.py).
+DataClass = Literal["public", "internal", "confidential", "restricted"]
+DATA_CLASSES: tuple[str, ...] = ("public", "internal", "confidential", "restricted")
+
 # Whether a profile's adapter consumes the schema-neutral source structure
 # (app/source_structure/). The extraction job builds that structure only
 # when the resolved profile needs it (see app/staging/preparation.py):
@@ -236,6 +242,7 @@ class StagingProfile:
     # dataset. A sheet titled SOURCE_SHEET lists the document and its
     # source datasets.
     export_sheets: tuple[ExportSheet, ...] = ()
+    data_class: DataClass = "confidential"
 
     @property
     def key(self) -> str:

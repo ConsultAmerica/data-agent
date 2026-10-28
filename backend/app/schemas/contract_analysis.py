@@ -21,6 +21,10 @@ ReviewActionLiteral = Literal[
     "mark_unknown",
 ]
 
+# Audit read models take `action: str`: the log holds field review actions
+# plus document-level events (approve, promote, delete), and one unexpected
+# historical row must not break the whole audit page.
+
 
 DocumentTypeLiteral = Literal[
     "Master Services Agreement",
@@ -134,11 +138,15 @@ class FieldReviewRequest(BaseModel):
 
 
 class AcceptAllRequest(BaseModel):
-    changed_by: str = Field(min_length=1, max_length=120)
+    changed_by: str | None = Field(default=None, max_length=120)
+    # Default: only low-risk pending values (review_routing.low_risk_blockers).
+    # Accepting flagged values too is an admin override and needs a reason.
+    include_flagged: bool = False
+    override_reason: str | None = Field(default=None, max_length=500)
 
 
 class FieldAuditEntry(BaseModel):
-    action: ReviewActionLiteral
+    action: str
 
     metadata_field_id: int | None = None
 
@@ -161,7 +169,7 @@ class GlobalAuditEntry(BaseModel):
     document_filename: str
     field_key: str
 
-    action: ReviewActionLiteral
+    action: str
 
     previous_value: str | None = None
     new_value: str | None = None
@@ -272,7 +280,9 @@ class ChildRelationshipsResponse(BaseModel):
 
 
 class ApproveDocumentRequest(BaseModel):
-    changed_by: str = Field(min_length=1, max_length=120)
+    # Ignored: the approver is the authenticated actor. Kept optional so
+    # older clients that still send a name keep working.
+    changed_by: str | None = Field(default=None, max_length=120)
 
 
 class ApproveDocumentResponse(BaseModel):
@@ -282,7 +292,9 @@ class ApproveDocumentResponse(BaseModel):
 
 
 class PromoteDocumentRequest(BaseModel):
-    changed_by: str = Field(min_length=1, max_length=120)
+    # Ignored: the approver is the authenticated actor. Kept optional so
+    # older clients that still send a name keep working.
+    changed_by: str | None = Field(default=None, max_length=120)
 
 
 class PromoteDocumentResponse(BaseModel):

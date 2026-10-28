@@ -9,6 +9,8 @@ interface IntakeProgressTrackerProps {
   complete?: boolean;
   /** Right-side actions (Run full extraction, API status). */
   actions?: ReactNode;
+  /** Inside a header band: no bar of its own (background, border, padding). */
+  embedded?: boolean;
 }
 
 /** Upload → Auto-classification → Entity extraction → Human-in-the-loop
@@ -17,12 +19,18 @@ export default function IntakeProgressTracker({
   activeStep,
   complete = false,
   actions,
+  embedded = false,
 }: IntakeProgressTrackerProps) {
   const activeIndex = intakeStepIndex(activeStep);
 
   return (
     <div
-      className="flex flex-col gap-4 border-b border-border bg-surface px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between"
+      className={[
+        "flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between",
+        embedded
+          ? "rounded-xl border border-primary/10 bg-surface/80 px-4 py-3 shadow-sm"
+          : "border-b border-border bg-surface px-4 py-4 sm:px-6",
+      ].join(" ")}
       data-testid="intake-progress-tracker"
     >
       <nav aria-label="Batch progress" className="min-w-0">

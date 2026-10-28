@@ -8,22 +8,28 @@ import PageHeader from "@/components/page-header";
 import EmptyState from "@/components/ui/empty-state";
 import { formatRelativeTime } from "@/lib/format";
 import { getGlobalAuditLog } from "@/lib/documents";
-import type { GlobalAuditEntry, ReviewAction } from "@/types/document";
+import type { AuditAction, GlobalAuditEntry } from "@/types/document";
 
 const PAGE_SIZE = 50;
 
-const ACTION_LABELS: Record<ReviewAction, string> = {
+const ACTION_LABELS: Record<AuditAction, string> = {
   accept: "Accepted",
   edit: "Edited",
   reject: "Rejected",
   mark_unknown: "Marked Unknown",
+  approve: "Approved",
+  promote: "Promoted",
+  delete: "Deleted",
 };
 
-const ACTION_STYLES: Record<ReviewAction, string> = {
+const ACTION_STYLES: Record<AuditAction, string> = {
   accept: "bg-success/10 text-success",
   edit: "bg-brand-blue/10 text-brand-blue",
   reject: "bg-error/10 text-error",
   mark_unknown: "bg-warning/10 text-warning",
+  approve: "bg-success/10 text-success",
+  promote: "bg-brand-blue/10 text-brand-blue",
+  delete: "bg-error/10 text-error",
 };
 
 export default function ActivityPage() {
@@ -137,10 +143,10 @@ export default function ActivityPage() {
                       <span
                         className={[
                           "rounded-full px-2 py-0.5 text-[11px] font-semibold",
-                          ACTION_STYLES[entry.action],
+                          ACTION_STYLES[entry.action] ?? "bg-surface-soft text-text-secondary",
                         ].join(" ")}
                       >
-                        {ACTION_LABELS[entry.action]}
+                        {ACTION_LABELS[entry.action] ?? entry.action}
                       </span>
                     </td>
                     <td className="px-5 py-3 text-text-secondary">

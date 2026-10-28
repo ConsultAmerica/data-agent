@@ -248,6 +248,7 @@ async def _resolve_with_ai(
             continue
 
         if not validate_source_value(
+            strict=True,  # AI-produced value: the quote alone is not evidence
             value=value,
             source_text=source_text,
             page_text=page.final_text or "",

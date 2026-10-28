@@ -156,3 +156,64 @@ def test_roles_without_delete_are_refused():
         assert not role_has_permission(role, "documents.delete")
         assert not role_has_permission(role, "documents.delete_own")
     assert role_has_permission("admin", "documents.delete")
+
+
+def test_audit_history_outlives_the_document():
+    from app.models.document_metadata_field import DocumentMetadataField
+    from app.models.metadata_field_audit_log import DOCUMENT_EVENT_FIELD_KEY, MetadataFieldAuditLog
+
+    document_id = _upload(_pdf(), f"audit-{uuid4()}.pdf", "application/pdf")
+    database = SessionLocal()
+    try:
+        database.add(
+            DocumentMetadataField(
+                document_id=document_id, field_group="Legal", field_key="governing_law",
+                label="Governing Law", value="Delaware", original_value="Delaware",
+                confidence=0.9, extraction_method="label_value",
+                evidence_json={"page_number": 1, "source_text": "Delaware"},
+                review_status="pending", extraction_source="contract",
+            )
+        )
+        database.commit()
+    finally:
+        database.close()
+    reviewed = client.post(
+        f"/api/documents/{document_id}/metadata-fields/governing_law/review",
+        json={"action": "accept", "changed_by": "Reviewer"},
+    )
+    assert reviewed.status_code == 200, reviewed.text
+
+    with patch("app.services.document_deletion.delete_object"):
+        assert client.delete(f"/api/documents/{document_id}").status_code == 204
+
+    database = SessionLocal()
+    try:
+        events = database.scalars(
+            select(MetadataFieldAuditLog)
+            .where(MetadataFieldAuditLog.document_id == document_id)
+            .order_by(MetadataFieldAuditLog.id)
+        ).all()
+    finally:
+        database.close()
+    assert [(e.field_key, e.action) for e in events] == [
+        ("governing_law", "accept"),
+        (DOCUMENT_EVENT_FIELD_KEY, "delete"),
+    ]
+    assert events[-1].actor_id == "actor-admin-default"
+
+    # Admins still see the history, labelled as a deleted document.
+    log = client.get("/api/documents/audit-log", params={"document_id": document_id})
+    assert log.status_code == 200, log.text
+    entries = log.json()["entries"]
+    assert {e["action"] for e in entries} == {"accept", "delete"}
+    assert {e["document_filename"] for e in entries} == {"Deleted document"}
+
+    # A workspace caller never sees another (or a deleted) document's history.
+    with enforced():
+        hidden = client.get(
+            "/api/documents/audit-log",
+            params={"document_id": document_id},
+            headers={"X-Workspace-Token": secrets.token_hex(32)},
+        )
+    assert hidden.status_code == 200, hidden.text
+    assert hidden.json()["entries"] == []

@@ -6,6 +6,7 @@ import { ChevronDown, ChevronRight, Eye } from "lucide-react";
 import ClickableFieldValue from "@/components/clickable-field-value";
 import ConfidenceIndicator from "@/components/confidence-indicator";
 import type { MetadataField, ReviewStatus } from "@/types/document";
+import { sourcePageLabel } from "@/lib/source-page";
 
 const GROUP_ORDER = [
   "Identification",
@@ -249,7 +250,7 @@ function FieldRow({
       {expanded && (
         <div className="border-t border-border/60 bg-surface-soft/50 px-4 py-3 text-sm">
           <dl className="grid gap-2 sm:grid-cols-2">
-            <Detail label="Source page" value={`Page ${field.evidence.page_number}`} />
+            <Detail label="Source page" value={sourcePageLabel(field.evidence.page_number)} />
             <Detail
               label="Extraction method"
               value={field.extraction_method}

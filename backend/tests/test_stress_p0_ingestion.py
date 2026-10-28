@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -198,6 +199,7 @@ async def test_mixed_language_labeled_fields_become_candidates() -> None:
     assert "date" in keys
 
 
+@pytest.mark.skipif(shutil.which("tesseract") is None, reason="Tesseract OCR not installed")
 def test_png_ocr_persists_final_text_and_discovers_invoice() -> None:
     png = _mixed_language_png()
     with patch("app.api.documents.upload_object"):

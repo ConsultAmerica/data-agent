@@ -90,6 +90,24 @@ EXTRACTION_MODEL_COLUMNS: dict[str, str | dict[str, str]] = {
 
 TARGET_CORRECTION_COLUMNS: dict[str, str | dict[str, str]] = {
     "action": "VARCHAR(20) NOT NULL DEFAULT 'edit'",
+    "actor_id": "VARCHAR(64)",
+    "reason_code": "VARCHAR(40)",
+    "reason_text": "TEXT",
+}
+
+
+# classification_audit_log and relationship_audit_log share this shape.
+ACTOR_AUDIT_LOG_COLUMNS: dict[str, str | dict[str, str]] = {
+    "actor_id": "VARCHAR(64)",
+}
+
+
+RECOGNITION_RUN_COLUMNS: dict[str, str | dict[str, str]] = {
+    "model_version": "VARCHAR(40)",
+    "pages": "INTEGER",
+    "input_tokens": "INTEGER",
+    "output_tokens": "INTEGER",
+    "estimated_cost_usd": "FLOAT",
 }
 
 
@@ -127,6 +145,8 @@ DOCUMENT_COLUMNS: dict[str, str | dict[str, str]] = {
     "processing_duration_seconds": "FLOAT",
     "approved_by": "VARCHAR(120)",
     "owner_workspace": "VARCHAR(64)",
+    "data_class": "VARCHAR(20)",
+    "data_class_source": "VARCHAR(20)",
     "approved_at": {"sqlite": "DATETIME", "postgresql": "TIMESTAMP WITH TIME ZONE"},
     "document_status": "VARCHAR(30)",
     "parent_relationship_reasons": "JSON",
@@ -202,6 +222,17 @@ def ensure_metadata_field_audit_log_columns(engine: Engine) -> None:
     _ensure_columns(
         engine, "metadata_field_audit_log", METADATA_FIELD_AUDIT_LOG_COLUMNS
     )
+
+
+def ensure_actor_audit_log_columns(engine: Engine) -> None:
+    """Add actor_id to the classification and relationship audit logs."""
+    _ensure_columns(engine, "classification_audit_log", ACTOR_AUDIT_LOG_COLUMNS)
+    _ensure_columns(engine, "relationship_audit_log", ACTOR_AUDIT_LOG_COLUMNS)
+
+
+def ensure_recognition_run_columns(engine: Engine) -> None:
+    """Add usage columns to recognition_runs created before they existed."""
+    _ensure_columns(engine, "recognition_runs", RECOGNITION_RUN_COLUMNS)
 
 
 def ensure_detected_target_columns(engine: Engine) -> None:

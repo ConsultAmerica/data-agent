@@ -14,19 +14,39 @@ if str(ROOT) not in sys.path:
 # set before anything below imports app.main (which triggers that first
 # call) — otherwise every test run writes real rows into the dev DB the
 # uvicorn server is also reading from.
-os.environ.setdefault(
-    "DATABASE_URL", f"sqlite:///{ROOT / 'test_data_agent.db'}"
-)
+if "DATABASE_URL" not in os.environ:
+    # Fresh file per session: rows left by an earlier run (e.g. an upload
+    # with the same checksum) must not change this run's results. Only
+    # the suite's own default file is ever removed.
+    _test_db = ROOT / "test_data_agent.db"
+    for _suffix in ("", "-wal", "-shm", "-journal"):
+        Path(f"{_test_db}{_suffix}").unlink(missing_ok=True)
+    os.environ["DATABASE_URL"] = f"sqlite:///{_test_db}"
+# The seeded service actor has no key unless one is configured; the
+# suite authenticates as it with this test-only key.
+os.environ.setdefault("SEED_SERVICE_API_KEY", "test-only-service-api-key")
+# Never reach a real AI vendor from the suite: the developer's .env may
+# hold live keys. Overridden (not setdefault) so a shell can't leak one
+# in; tests that need a provider inject a fake.
+for _name in (
+    "GEMINI_API_KEY", "OPENAI_API_KEY", "CONVERA_API_KEY", "OLLAMA_BASE_URL",
+    "AZURE_DI_ENDPOINT", "AZURE_DI_KEY", "GOOGLE_DOCAI_PROCESSOR_ID", "GOOGLE_DOCAI_CREDENTIALS_FILE",
+):
+    os.environ[_name] = ""
+os.environ["CONVERA_ENABLED"] = "false"
+os.environ["OCR_ENGINE"] = "tesseract"
 
 from app.main import app  # noqa: E402
 from app.database.base import Base  # noqa: E402
 from app.database.migrate import (  # noqa: E402
+    ensure_actor_audit_log_columns,
     ensure_detected_target_columns,
     ensure_document_metadata_field_columns,
     ensure_document_page_columns,
     ensure_documents_columns,
     ensure_extraction_model_columns,
     ensure_metadata_field_audit_log_columns,
+    ensure_recognition_run_columns,
     ensure_target_correction_columns,
 )
 from app.database.session import engine  # noqa: E402
@@ -123,6 +143,8 @@ def _initialize_database() -> None:
     ensure_extraction_model_columns(engine)
     ensure_target_correction_columns(engine)
     ensure_metadata_field_audit_log_columns(engine)
+    ensure_actor_audit_log_columns(engine)
+    ensure_recognition_run_columns(engine)
     ensure_detected_target_columns(engine)
     from app.database.playbook_columns import ensure_clause_playbook_rule_columns
 

@@ -22,8 +22,21 @@ ScanMethod = Literal[
 # line and glue one line's label to a value two lines down — these
 # patterns are all meant to stay within a single line.
 
+# A "." separates label from value only when it doesn't follow a digit:
+# in "Federal Income Tax 200.00" the dot is a decimal point, not the end
+# of a label "Federal Income Tax 200" with the value "00".
 _INLINE_LABEL_VALUE = re.compile(
-    r"^[ \t]*([A-Z][A-Za-z0-9 /#.'\-]{2,40}?)[ \t]*[:.]{1,3}[ \t]*(\S.{0,120})[ \t]*$",
+    r"^[ \t]*([A-Z][A-Za-z0-9 /#.'\-]{2,40}?)[ \t]*(?::{1,3}|(?<!\d)\.{1,3})[ \t]*(\S.{0,120})[ \t]*$",
+    re.MULTILINE,
+)
+
+# "Gross Pay 2,000.00", "Subtotal 8.48  Tax 0.68  Total 9.16" — a Title
+# Case or ALL CAPS label followed by a money amount, with no colon. Pay
+# stubs, receipts and statements print totals this way. A later pair on
+# the same line starts right after the previous amount.
+_LABEL_AMOUNT = re.compile(
+    r"(?:^|(?<=\.\d\d))[ \t]*((?:[A-Z][A-Za-z/#&'\-]*)(?:[ \t][A-Z][A-Za-z/#&'\-]*){0,3})"
+    r"[ \t]*:?[ \t]+(\(?-?\$?\d[\d,]*\.\d{2}\)?)(?=[ \t]|$)",
     re.MULTILINE,
 )
 
@@ -97,6 +110,19 @@ _KEEP_UPPER_TOKENS = {
     "POC",
     "FOB",
     "CD",
+    # Pay stubs, receipts, cheques and ID documents.
+    "ID",
+    "YTD",
+    "SSN",
+    "PO",
+    "GPA",
+    "VAT",
+    "GST",
+    "MICR",
+    "ABA",
+    "IBAN",
+    "SWIFT",
+    "DOB",
 }
 
 
@@ -459,6 +485,7 @@ _INLINE_PATTERNS: tuple[tuple[re.Pattern[str], float], ...] = (
     (_INLINE_LABEL_VALUE, 0.78),
     (_INLINE_LABEL_VALUE_WIDE_GAP, 0.8),
     (_DOT_LEADER, 0.76),
+    (_LABEL_AMOUNT, 0.78),
 )
 
 # A dot-leader match ("ATTACHMENT J-1 ........ 69") is a table-of-contents
@@ -472,11 +499,58 @@ _INLINE_PATTERNS: tuple[tuple[re.Pattern[str], float], ...] = (
 _TOC_PAGE_NUMBER_VALUE = re.compile(r"^\d{1,4}$")
 
 
+# "Employee: Jane Doe   Employee ID 4471" — a wide gap, then a second
+# label with its own value. Only a remainder that is unmistakably another
+# label (a colon, or an ID/No./Number/# token) splits the value, so an
+# address with a double space ("1 Main St  Suite 4") is left whole.
+_TRAILING_PAIR = re.compile(
+    r"[ \t]{2,}([A-Z][A-Za-z /]{1,30}?(?:[ \t]*:|[ \t]+(?:ID|No\.?|Number|#)))[ \t]*(\S.*)$"
+)
+
+
+_WIDE_GAP_SPLIT = re.compile(r"[ \t]{2,}")
+_COLON_PAIR = re.compile(r"^([A-Z][A-Za-z /#.'\-]{1,30}?)[ \t]*:[ \t]*(\S.*)$")
+# A letter's greeting ("Dear Ms. Patel,") is not a label and its value.
+_SALUTATION = re.compile(r"^(dear|hi|hello|to whom)\b", re.IGNORECASE)
+
+
+def _split_trailing_pair(value: str) -> tuple[str, tuple[str, str] | None]:
+    match = _TRAILING_PAIR.search(value)
+    if not match or match.start() == 0:
+        return value, None
+    return value[: match.start()].strip(), (match.group(1).rstrip(" :\t"), match.group(2).strip())
+
+
 def _scan_inline_regex(text: str) -> list[ScannedPair]:
     pairs: list[ScannedPair] = []
     for pattern, confidence in _INLINE_PATTERNS:
         for match in pattern.finditer(text):
             label, value = match.group(1).strip(), match.group(2).strip()
+            # A label never spans a column gap: in "FIRST NATIONAL BANK
+            # Check No: 1001" only the text after the gap is the label.
+            label = _WIDE_GAP_SPLIT.split(label)[-1]
+            if _SALUTATION.match(label):
+                continue
+            if pattern is _INLINE_LABEL_VALUE_WIDE_GAP:
+                # "FIRST NATIONAL BANK      Check No: 1001": the caps text is
+                # a heading; the real pair is the "Label: value" after it.
+                inner = _COLON_PAIR.match(value)
+                if inner:
+                    label, value = inner.group(1).strip(), inner.group(2).strip()
+            value, trailing = _split_trailing_pair(value)
+            if trailing is not None:
+                second_label, second_value = trailing
+                second_display = format_display_label(second_label)
+                if _acceptable_pair_value(second_value) and not _looks_like_noise(second_label):
+                    pairs.append(
+                        ScannedPair(
+                            raw_label=second_display,
+                            normalized_label=_normalize_label(second_display),
+                            value=second_value,
+                            method="inline_regex",
+                            confidence=confidence,
+                        )
+                    )
             if not label or not value or _looks_like_noise(label):
                 continue
             if pattern is _DOT_LEADER and _TOC_PAGE_NUMBER_VALUE.match(value):
@@ -510,6 +584,10 @@ def _scan_stacked_lines(text: str) -> list[ScannedPair]:
         if not _acceptable_pair_value(value):
             continue
         if _ALL_CAPS.match(value):
+            continue
+        # The next line is itself "Label: value" — the line above is a
+        # heading, not that line's label.
+        if _INLINE_LABEL_VALUE.match(value):
             continue
         display = format_display_label(label)
         pairs.append(

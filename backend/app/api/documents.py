@@ -44,6 +44,7 @@ from app.schemas.document import (
     SelectPortfolioFileRequest,
     UploadedDocumentResponse,
 )
+from app.staging.document_categories import category_counts, filter_by_category, ordered_counts
 from app.staging.document_labels import document_labels
 from app.services.document_deletion import delete_documents
 from app.services.document_intake import (
@@ -62,6 +63,7 @@ from app.core.document_access import (
     require_document_access,
     scope_documents,
     staged_owner,
+    workspace_scoped,
 )
 from app.core.auth import ActorContext, get_current_actor, require_any_permission, require_permission
 from app.core.observability import bind_job_context, log_event
@@ -1223,6 +1225,7 @@ def search_documents(
     repository_status: str | None = None,
     family: str | None = None,
     profile_id: str | None = None,
+    category: str | None = None,
     sort_by: str = "uploaded_at",
     sort_dir: str = "desc",
     limit: int = 25,
@@ -1296,6 +1299,9 @@ def search_documents(
 
     if profile_id:
         base_query = _filter_by_profile(base_query, profile_id)
+
+    if category:
+        base_query = filter_by_category(base_query, category)
 
     needs_computed_filter = bool(
         status
@@ -1407,15 +1413,21 @@ def _filter_by_profile(query, profile_id: str):
 )
 def get_document_status_counts(
     family: str | None = None,
+    category: str | None = None,
     database: Session = Depends(get_database),
     actor: ActorContext = Depends(get_current_actor),
 ) -> DocumentStatusCountsResponse:
     """Per-status totals for the Documents header in one scan, instead of
-    one capped summary scan per status through /search."""
+    one capped summary scan per status through /search. Category counts
+    cover every document of the other filters, so each category tab can
+    show its own count."""
 
     base_query = scope_documents(select(Document), actor)
     if family:
         base_query = _filter_by_family(base_query, family)
+    by_category = category_counts(database, base_query)
+    if category:
+        base_query = filter_by_category(base_query, category)
 
     total = (
         database.scalar(
@@ -1433,7 +1445,12 @@ def get_document_status_counts(
         status = compute_document_status(database, document)
         by_status[status] = by_status.get(status, 0) + 1
 
-    return DocumentStatusCountsResponse(total=total, by_status=by_status)
+    return DocumentStatusCountsResponse(
+        total=total,
+        by_status=by_status,
+        by_category=by_category,
+        categories=ordered_counts(by_category),
+    )
 
 
 @router.get(
@@ -1515,8 +1532,12 @@ async def get_global_audit_log(
     Oracle/classification/relationship audits — those remain on their own APIs.
     """
 
-    visible = scope_documents(select(Document.id), actor)
-    conditions = [MetadataFieldAuditLog.document_id.in_(visible)]
+    conditions = []
+    if workspace_scoped(actor):
+        # Workspace callers see only their own documents' history; other
+        # roles also see the retained history of deleted documents.
+        visible = scope_documents(select(Document.id), actor)
+        conditions.append(MetadataFieldAuditLog.document_id.in_(visible))
 
     if document_id:
         conditions.append(MetadataFieldAuditLog.document_id == document_id)
@@ -1565,7 +1586,7 @@ async def get_global_audit_log(
         GlobalAuditEntry(
             document_id=row.document_id,
             document_filename=filenames.get(
-                row.document_id, "Unknown document"
+                row.document_id, "Deleted document"
             ),
             field_key=row.field_key,
             action=row.action,
@@ -1640,4 +1661,6 @@ async def get_document(
         ingestion_provenance=document.ingestion_provenance,
         agency=intake.agency if intake else None,
         contracting_officer=intake.contracting_officer if intake else None,
+        data_class=document.data_class,
+        data_class_source=document.data_class_source,
     )

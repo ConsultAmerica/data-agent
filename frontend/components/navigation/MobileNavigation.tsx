@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ArrowRight, ChevronDown, Plus, Sparkles, X } from "lucide-react";
 
-import DataAgentLogo from "@/components/navigation/data-agent-logo";
+import DataomatixLogo from "@/components/navigation/dataomatix-logo";
 import { TOP_MENUS, type TopMenu } from "@/components/navigation/nav-config";
 
 interface MobileNavigationProps {
@@ -64,7 +64,7 @@ function Drawer({ onClose }: { onClose: () => void }) {
       <aside className="absolute inset-y-0 left-0 flex w-[min(100vw,22rem)] flex-col overflow-hidden bg-surface shadow-2xl sm:w-[24rem]">
         <div className="flex items-center justify-between border-b border-border px-4 py-3.5">
           <div className="flex min-w-0 items-center">
-            <DataAgentLogo variant="wordmark" tone="onLight" size={36} />
+            <DataomatixLogo variant="wordmark" tone="onLight" size={36} />
           </div>
           <button
             type="button"

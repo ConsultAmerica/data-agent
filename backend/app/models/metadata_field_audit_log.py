@@ -1,9 +1,14 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
+
+
+# field_key of document-level events (approve, promote, delete), which
+# have no metadata_field_id.
+DOCUMENT_EVENT_FIELD_KEY = "__document__"
 
 
 class MetadataFieldAuditLog(Base):
@@ -22,9 +27,10 @@ class MetadataFieldAuditLog(Base):
         autoincrement=True,
     )
 
+    # No FK to documents: the audit trail outlives the document it
+    # describes (document deletion keeps it and logs a deletion event).
     document_id: Mapped[str] = mapped_column(
         String(36),
-        ForeignKey("documents.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

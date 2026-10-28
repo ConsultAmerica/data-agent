@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { CheckCheck, Inbox, RefreshCw } from "lucide-react";
+import { CheckCheck, FileStack, Flag, Inbox, ListChecks, RefreshCw, ShieldAlert } from "lucide-react";
 
 import ContentSection from "@/components/layout/ContentSection";
-import PageHero from "@/components/layout/PageHero";
+import ConsoleHeader from "@/components/layout/ConsoleHeader";
 import FieldReviewList from "@/components/review-queue/field-review-list";
 import QueueFilterBar from "@/components/review-queue/queue-filter-bar";
 import {
@@ -37,6 +37,8 @@ import {
   type ReviewQueueEntry,
   type ReviewQueueFieldItem,
 } from "@/types/document";
+import ReviewReadOnlyNotice from "@/components/review/review-read-only-notice";
+import { useReviewMutationsEnabled } from "@/lib/review-gate";
 
 const DEFAULT_REVIEWER = "Dataomatix";
 
@@ -52,6 +54,7 @@ function sameField(a: ReviewQueueFieldItem, b: { document_id: string; metadata_f
 }
 
 export default function ReviewQueuePage() {
+  const reviewEnabled = useReviewMutationsEnabled();
   const [entries, setEntries] = useState<ReviewQueueEntry[]>([]);
   const [fieldItems, setFieldItems] = useState<ReviewQueueFieldDetail[]>([]);
   const [assigneeInfo, setAssigneeInfo] = useState<AssigneesResult | null>(null);
@@ -139,10 +142,20 @@ export default function ReviewQueuePage() {
     });
 
     try {
-      await acceptAllMetadataFields(entry.document_id, DEFAULT_REVIEWER);
-      setEntries((current) =>
-        current.filter((item) => item.document_id !== entry.document_id),
-      );
+      // Only low-risk values are accepted in bulk; flagged ones stay
+      // pending, so the document stays in the queue until they're decided.
+      const updated = await acceptAllMetadataFields(entry.document_id, DEFAULT_REVIEWER);
+      const stillPending = updated.filter((field) => field.review_status === "pending").length;
+      if (stillPending === 0) {
+        setEntries((current) =>
+          current.filter((item) => item.document_id !== entry.document_id),
+        );
+      } else {
+        setRowErrors((current) => ({
+          ...current,
+          [entry.document_id]: `${stillPending} flagged value${stillPending === 1 ? "" : "s"} still need an individual decision.`,
+        }));
+      }
     } catch (err) {
       setRowErrors((current) => ({
         ...current,
@@ -262,9 +275,8 @@ export default function ReviewQueuePage() {
 
   return (
     <>
-      <PageHero
-        compact
-        eyebrow="Document Processing"
+      <ConsoleHeader
+        icon={ListChecks}
         title="Review queue"
         description="Accept, correct or reject extracted values. Every decision is recorded in the audit trail."
         actions={
@@ -272,7 +284,7 @@ export default function ReviewQueuePage() {
             type="button"
             onClick={() => void load()}
             disabled={loading}
-            className="btn-hero-secondary disabled:opacity-50"
+            className="btn-secondary h-9 px-3 text-sm disabled:opacity-50"
           >
             <RefreshCw
               className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
@@ -280,10 +292,41 @@ export default function ReviewQueuePage() {
             Refresh
           </button>
         }
+        tabsLabel="Issue type"
+        tabs={ISSUE_TABS.map(([id, label]) => ({
+          id,
+          label,
+          count: loading ? undefined : (issueCounts[id] ?? 0),
+          active: filters.issue === id,
+          onSelect: () => setFilters((current) => ({ ...current, issue: id })),
+        }))}
       />
 
       <ContentSection>
-        <p className="mb-3 text-sm text-text-secondary">
+        <ReviewReadOnlyNotice className="mb-3" />
+        <dl className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="review-summary">
+          {(
+            [
+              ["Flagged values", attentionItems.length, Flag, "bg-warning/10 text-warning"],
+              ["Documents", attentionDocuments, FileStack, "bg-primary-soft text-primary"],
+              ["Critical", (issueCounts.validation ?? 0) + (issueCounts.conflicts ?? 0), ShieldAlert, "bg-danger/10 text-danger"],
+              ["Ready to accept", readyCount, CheckCheck, "bg-success/10 text-success"],
+            ] as const
+          ).map(([label, value, Icon, tone]) => (
+            <div key={label} className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-surface px-4 py-3.5 shadow-sm">
+              <div>
+                <dt className="text-xs text-text-muted">{label}</dt>
+                <dd className="mt-0.5 text-2xl font-semibold tabular-nums tracking-tight text-foreground">
+                  {loading && entries.length === 0 ? <span className="text-text-muted">—</span> : value.toLocaleString()}
+                </dd>
+              </div>
+              <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${tone}`}>
+                <Icon className="h-5 w-5" aria-hidden="true" />
+              </span>
+            </div>
+          ))}
+        </dl>
+        <p className="sr-only">
           <span className="font-medium text-foreground">{attentionItems.length}</span>{" "}
           {attentionItems.length === 1 ? "value" : "values"} flagged for review
           {attentionDocuments > 0 && ` in ${attentionDocuments} ${attentionDocuments === 1 ? "document" : "documents"}`}
@@ -328,7 +371,8 @@ export default function ReviewQueuePage() {
               <button
                 type="button"
                 onClick={() => setConfirmLowRisk(true)}
-                className="btn-secondary px-3 py-1.5 text-xs"
+                disabled={!reviewEnabled}
+                className="btn-secondary px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Accept low-risk values
               </button>
@@ -340,26 +384,6 @@ export default function ReviewQueuePage() {
             {batchNotice}
           </p>
         )}
-        <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Issue type">
-          {ISSUE_TABS.map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={filters.issue === id}
-              onClick={() => setFilters((current) => ({ ...current, issue: id }))}
-              className={[
-                "rounded-full px-3 py-1.5 text-xs font-semibold",
-                filters.issue === id
-                  ? "bg-primary text-white"
-                  : "border border-border bg-surface text-text-secondary",
-              ].join(" ")}
-            >
-              {label}
-              {!loading && <span className="ml-1.5 tabular-nums opacity-75">{issueCounts[id] ?? 0}</span>}
-            </button>
-          ))}
-        </div>
-
         <QueueFilterBar
           filters={filters}
           onChange={setFilters}
@@ -495,13 +519,13 @@ export default function ReviewQueuePage() {
                       <button
                         type="button"
                         onClick={() => handleAcceptAll(entry)}
-                        disabled={acceptingId === entry.document_id}
+                        disabled={!reviewEnabled || acceptingId === entry.document_id}
                         className="btn-secondary py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <CheckCheck className="h-3.5 w-3.5" />
                         {acceptingId === entry.document_id
                           ? "Accepting..."
-                          : "Accept All"}
+                          : "Accept low-risk"}
                       </button>
 
                       <Link

@@ -11,11 +11,14 @@ from app.core.observability import log_event
 from app.models.document import Document
 from app.models.document_page import DocumentPage
 from app.models.page_text_block import PageTextBlock
+from app.recognition.page_ocr import resolve_page_ocr_engine
 from app.services.document_provider import (
     ConveraError,
     extract_document,
 )
 from app.services.generic_table_extractor import (
+    PageTableExtractor,
+    TablePrefetch,
     extract_page_tables,
 )
 from app.services.page_text_extractor import extract_page
@@ -242,6 +245,7 @@ def process_fitz_pages(
         is_raster_image = True
 
     pdf: fitz.Document | None = None
+    table_prefetch: TablePrefetch | None = None
 
     try:
         pdf = fitz.open(file_path)
@@ -259,12 +263,23 @@ def process_fitz_pages(
         document_record.processing_status = "processing"
         database.commit()
 
+        # None (OCR_ENGINE=tesseract, the default) = the built-in path.
+        page_ocr = (
+            resolve_page_ocr_engine(database, document_record, settings)
+            if run_ocr
+            else None
+        )
+
         native_pages = 0
         ocr_required_pages = 0
         ocr_completed_pages = 0
         failed_pages = 0
         processed_pages: list[int] = []
         warnings: list[str] = []
+        # One open PDF for every page's table pass (see PageTableExtractor);
+        # large documents have their tables read in parallel up front.
+        table_extractor = PageTableExtractor(file_path)
+        table_prefetch = TablePrefetch(file_path, [] if is_raster_image else requested_page_numbers)
 
         for page_number in requested_page_numbers:
             existing_page = database.scalar(
@@ -331,6 +346,7 @@ def process_fitz_pages(
                     settings=settings,
                     run_ocr=run_ocr,
                     force_ocr=is_raster_image,
+                    page_ocr=page_ocr,
                 )
 
                 if is_raster_image:
@@ -343,10 +359,9 @@ def process_fitz_pages(
                         fitz_page
                     )
 
-                    page_tables = extract_page_tables(
-                        file_path,
-                        page_number,
-                    )
+                    page_tables = table_prefetch.get(page_number)
+                    if page_tables is None:
+                        page_tables = table_extractor.page_tables(page_number, fitz_page)
 
                 # Scanned pages: reconstruct table geometry from OCR
                 # word coordinates when native table extract is empty.
@@ -497,6 +512,9 @@ def process_fitz_pages(
                     f"Page {page_number}: extraction failed: {exc}"
                 )
 
+        table_extractor.close()
+        table_prefetch.close()
+
         total_processed_statement = select(
             DocumentPage
         ).where(
@@ -615,5 +633,7 @@ def process_fitz_pages(
         ) from exc
 
     finally:
+        if table_prefetch is not None:
+            table_prefetch.close()
         if pdf is not None:
             pdf.close()

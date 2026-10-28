@@ -14,7 +14,7 @@ from app.core.rbac import role_has_permission
 from app.database.session import SessionLocal
 from app.main import app
 from app.models.actor import Actor
-from app.services.actor_seed import DEFAULT_SERVICE_API_KEY
+from app.core.config import get_settings
 
 client = TestClient(app)
 
@@ -89,7 +89,7 @@ def test_rbac_enforced_accepts_service_api_key() -> None:
         with patch("app.core.config.get_settings", return_value=enforced):
             response = client.get(
                 f"/api/documents/{document_id}/export",
-                headers={"Authorization": f"Bearer {DEFAULT_SERVICE_API_KEY}"},
+                headers={"Authorization": f"Bearer {get_settings().seed_service_api_key}"},
             )
     assert response.status_code in {200, 404}
     # 404 only if no metadata fields — create none; export needs fields.
