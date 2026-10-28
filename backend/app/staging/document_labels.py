@@ -93,3 +93,21 @@ def document_labels(database: Session, document: Document) -> dict:
         "staging_status": "staged",
         **category_fields(pin.document_family),
     }
+
+
+def document_classification(database: Session, document: Document) -> dict[str, str | None]:
+    """Type and category for an intake queue: the persisted resolution's
+    once staged, before then the resolver's current reading of the
+    document (not persisted), so a file is grouped as soon as it's read."""
+
+    pin = database.scalars(
+        select(DocumentStagingWorkbook).where(DocumentStagingWorkbook.document_id == document.id)
+    ).first()
+    if pin is not None:
+        return {"type_label": type_label(database, document, pin), **category_fields(pin.document_family)}
+    from app.staging.resolver import resolve_profile
+
+    resolution = resolve_profile(database, document)
+    label = None if resolution.family in _UNKNOWN_FAMILIES else resolution.family_label
+    return {"type_label": label, **category_fields(resolution.family)}
+

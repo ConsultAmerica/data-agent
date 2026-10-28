@@ -71,3 +71,32 @@ def test_status_counts_narrow_to_a_category() -> None:
         assert narrowed["total"] == count, category
         # The category tabs keep showing every category's count.
         assert narrowed["by_category"] == everything["by_category"]
+
+
+def test_targets_report_type_and_category_before_staging() -> None:
+    # Imported here: the helper uploads through the same app client.
+    from uuid import uuid4
+
+    from tests.test_dynamic_schema_picker import upload_and_discover
+
+    document_id = upload_and_discover(
+        [
+            "INVOICE",
+            "Invoice Number: INV-20931",
+            "Invoice Date: 2026-03-02",
+            "Bill To: Acme Logistics LLC",
+            "Payment Terms: Net 30",
+            "Subtotal: $1,200.00",
+            "Tax: $96.00",
+            "Amount Due: $1,296.00",
+            "Total Due: $1,296.00",
+        ],
+        f"invoice-{uuid4()}.pdf",
+    )
+    targets = client.get(f"/api/documents/{document_id}/targets").json()
+    assert targets["category"] == "financial"
+    assert targets["category_label"] == "Financial"
+    assert targets["type_label"] == "Invoice"
+    # Not staged yet: the document list still says so.
+    listed = client.get("/api/documents/search", params={"category": "unclassified", "limit": 100}).json()
+    assert document_id in {document["document_id"] for document in listed["documents"]}

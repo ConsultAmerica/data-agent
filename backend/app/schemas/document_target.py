@@ -61,6 +61,8 @@ class DiscoverSchemaResponse(BaseModel):
     # staging resolution, else the resolver's current reading of it.
     category: str | None = None
     category_label: str | None = None
+    # The type the document is listed as (e.g. "SF 1442 Contract Award").
+    type_label: str | None = None
     targets: list[DocumentTarget] = Field(default_factory=list)
     counts_by_type: dict[str, int] = Field(default_factory=dict)
     generated_at: datetime

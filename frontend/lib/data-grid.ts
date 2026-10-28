@@ -21,11 +21,16 @@ export function columnWidth(column: StagingColumn, records: StagingRecord[]): nu
   return Math.max(valueWidth(column, records), headerWordWidth(column.display_label));
 }
 
+/** Room a header needs beside its words: cell padding, the sort arrow and
+ * the column's select checkbox. */
+const HEADER_CHROME = 64;
+
 /** Headers wrap only between words: a column is never narrower than its
- * longest header word (11px uppercase ≈ 7.5px per letter, plus padding). */
-function headerWordWidth(label: string): number {
+ * longest header word (11px uppercase, wide tracking ≈ 8px per letter) plus the header's
+ * padding, sort arrow and checkbox — so no label is clipped mid-word. */
+export function headerWordWidth(label: string): number {
   const longest = Math.max(0, ...label.split(/[\s/]+/).map((word) => word.length));
-  return Math.min(MAX_COLUMN_WIDTH, Math.round(longest * 7.5 + 26));
+  return Math.min(MAX_COLUMN_WIDTH, Math.round(longest * 8 + HEADER_CHROME));
 }
 
 function valueWidth(column: StagingColumn, records: StagingRecord[]): number {
@@ -58,7 +63,7 @@ function clamp(width: number): number {
 const IDENTIFIER = /(^|\b)(number|no\.?|id|item no\.?|clin|code|clause number|reference|far number|record id|key)$/i;
 const TITLE = /^(title|field \/ title|name|display name|field|description|supplies\/services)$/i;
 /** Frozen columns never take more than this much of the grid's width. */
-export const MAX_FROZEN_WIDTH = 640;
+export const MAX_FROZEN_WIDTH = 720;
 
 /** How many leading columns stay frozen on horizontal scroll: through the
  * record's identifier and, when it follows closely, its title — found by

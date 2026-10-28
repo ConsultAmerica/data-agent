@@ -121,17 +121,3 @@ def ordered_counts(counts: dict[str, int]) -> list[dict]:
         for key in order
         if counts.get(key)
     ]
-
-
-def document_category(database: Session, document: Document) -> dict[str, str]:
-    """The document's category: its persisted resolution's, or — before it
-    has been staged — the resolver's current reading of it (not persisted)."""
-
-    family = database.scalar(
-        select(DocumentStagingWorkbook.document_family).where(DocumentStagingWorkbook.document_id == document.id)
-    )
-    if family is None:
-        from app.staging.resolver import resolve_profile
-
-        family = resolve_profile(database, document).family
-    return category_fields(family)

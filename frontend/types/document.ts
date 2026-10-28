@@ -330,6 +330,8 @@ export interface DiscoverSchemaResult {
   /** Broad category the document is grouped under. */
   category?: string | null;
   category_label?: string | null;
+  /** The type the document is listed as, e.g. "SF 1442 Contract Award". */
+  type_label?: string | null;
   targets: DocumentTarget[];
   counts_by_type: Partial<Record<TargetType, number>>;
   generated_at: string;

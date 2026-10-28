@@ -254,10 +254,10 @@ export default function ProcessingQueue({
         </p>
       </div>
 
-      {groups.length > 1 || groups[0]?.key != null ? (
+      {groups.some((group) => group.key !== PENDING) ? (
         <div className="mt-4 space-y-4" data-testid="processing-queue">
           {groups.map((group) => (
-            <section key={group.key ?? "pending"} aria-label={group.label} data-testid="queue-category">
+            <section key={group.key} aria-label={group.label} data-testid="queue-category">
               <h3 className="flex items-baseline gap-2 border-b border-border pb-1.5 text-xs font-semibold uppercase tracking-wide text-text-secondary">
                 {group.label}
                 <span className="font-normal tabular-nums text-text-muted">{group.items.length}</span>
@@ -301,22 +301,31 @@ export default function ProcessingQueue({
 }
 
 interface QueueGroup {
-  key: string | null;
+  key: string;
   label: string;
   items: QueueItem[];
 }
 
+const NEEDS_ATTENTION = "__attention__";
+const PENDING = "__pending__";
+const ATTENTION_STATUSES = new Set<QueueItem["status"]>(["duplicate", "portfolio", "failed"]);
+
 /** Files under their detected category, in the order categories first
- * appear; files whose type isn't known yet wait in a last group. */
+ * appear; uncategorized files waiting on the user (duplicate, portfolio
+ * choice, failure) come first, files still being read come last. */
 function groupByCategory(items: QueueItem[]): QueueGroup[] {
-  const groups = new Map<string | null, QueueGroup>();
+  const groups = new Map<string, QueueGroup>();
   for (const item of items) {
-    const key = item.category;
-    const group = groups.get(key) ?? { key, label: key ? item.categoryLabel ?? key : "Recognizing type…", items: [] };
+    const key = item.category ?? (ATTENTION_STATUSES.has(item.status) ? NEEDS_ATTENTION : PENDING);
+    const label =
+      key === NEEDS_ATTENTION ? "Needs attention" : key === PENDING ? "Recognizing type…" : (item.categoryLabel ?? key);
+    const group = groups.get(key) ?? { key, label, items: [] };
     group.items.push(item);
     groups.set(key, group);
   }
-  const pending = groups.get(null);
-  groups.delete(null);
-  return pending ? [...groups.values(), pending] : [...groups.values()];
+  const attention = groups.get(NEEDS_ATTENTION);
+  const pending = groups.get(PENDING);
+  groups.delete(NEEDS_ATTENTION);
+  groups.delete(PENDING);
+  return [...(attention ? [attention] : []), ...groups.values(), ...(pending ? [pending] : [])];
 }

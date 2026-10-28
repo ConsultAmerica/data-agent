@@ -23,6 +23,7 @@ import {
   columnWidth,
   frozenColumnCount,
   frozenOffsets,
+  headerWordWidth,
 } from "@/lib/data-grid";
 import { fieldToneClass, toneFromStagingCell } from "@/lib/field-tone";
 import type { StagingColumn, StagingDataset, StagingRecord } from "@/lib/staging-workbook";
@@ -252,7 +253,9 @@ export default function StagingDatasetTable({
         const set = sizes.columns[column.canonical_field];
         if (set) return set;
         let width = columnWidth(column, dataset.records);
-        if (trailing.has(column.canonical_field)) width = Math.min(width, TRAILING_MAX_WIDTH);
+        if (trailing.has(column.canonical_field)) {
+          width = Math.min(width, Math.max(TRAILING_MAX_WIDTH, headerWordWidth(column.display_label)));
+        }
         return dense ? Math.max(MIN_COLUMN_WIDTH, Math.min(DENSE_MAX_WIDTH, Math.round(width * 0.85))) : width;
       }),
     [columns, trailing, dataset.records, dense, sizes.columns],
@@ -310,7 +313,7 @@ export default function StagingDatasetTable({
   function renderValue(record: StagingRecord, column: StagingColumn) {
     const cell = record.cells[column.canonical_field];
     const text = cellText(record, column);
-    if (!text) return <span className="text-text-muted">—</span>;
+    if (!text) return <span className="text-text-muted/50">—</span>;
     const requestId = `${dataset.dataset_id}:${record.record_id}:${column.canonical_field}`;
     const request = cell ? cellSourceRequest(cell, requestId) : null;
     const display = wrapCells ? text : text.replace(/\s+/g, " ");
@@ -521,7 +524,7 @@ export default function StagingDatasetTable({
       ) : (
         <div className="max-h-[70vh] w-full overflow-auto rounded-xl border border-border bg-surface" data-testid="data-grid">
           <table
-            className={["table-fixed border-separate border-spacing-0 text-sm", wrapCells ? "grid-cells-wrap" : ""].join(" ")}
+            className={["grid-divided table-fixed border-separate border-spacing-0 text-sm", wrapCells ? "grid-cells-wrap" : ""].join(" ")}
             style={{ width: tableWidth, minWidth: "100%" }}
           >
             <colgroup>

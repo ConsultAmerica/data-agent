@@ -395,9 +395,29 @@ export class BatchQueue {
       this.patch(id, { status: "failed", failedPhase: "processing", error: message(error, "Processing failed.") });
       return;
     }
-    // Extraction starts on its own once a file is processed, so its data
-    // shows without a second click.
+    // Grouped by category as soon as it's read, not when its turn to
+    // extract comes; extraction then starts on its own.
+    await this.classify(id, documentId);
     void this.runFullExtraction();
+  }
+
+  /** The file's type and category from its schema (best effort). */
+  private applyClassification(id: string, schema: DiscoverSchemaResult) {
+    const typeLabel =
+      schema.type_label ??
+      (schema.document_family_label && !GENERIC_FAMILIES.has(schema.document_family) ? schema.document_family_label : null);
+    this.patch(id, {
+      ...(typeLabel ? { typeLabel } : {}),
+      ...(schema.category ? { category: schema.category, categoryLabel: schema.category_label ?? null } : {}),
+    });
+  }
+
+  private async classify(id: string, documentId: string) {
+    try {
+      this.applyClassification(id, await this.deps.targets(documentId));
+    } catch {
+      // Grouped when extraction reads the schema instead.
+    }
   }
 
   async resolveDuplicate(id: string, action: "use_existing" | "upload_anyway") {
@@ -468,12 +488,7 @@ export class BatchQueue {
         this.patch(item.id, { status: "extracting", pipelineStage: "extracting_data", error: null });
         try {
           const schema = await this.deps.targets(documentId);
-          if (schema.document_family_label && !GENERIC_FAMILIES.has(schema.document_family)) {
-            this.patch(item.id, { typeLabel: schema.document_family_label });
-          }
-          if (schema.category) {
-            this.patch(item.id, { category: schema.category, categoryLabel: schema.category_label ?? null });
-          }
+          this.applyClassification(item.id, schema);
           const ids = extractableTargets(schema.targets ?? []).map((target) => target.id);
           if (ids.length === 0) {
             this.patch(item.id, {
@@ -493,6 +508,8 @@ export class BatchQueue {
             staged: true,
             fieldsExtracted: result.scalars.length,
           });
+          // Staging may settle a more specific type (e.g. an SF 1442 award).
+          await this.classify(item.id, documentId);
         } catch (error) {
           this.patch(item.id, {
             status: "failed",

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import DocumentWorkspace from "@/components/documents/document-workspace";
 import StagingDatasetTable from "@/components/staging/staging-dataset-table";
-import { columnWidth, frozenColumnCount, MAX_COLUMN_WIDTH } from "@/lib/data-grid";
+import { columnWidth, frozenColumnCount, headerWordWidth, MAX_COLUMN_WIDTH } from "@/lib/data-grid";
 import { humanizeExample, humanizeMethod } from "@/lib/method-labels";
 import type { StagingCell, StagingColumn, StagingDataset, StagingRecord, StagingWorkbook } from "@/lib/staging-workbook";
 
@@ -104,10 +104,12 @@ describe("column sizing and freezing", () => {
 
   it("sizes columns by their values: flags narrow, dates fit, prose capped", () => {
     const width = (label: string) => widths[XML_COLUMNS.findIndex(([, l]) => l === label)];
-    expect(width("Action")).toBeLessThanOrEqual(100);
-    expect(width("Intent")).toBeLessThanOrEqual(100);
+    // Flags stay as narrow as their header: its word, sort arrow and checkbox.
+    expect(width("Action")).toBeLessThanOrEqual(115);
+    expect(width("Intent")).toBeLessThanOrEqual(115);
     expect(width("Datepublished")).toBeGreaterThanOrEqual(115);
-    expect(width("Datepublished")).toBeLessThanOrEqual(140);
+    // A date fits its value, or its one-word header when that is longer.
+    expect(width("Datepublished")).toBeLessThanOrEqual(Math.max(140, headerWordWidth("Datepublished")));
     expect(width("Text")).toBe(MAX_COLUMN_WIDTH);
     expect(width("Title")).toBeGreaterThanOrEqual(250);
     // 8–12 useful columns fit a ~1870px content area before scrolling.

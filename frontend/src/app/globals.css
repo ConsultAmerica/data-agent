@@ -1879,13 +1879,20 @@ td > .grid-resize {
   background: transparent;
   pointer-events: none;
 }
+/* Hairline column dividers for the staging data grid. */
+.grid-divided th + th,
+.grid-divided td + td:not(.cell-selected) {
+  box-shadow: inset 1px 0 0 color-mix(in srgb, var(--border) 70%, transparent);
+}
+/* The edges stay invisible (the cells' own 1px borders divide the grid);
+   a header shows its column's edge on hover, and an edge lights up when
+   the pointer is on it. */
 .grid-resize-column::after {
   top: 0;
   bottom: 0;
   left: 6px;
   width: 3px;
   border-radius: 1px;
-  background: color-mix(in srgb, var(--text-muted) 35%, transparent);
 }
 .grid-resize-row::after {
   left: 0;
@@ -1893,17 +1900,9 @@ td > .grid-resize {
   top: 5px;
   height: 2px;
   border-radius: 1px;
-  background: color-mix(in srgb, var(--text-muted) 30%, transparent);
 }
-th > .grid-resize-column::after,
-td > .grid-resize-column::after {
-  background: color-mix(in srgb, var(--text-muted) 50%, transparent);
-}
-th:hover > .grid-resize-column::after,
-td:hover > .grid-resize-column::after,
-tr:hover > td > .grid-resize-row::after,
-tr:hover > th > .grid-resize-row::after {
-  background: var(--text-secondary);
+th:hover > .grid-resize-column::after {
+  background: color-mix(in srgb, var(--text-muted) 45%, transparent);
 }
 .grid-resize:hover::after,
 .grid-resize:focus-visible::after,
@@ -3856,6 +3855,11 @@ h3 {
   border-radius: 2px;
   background: var(--field-tone);
   pointer-events: none;
+}
+/* Verified is the common case: a quiet mark, so review / failed stand out. */
+.field-tone-cell.field-tone-ok::before {
+  width: 2px;
+  opacity: 0.45;
 }
 .field-tone-swatch {
   display: inline-block;

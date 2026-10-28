@@ -106,6 +106,35 @@ describe("BatchQueue", () => {
     expect(first.ocrCompleted).toBe(1);
   });
 
+  it("groups a file as soon as it is processed, then takes the staged type after extraction", async () => {
+    let staged = false;
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => (release = resolve));
+    const d = deps({
+      targets: vi.fn().mockImplementation(async () => ({
+        document_family: "government_contract",
+        document_family_label: "Government Contract",
+        category: "contracts",
+        category_label: "Contracts & Awards",
+        type_label: staged ? "SF 1442 Contract Award" : "Government Contract",
+        targets: [{ id: "t1", key: "contract_number", source: "detected", source_examples: ["x"], target_type: "field" }],
+      })),
+      extract: vi.fn().mockImplementation(async () => {
+        await blocked;
+        staged = true;
+        return { scalars: [{}], tables: [], unresolved_targets: [], warnings: [] };
+      }),
+    });
+    const queue = new BatchQueue(() => fields, d);
+    queue.addFiles([new File(["a"], "a.pdf")]);
+    // Categorized while its extraction is still running.
+    await settle(queue, (items) => items[0].status === "extracting" && items[0].category === "contracts");
+    expect(queue.getSnapshot()[0]).toMatchObject({ categoryLabel: "Contracts & Awards", typeLabel: "Government Contract" });
+
+    release();
+    await settle(queue, (items) => items[0].status === "extracted" && items[0].typeLabel === "SF 1442 Contract Award");
+  });
+
   it("holds a duplicate for the user, then tags the resolved document", async () => {
     const d = deps({
       upload: vi.fn().mockResolvedValue(
@@ -296,6 +325,26 @@ describe("ProcessingQueue", () => {
       expect.stringContaining("sf1442.pdf"),
     ]);
     expect(within(groups[0]).getByRole("heading").textContent).toBe("Contracts & Awards2");
+  });
+
+  it("puts uncategorized files waiting on the user under Needs attention, first", () => {
+    render(
+      <ProcessingQueue
+        items={[
+          item({ id: "a", name: "invoice.pdf", category: "financial", categoryLabel: "Financial" }),
+          item({ id: "b", name: "portfolio.pdf", status: "portfolio" }),
+          item({ id: "c", name: "reading.pdf" }),
+        ]}
+        {...handlers}
+      />,
+    );
+    const groups = screen.getAllByTestId("queue-category");
+    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual([
+      "Needs attention",
+      "Financial",
+      "Recognizing type…",
+    ]);
+    expect(within(groups[0]).getByTestId("queue-row").textContent).toContain("portfolio.pdf");
   });
 
   it("keeps a flat list while no file's category is known", () => {

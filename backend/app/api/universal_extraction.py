@@ -29,7 +29,7 @@ from app.schemas.universal_extraction import (
     UniversalExtractionRequest,
     UniversalExtractionResponse,
 )
-from app.staging.document_categories import document_category
+from app.staging.document_labels import document_classification
 from app.services.ai_enrichment import start_session
 from app.services.ai_provider_factory import (
     create_ai_provider,
@@ -283,7 +283,7 @@ async def get_targets(
         )
 
     # Lets an intake queue group the file by category before it is staged.
-    return result.model_copy(update=document_category(database, document))
+    return result.model_copy(update=document_classification(database, document))
 
 
 @router.post(
