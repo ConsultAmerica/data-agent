@@ -1,0 +1,11 @@
+# Vercel builds only the Next.js app (project root directory: frontend).
+# Never upload the backend (virtualenv, uploaded documents), reference data or docs.
+/*
+!/frontend
+/frontend/node_modules
+/frontend/.next
+/frontend/.vercel
+# Local secrets stay local. .env.production is committed and public (the
+# Render API URL baked into the bundle), so it must be uploaded.
+/frontend/.env.local
+/frontend/.env*.local
