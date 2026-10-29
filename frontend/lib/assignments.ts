@@ -1,5 +1,5 @@
 import { apiFetch } from "@/lib/api";
-import type { ReviewQueueFieldItem } from "@/types/document";
+import type { FieldValidation, ReviewQueueFieldItem } from "@/types/document";
 
 /** Mirrors backend app/api/assignments.py and the extra Review Queue item
  * columns from app/api/dashboard.py. */
@@ -14,8 +14,12 @@ export interface ReviewQueueFieldDetail extends ReviewQueueFieldItem {
   uploaded_at?: string | null;
   /** Raw extracted contract type / pricing model, when the document has one. */
   contract_type?: string | null;
-  /** The source text the value was read from, when it was stored. */
+  /** The source text the value was read from, when it was stored. Never a
+   * validation message. */
   source_snippet?: string | null;
+  /** The machine-extracted value, kept when a reviewer corrects it. */
+  original_value?: string | null;
+  validation?: FieldValidation | null;
 }
 
 export interface AssignmentTarget {

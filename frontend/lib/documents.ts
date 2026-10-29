@@ -93,6 +93,8 @@ export interface DocumentSearchParams {
   profileId?: string;
   /** Broad category: contracts, regulations, financial, … or unclassified. */
   category?: string;
+  /** expired · expiring_soon · missing_dates · needs_review · active · not_yet_effective */
+  lifecycle?: string;
   sortBy?: DocumentSortBy;
   sortDir?: DocumentSortDir;
   limit?: number;
@@ -121,6 +123,7 @@ export async function searchDocuments(
   if (params.family) query.set("family", params.family);
   if (params.profileId) query.set("profile_id", params.profileId);
   if (params.category) query.set("category", params.category);
+  if (params.lifecycle) query.set("lifecycle", params.lifecycle);
   if (params.sortBy) query.set("sort_by", params.sortBy);
   if (params.sortDir) query.set("sort_dir", params.sortDir);
   query.set("limit", String(params.limit ?? 25));
@@ -478,6 +481,8 @@ export async function reviewMetadataField(
   action: ReviewAction,
   changedBy: string,
   value?: string,
+  /** Approve past a failed validation: required then, and audited. */
+  overrideReason?: string,
 ): Promise<MetadataField> {
   return apiFetch(
     `/api/documents/${documentId}/metadata-fields/${fieldKey}/review`,
@@ -490,6 +495,7 @@ export async function reviewMetadataField(
         action,
         value: value ?? null,
         changed_by: changedBy,
+        ...(overrideReason ? { override_reason: overrideReason } : {}),
       }),
     },
   );
@@ -502,6 +508,8 @@ export async function reviewMetadataFieldById(
   action: ReviewAction,
   changedBy: string,
   value?: string,
+  /** Approve past a failed validation: required then, and audited. */
+  overrideReason?: string,
 ): Promise<MetadataField> {
   return apiFetch(
     `/api/documents/${documentId}/metadata-fields/by-id/${metadataFieldId}/review`,
@@ -514,6 +522,7 @@ export async function reviewMetadataFieldById(
         action,
         value: value ?? null,
         changed_by: changedBy,
+        ...(overrideReason ? { override_reason: overrideReason } : {}),
       }),
     },
   );

@@ -11,8 +11,11 @@ Sources (each result says which, with page and evidence):
   performance … through …"), on the same line or the line below.
 
 A date the document doesn't state is never inferred (no "issue + 10
-years"). Ambiguous numeric dates are read month-first (US) unless the
-first number can only be a day.
+years"). Every date keeps the text it was read from. A numeric date both of
+whose readings are valid (03/04/2026) is ambiguous: it is resolved only by
+the document's own context (its other, unambiguous numeric dates, or a US
+federal form, month-first) and is otherwise flagged for review, never
+silently decided.
 """
 
 from __future__ import annotations
@@ -30,9 +33,9 @@ from app.models.document import Document
 from app.models.document_page import DocumentPage
 from app.validators.mrz import parse_mrz
 
-EXTRACTOR_VERSION = "key-dates-v1"
+EXTRACTOR_VERSION = "key-dates-v2"
 
-KINDS = ("expiry", "valid_until", "renewal", "termination", "period_end", "due", "issue", "effective")
+KINDS = ("expiry", "valid_until", "renewal", "termination", "period_end", "due", "issue", "award", "effective", "start")
 # Kinds that mean "the document (or what it grants) stops being valid".
 EXPIRING_KINDS = {"expiry", "valid_until", "termination", "period_end"}
 
@@ -44,7 +47,9 @@ _LABELS: tuple[tuple[str, str], ...] = (
     ("period_end", r"period\s+of\s+performance|contract\s+(?:end|completion)\s+date|end\s+date|completion\s+date|term\s+ends?"),
     ("due", r"due\s+date|payment\s+due|due\s+on"),
     ("issue", r"date\s+of\s+issue|issue\s+date|issued\s+on|date\s+issued"),
-    ("effective", r"effective\s+date|effective\s+(?:as\s+of|from|on)|commencement\s+date|start\s+date"),
+    ("award", r"award\s+date|date\s+of\s+award|awarded\s+on|date\s+awarded"),
+    ("effective", r"effective\s+date|effective\s+(?:as\s+of|from|on)"),
+    ("start", r"start\s+date|commencement\s+date|begin(?:ning)?\s+date|coverage\s+(?:start|begins)"),
 )
 _LABEL_RE = [(kind, re.compile(rf"(?<![A-Za-z])(?:{pattern})(?![A-Za-z])", re.I)) for kind, pattern in _LABELS]
 
@@ -99,6 +104,53 @@ def parse_date_text(text: str, *, kind: str) -> tuple[date | None, float]:
         return None, 0.0
 
 
+_NUMERIC = re.compile(r"(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})")
+
+
+def numeric_readings(text: str) -> tuple[date | None, date | None]:
+    """(month-first, day-first) readings of a d/d/y date; None where a
+    reading isn't a real date. Non-numeric forms give (None, None)."""
+
+    match = _NUMERIC.fullmatch(text.strip())
+    if not match:
+        return None, None
+    a, b, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
+    if year < 100:
+        year += 2000
+    readings: list[date | None] = []
+    for month, day in ((a, b), (b, a)):
+        try:
+            readings.append(date(year, month, day))
+        except ValueError:
+            readings.append(None)
+    return readings[0], readings[1]
+
+
+def is_ambiguous(text: str) -> bool:
+    """Both readings are valid and differ (03/04/2026; not 04/04/2026 or
+    25/04/2026). A dotted date (15.04.2026) is day-first by convention."""
+
+    if "." in text:
+        return False
+    month_first, day_first = numeric_readings(text)
+    return month_first is not None and day_first is not None and month_first != day_first
+
+
+def document_convention(lines: list[tuple[int, str]]) -> str | None:
+    """"month_first" or "day_first" when the document's unambiguous numeric
+    dates all point one way; None when they don't say or disagree."""
+
+    seen: set[str] = set()
+    for _, text in lines:
+        for match in _NUMERIC.finditer(text):
+            a, b = int(match.group(1)), int(match.group(2))
+            if a > 12 >= b:
+                seen.add("day_first")
+            elif b > 12 >= a:
+                seen.add("month_first")
+    return seen.pop() if len(seen) == 1 else None
+
+
 def _from_mrz(lines: list[tuple[int, str]]) -> list[KeyDate]:
     compact = [(page, re.sub(r"\s+", "", text).upper()) for page, text in lines]
     found = []
@@ -126,6 +178,14 @@ def _from_mrz(lines: list[tuple[int, str]]) -> list[KeyDate]:
     return found
 
 
+def _text_details(original: str) -> dict:
+    details: dict = {"original_text": original.strip()}
+    if is_ambiguous(original):
+        month_first, day_first = numeric_readings(original)
+        details.update(ambiguous=True, interpretations=[month_first.isoformat(), day_first.isoformat()])
+    return details
+
+
 def _from_text(lines: list[tuple[int, str]]) -> list[KeyDate]:
     found: list[KeyDate] = []
     for index, (page, text) in enumerate(lines):
@@ -139,16 +199,23 @@ def _from_text(lines: list[tuple[int, str]]) -> list[KeyDate]:
                 if not candidates:
                     continue
                 match, source_line = candidates[0]
-                # "Period of performance: 01/01/2026 through 12/31/2026" → the end.
+                evidence = (text if source_line is text else f"{text}\n{source_line}").strip()[:400]
+                # "Period of performance: 01/01/2026 through 12/31/2026" → the end,
+                # and the range's first date is the period's start.
                 if len(candidates) > 1 and kind in ("period_end", "valid_until") and candidates[1][1] is text:
                     between = after[candidates[0][0].end():candidates[1][0].start()]
                     if _RANGE_SEP.fullmatch(between):
+                        first = candidates[0][0].group(0)
+                        start, start_confidence = parse_date_text(first, kind="start")
+                        if start is not None:
+                            found.append(KeyDate("start", start, f"{label.group(0).strip()} (start)", "text", page,
+                                                 evidence, start_confidence, _text_details(first)))
                         match = candidates[1][0]
                 parsed, confidence = parse_date_text(match.group(0), kind=kind)
                 if parsed is None:
                     continue
-                evidence = text if source_line is text else f"{text}\n{source_line}"
-                found.append(KeyDate(kind, parsed, label.group(0).strip(), "text", page, evidence.strip()[:400], confidence))
+                found.append(KeyDate(kind, parsed, label.group(0).strip(), "text", page, evidence, confidence,
+                                     _text_details(match.group(0))))
                 break  # one label match per kind per line
     return found
 
@@ -174,6 +241,19 @@ def detect_key_dates(database: Session, document: Document, *, profile_id: str |
                 0.85, {"option": end["is_option"]},
             ))
     dates.extend(_from_text(lines))
+    # Ambiguous numeric dates: resolved only by the document's own context.
+    convention = document_convention(lines)
+    context = "document_dates" if convention else None
+    if convention is None and profile_id == "contract_v3":
+        convention, context = "month_first", "us_federal_form"
+    for item in dates:
+        if not item.details.get("ambiguous") or convention is None:
+            continue
+        month_first, day_first = numeric_readings(item.details["original_text"])
+        chosen = month_first if convention == "month_first" else day_first
+        if chosen is not None:
+            item.date = chosen
+            item.details = {**item.details, "ambiguous": False, "resolved_by": context, "convention": convention}
     # One entry per (kind, date): the most trusted source wins.
     rank = {"mrz": 0, "contract_schedule": 1, "text": 2}
     best: dict[tuple[str, date], KeyDate] = {}

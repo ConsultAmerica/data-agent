@@ -26,7 +26,7 @@ export interface SelectedRecord {
   title: string;
 }
 
-const CATEGORY_LABEL: Record<CategoryId, string> = {
+export const CATEGORY_LABEL: Record<CategoryId, string> = {
   overview: "Overview",
   header: "Contract Header",
   lines: "Contract Lines",
@@ -38,7 +38,8 @@ const CATEGORY_LABEL: Record<CategoryId, string> = {
   all: "All Records",
   oracle: "Oracle Mapping",
 };
-const NO_DESTINATION: CategoryId[] = ["clauses", "deliveries", "attachments", "sections"];
+/** Record types no verified Oracle import object exists for. */
+export const NO_DESTINATION: CategoryId[] = ["clauses", "deliveries", "attachments", "sections"];
 
 const DATA = "contract_data";
 const slot = (key: string) => `contract.data.${key}`;
@@ -81,6 +82,19 @@ function columnsFor(dataset: StagingDataset, spec: (Omit<GridColumn, "label"> & 
     out.push({ ...item, key, label: item.label ?? labels.get(key) ?? key });
   }
   return out;
+}
+
+/** The currency as the amount prints it ("USD 1,000.00" → "USD", "$5" →
+ * "$"); never converted ($ is not assumed to be USD). Empty when the
+ * amount names none. */
+export function printedCurrency(...amounts: string[]): string {
+  for (const amount of amounts) {
+    const code = amount.match(/\b(USD|EUR|GBP|CAD|AUD|JPY|CHF|NZD|MXN)\b/);
+    if (code) return code[1];
+    const symbol = amount.match(/[$€£¥]/);
+    if (symbol) return symbol[0];
+  }
+  return "";
 }
 
 function regulationFromSection(section: string): string {
@@ -131,8 +145,14 @@ export default function ContractSmartView({
 
   if (!data) return <p className="text-sm text-text-muted">This contract has no Contract Data to organise.</p>;
 
-  const count = (id: CategoryId) => (id === "all" ? records.length : id === "header" ? (groups.get("header")?.length ?? 0) + (overview?.records.length ?? 0) : groups.get(id)?.length ?? 0);
   const clauses = (groups.get("clauses") ?? []).filter((r) => value(r, "section") !== "FAR References");
+  // The clause tab counts clauses; references found in the text are listed
+  // (and counted) on their own sub-tab.
+  const count = (id: CategoryId) =>
+    id === "all" ? records.length
+      : id === "header" ? (groups.get("header")?.length ?? 0) + (overview?.records.length ?? 0)
+        : id === "clauses" ? clauses.length
+          : groups.get(id)?.length ?? 0;
   const regulationCount = (name: string) => clauses.filter((r) => (value(r, "regulation") || regulationFromSection(value(r, "section"))) === name).length;
   const needsReview = records.filter((r) => r.record_status === "Needs Review").length;
   const select = (category: CategoryId) => (row: GridRow) => {
@@ -179,7 +199,7 @@ export default function ContractSmartView({
       )}
 
       {category === "parties" && (
-        <SmartDataGrid tableKey="contract:parties" exportName="parties" renderStatus={status} statusLabel="Evidence" onOpen={select("parties")} selectedId={selectedId}
+        <SmartDataGrid tableKey="contract:parties" exportName="parties" renderStatus={status} statusLabel="Review status" onOpen={select("parties")} selectedId={selectedId}
           emptyMessage="No parties or contacts were found in this document."
           columns={columnsFor(data, [
             { key: "title", label: "Field", width: 240, pinned: true },
@@ -192,17 +212,18 @@ export default function ContractSmartView({
       )}
 
       {category === "lines" && (
-        <SmartDataGrid tableKey="contract:lines" exportName="contract-lines" renderStatus={status} statusLabel="Evidence" onOpen={select("lines")} selectedId={selectedId}
+        <SmartDataGrid tableKey="contract:lines" exportName="contract-lines" renderStatus={status} statusLabel="Review status" onOpen={select("lines")} selectedId={selectedId}
           emptyMessage="No contract lines (CLINs) were found in this document."
           columns={columnsFor(data, [
             { key: "record_id", label: "CLIN", width: 100, pinned: true, any: ["clin"] },
-            { key: "title", label: "Line Description", width: 300 },
-            { key: "quantity", width: 100 },
+            { key: "title", label: "Description", width: 300 },
+            { key: "quantity", label: "Quantity", width: 110, filter: "range" },
             { key: "quantity_period", label: "Quantity / Period", width: 130 },
             { key: "unit", label: "Unit", width: 90 },
-            { key: "unit_price", width: 140 },
+            { key: "unit_price", label: "Unit Price", width: 150, filter: "range" },
             { key: "pricing", label: "Unit Price / Pricing", width: 200 },
-            { key: "amount", label: "Amount", width: 150 },
+            { key: "amount", label: "Amount", width: 160, filter: "range" },
+            { key: "__currency", label: "Currency (as printed)", width: 110, filter: "options" },
             { key: "pricing_type", width: 160, filter: "options" },
             { key: "labor_rate", width: 180 },
             { key: "__period", label: "Performance Period (from delivery records)", width: 230 },
@@ -212,7 +233,11 @@ export default function ContractSmartView({
           rows={(groups.get("lines") ?? []).map((r) => {
             const clin = value(r, "record_id") || value(r, "clin");
             const delivery = (deliveriesByClin.get(clin) ?? []).find((d) => value(d, "period_from") || value(d, "period_to"));
-            return rowOf(r, delivery ? { __period: `${value(delivery, "period_from")} – ${value(delivery, "period_to")}` } : {});
+            const currency = printedCurrency(value(r, "amount"), value(r, "unit_price"), value(r, "pricing"));
+            return rowOf(r, {
+              ...(delivery ? { __period: `${value(delivery, "period_from")} – ${value(delivery, "period_to")}` } : {}),
+              ...(currency ? { __currency: currency } : {}),
+            });
           })}
           renderExpanded={(row) => (
             <LineDetails clin={row.values.record_id || row.values.clin || ""} row={row} deliveries={deliveriesByClin.get(row.values.record_id || row.values.clin || "") ?? []}
@@ -227,7 +252,7 @@ export default function ContractSmartView({
       {category === "clauses" && <ClausesView data={data} records={groups.get("clauses") ?? []} onOpen={select("clauses")} selectedId={selectedId} status={status} />}
 
       {category === "sections" && (
-        <SmartDataGrid tableKey="contract:sections" exportName="sections" renderStatus={status} statusLabel="Evidence" onOpen={select("sections")} selectedId={selectedId}
+        <SmartDataGrid tableKey="contract:sections" exportName="sections" renderStatus={status} statusLabel="Review status" onOpen={select("sections")} selectedId={selectedId}
           emptyMessage="No contract sections were captured for this document."
           columns={columnsFor(data, [
             { key: "record_id", label: "ID", width: 120, pinned: true },
@@ -241,7 +266,7 @@ export default function ContractSmartView({
       )}
 
       {category === "attachments" && (
-        <SmartDataGrid tableKey="contract:attachments" exportName="attachments" renderStatus={status} statusLabel="Evidence" onOpen={select("attachments")} selectedId={selectedId}
+        <SmartDataGrid tableKey="contract:attachments" exportName="attachments" renderStatus={status} statusLabel="Review status" onOpen={select("attachments")} selectedId={selectedId}
           emptyMessage="No attachments were listed in this document."
           columns={columnsFor(data, [
             { key: "record_id", label: "Attachment", width: 130, pinned: true },
@@ -254,7 +279,7 @@ export default function ContractSmartView({
       )}
 
       {category === "all" && (
-        <SmartDataGrid tableKey="contract:all" exportName="all-records" renderStatus={status} statusLabel="Evidence" onOpen={select("all")} selectedId={selectedId}
+        <SmartDataGrid tableKey="contract:all" exportName="all-records" renderStatus={status} statusLabel="Review status" onOpen={select("all")} selectedId={selectedId}
           columns={data.columns.map((c) => ({
             key: c.key, label: c.display_label, width: c.key === "value" ? 320 : c.key === "title" ? 260 : 150,
             pinned: c.key === "record_id", filter: ["section", "record_type", "regulation", "incorporation_type"].includes(c.key) ? "options" : "text",
@@ -387,23 +412,25 @@ function DeliveriesView({ data, records, clinDetails, onOpen, selectedId, status
   const dated = records
     .map((r) => ({ id: r.record_id, label: value(r, "record_id"), from: parseDate(value(r, "period_from")), to: parseDate(value(r, "period_to")), text: `${value(r, "period_from")} – ${value(r, "period_to")}` }))
     .filter((d) => d.from != null && d.to != null && d.to >= d.from) as { id: string; label: string; from: number; to: number; text: string }[];
+  // No delivery-date column: the extraction records performance periods,
+  // not a separate delivery date, and none is inferred.
   const columns = columnsFor(data, [
     { key: "record_id", label: "Related CLIN", width: 120, pinned: true, any: ["clin"] },
-    { key: "value", label: "Delivery Schedule", width: 320 },
+    { key: "value", label: "Delivery Description", width: 320 },
     { key: "period_from", label: "Performance Start", width: 140 },
     { key: "period_to", label: "Performance End", width: 140 },
     { key: "performance", width: 220 },
     { key: "__destination", label: "Destination (from CLIN details)", width: 220 },
-    { key: "__dodaac", label: "DODAAC", width: 110 },
+    { key: "__dodaac", label: "DODAAC (from CLIN details)", width: 130 },
+    { key: "quantity", label: "Quantity", width: 110, filter: "range" },
     { key: "quantity_period", label: "Quantity / Period", width: 130 },
-    { key: "quantity", width: 100 },
     { key: "unit", width: 90 },
     { key: "source_reference", label: "Source Reference", width: 220 },
   ]);
   return (
     <div className="space-y-3">
       {timeline && <Timeline items={visible ? dated.filter((d) => visible.has(d.id)) : dated} />}
-      <SmartDataGrid tableKey="contract:deliveries" exportName="deliveries" renderStatus={status} statusLabel="Evidence" onOpen={onOpen} selectedId={selectedId}
+      <SmartDataGrid tableKey="contract:deliveries" exportName="deliveries" renderStatus={status} statusLabel="Review status" onOpen={onOpen} selectedId={selectedId}
         emptyMessage="No delivery or performance records were found in this document."
         toolbar={dated.length > 0 && (
           <button type="button" aria-pressed={timeline} onClick={() => setTimeline((v) => !v)} className={`h-8 rounded-lg border px-2.5 text-xs font-medium ${timeline ? "border-primary/40 bg-primary/10" : "border-border"}`}>

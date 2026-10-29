@@ -43,6 +43,10 @@ vi.mock("@/components/source-verification-panel", () => ({
     <p data-testid="split-viewer-request">{request ? `page ${request.pageNumber}: ${request.label ?? ""}` : "page 1"}</p>
   ),
 }));
+vi.mock("@/lib/source-view", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/source-view")>()),
+  getSourceView: vi.fn(async () => ({ viewer: "pdf", format: "pdf", verified: true, note: null })),
+}));
 vi.mock("@/components/staging/source-transcription", () => ({
   default: () => <p>Source transcription</p>,
 }));
@@ -159,6 +163,17 @@ describe("DocumentWorkspace with a profile-declared presentation", () => {
     expect(within(menu).getByText(/Staging — Export All/i)).toBeTruthy();
     fireEvent.click(within(types).getByRole("tab", { name: "Custom" }));
     expect(within(menu).queryByText(/Staging — Export All/i)).toBeNull();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /Open custom export/ }));
+    expect(screen.getByRole("dialog", { name: "Custom export" })).toBeTruthy();
+  });
+
+  it("opens Custom export from Smart View too (the default view)", async () => {
+    window.localStorage.setItem("dx-workspace-mode", "smart");
+    render(<DocumentWorkspace documentId="d1" />);
+    await screen.findByTestId("smart-workspace");
+    fireEvent.click(screen.getByTestId("export-menu-trigger"));
+    const menu = screen.getByTestId("export-menu");
+    fireEvent.click(within(within(menu).getByRole("tablist", { name: "Export type" })).getByRole("tab", { name: "Custom" }));
     fireEvent.click(within(menu).getByRole("menuitem", { name: /Open custom export/ }));
     expect(screen.getByRole("dialog", { name: "Custom export" })).toBeTruthy();
   });
@@ -338,7 +353,8 @@ describe("DocumentWorkspace for a contract", () => {
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-pressed", "true");
     expect(window.localStorage.getItem("dx-workspace-split")).toBe("on");
-    expect(screen.getByTestId("split-viewer-request").textContent).toBe("page 1");
+    // The format-aware viewer opens (asynchronously) at page 1.
+    expect((await screen.findByTestId("split-viewer-request")).textContent).toMatch(/^page 1/);
 
     fireEvent.click(screen.getByRole("button", { name: "Gratuities" }));
     expect(screen.getByTestId("split-viewer-request").textContent).toMatch(/^page 7/);

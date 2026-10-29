@@ -120,6 +120,9 @@ describe("file type and errors", () => {
     expect(fileTypeLabel("application/pdf", "a.pdf")).toBe("PDF");
     expect(fileTypeLabel("application/xml", "clauses.xml")).toBe("XML");
     expect(fileTypeLabel("text/html", "part52.html")).toBe("HTML");
+    // Office types contain "xml" ("openxmlformats") but are not XML files.
+    expect(fileTypeLabel("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "a.xlsx")).toBe("Spreadsheet");
+    expect(fileTypeLabel("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "a.docx")).toBe("Word");
   });
 
   it("maps actionable errors without exposing stack traces", () => {

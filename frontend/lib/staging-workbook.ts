@@ -343,10 +343,15 @@ export interface CustomExportSource {
   record_id: string | null;
 }
 
+/** Text formatting applied on export; never invents a value (an
+ * ambiguous date stays as printed). */
+export type CustomExportTransform = "as_is" | "trim" | "upper" | "lower" | "date_iso";
+
 export interface CustomExportColumn {
   label: string;
   sources: CustomExportSource[];
   separator: string;
+  transform?: CustomExportTransform;
 }
 
 export interface CustomExportManifest {
@@ -354,6 +359,23 @@ export interface CustomExportManifest {
   columns: CustomExportColumn[];
   include_header: boolean;
   file_name: string | null;
+}
+
+/** The custom export's first rows exactly as the file will hold them, and
+ * how many rows the file has (backend preview_custom_export). */
+export interface CustomExportPreview {
+  headers: string[];
+  rows: string[][];
+  total_rows: number;
+  row_dataset: string | null;
+}
+
+export function previewCustomExport(documentId: string, manifest: CustomExportManifest): Promise<CustomExportPreview> {
+  return apiFetch(`/api/documents/${documentId}/staging-workbook/export-custom/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(manifest),
+  });
 }
 
 export async function downloadCustomExport(

@@ -14,6 +14,7 @@ from app.schemas.extraction_intelligence import (
     CandidatePageScore,
     RetrievalTrace,
 )
+from app.services.table_shapes import page_tables
 
 _TOKEN_RE = re.compile(r"[a-z0-9]{3,}")
 
@@ -75,7 +76,7 @@ def rank_pages_for_target(
                 score += min(4.0, hits * 0.75)
 
         # Table header overlap / column metadata
-        for table in getattr(page, "tables_json", None) or []:
+        for table in page_tables(getattr(page, "tables_json", None)):
             headers = [
                 _normalize_label(str(header))
                 for header in (table.get("headers") or [])

@@ -9,7 +9,7 @@ import { useDocumentChrome } from "@/components/layout/document-chrome-context";
 import OracleIntegrationPanel from "@/components/oracle-integration-panel";
 import RelatedDocumentsSwitcher from "@/components/documents/related-documents-switcher";
 import DocumentAuditTrail from "@/components/review/document-audit-trail";
-import SourceVerificationPanel from "@/components/source-verification-panel";
+import DocumentViewer from "@/components/viewers/document-viewer";
 import FieldToneLegend from "@/components/ui/field-tone-legend";
 import { fieldToneClass, toneFromStagingCell } from "@/lib/field-tone";
 import { useBrowserPreference } from "@/lib/browser-preference";
@@ -641,7 +641,8 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
                 )}
                 {profile.export_capabilities.map((capability) => (
                   <button
-                    key={capability.capability_id}
+                    // One dataset_csv capability per dataset, so the id alone repeats.
+                    key={`${capability.capability_id}:${capability.dataset_id ?? ""}`}
                     type="button"
                     role="menuitem"
                     className="block w-full px-3 py-1.5 pl-5 text-left text-sm hover:bg-surface-soft"
@@ -780,12 +781,29 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
         </span>
       </div>
 
+      {/* The Export menu opens this in both views (Smart View and Advanced
+          Grid), so it lives outside them. */}
+      {customExportOpen && (
+        <CustomExportDialog
+          documentId={documentId}
+          workbook={workbook}
+          filename={filename || workbook.document_filename}
+          onClose={() => setCustomExportOpen(false)}
+          onDownloaded={(message) => {
+            setCustomExportOpen(false);
+            setExportNotice(message);
+            window.setTimeout(() => setExportNotice(""), 3500);
+          }}
+        />
+      )}
+
       {viewMode === "smart" ? (
         <SmartWorkspace
           documentId={documentId}
           workbook={workbook}
           filename={filename || workbook.document_filename}
           pageCount={Math.max(1, documentMeta?.page_count ?? 1)}
+          document={documentMeta}
         />
       ) : (
       <div
@@ -798,7 +816,7 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
             aria-label="Original document"
             data-testid="workspace-split-viewer"
           >
-            <SourceVerificationPanel
+            <DocumentViewer
               documentId={documentId}
               documentName={filename || workbook.document_filename}
               pageCount={Math.max(1, documentMeta?.page_count ?? 1)}
@@ -876,20 +894,6 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
             </details>
           )}
         </div>
-
-        {customExportOpen && (
-        <CustomExportDialog
-          documentId={documentId}
-          workbook={workbook}
-          filename={filename || workbook.document_filename}
-          onClose={() => setCustomExportOpen(false)}
-          onDownloaded={(message) => {
-            setCustomExportOpen(false);
-            setExportNotice(message);
-            window.setTimeout(() => setExportNotice(""), 3500);
-          }}
-        />
-        )}
 
         <div className="mt-5">
           {showResults ? (

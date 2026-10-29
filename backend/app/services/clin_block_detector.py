@@ -2,6 +2,7 @@ import re
 from dataclasses import dataclass, field
 
 from app.models.document_page import DocumentPage
+from app.services.table_shapes import page_tables
 
 _CLIN_HEADER_KEYWORDS = (
     "clin",
@@ -54,7 +55,7 @@ def detect_repeated_records(
 ) -> list[RepeatedRecordBlock]:
     blocks: list[RepeatedRecordBlock] = []
 
-    for table in page.tables_json or []:
+    for table in page_tables(page.tables_json):
         headers = [str(h) for h in (table.get("headers") or [])]
         rows = table.get("rows") or []
 
@@ -203,7 +204,7 @@ def parse_clin_rows_from_tables(
     rows_out: list[ParsedClinRow] = []
     seen_numeric_clins: set[str] = set()
 
-    for table in page.tables_json or []:
+    for table in page_tables(page.tables_json):
         headers = [str(h) for h in (table.get("headers") or [])]
         rows = table.get("rows") or []
 

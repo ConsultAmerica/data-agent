@@ -49,7 +49,6 @@ def processor_label_for_extension(extension: str, *, conversion_used: bool = Fal
         "csv": "csv_native",
         "tsv": "csv_native",
         "json": "json_native",
-        "eml": "email_native",
         "html": "html_native",
         "htm": "html_native",
         "xml": "xml_native",

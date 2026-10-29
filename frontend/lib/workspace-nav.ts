@@ -63,7 +63,9 @@ export const WORKSPACE_NAV: WorkspaceNavItem[] = [
   { id: "ask", label: "DataoAI", href: "/ask", group: "Intelligence & AI" },
   { id: "schemas", label: "Schema & Label Designer", href: "/schemas", match: ["/schemas"] },
   { id: "search", label: "Search", href: "/search" },
-  { id: "clauses", label: "FAR / DFARS", href: "/clauses", match: ["/clauses"] },
+  // FAR / DFARS (/clauses) is not in the sidebar: clauses exist only in
+  // contract and FAR documents. Contract documents reach their clauses
+  // through the workspace; the page itself still works by URL.
   { id: "explorer", label: "Field Explorer", href: "/explorer" },
   { id: "compare", label: "Compare", href: "/compare" },
   { id: "actions", label: "Agent actions", href: "/actions" },

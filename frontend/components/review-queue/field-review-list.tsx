@@ -21,11 +21,13 @@ import { useTableDensity } from "@/lib/table-density";
 import type { ReviewAction, ReviewQueueFieldItem } from "@/types/document";
 
 import AssignPopover from "./assign-popover";
-import InspectDrawer from "./inspect-drawer";
+import InspectDrawer, { blocksApproval } from "./inspect-drawer";
 import { formatQueueDate, inspectHref, queueCsv, severity, urgencyOf } from "./queue-filters";
-import { useReviewMutationsEnabled } from "@/lib/review-gate";
+import { REVIEW_READ_ONLY_MESSAGE, useReviewMutationsEnabled } from "@/lib/review-gate";
 
 export { inspectHref };
+
+const VALIDATION_BLOCK_MESSAGE = "Failed validation: open it to correct the value, or approve it with an override reason.";
 
 /** The breadcrumb bar's live height, so a sticky header can sit right
  * under it (the bar's size comes from the theme, not from this list). */
@@ -113,6 +115,9 @@ export default function FieldReviewList({
   const [inspecting, setInspecting] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [rerunning, setRerunning] = useState(false);
+  // Corrections saved from the drawer: the value and its re-run validation,
+  // shown until the queue reloads (the field stays pending).
+  const [corrections, setCorrections] = useState<Record<string, Pick<ReviewQueueFieldDetail, "value" | "validation">>>({});
   // Timers and the unmount flush read the latest pending list from here.
   const pendingRef = useRef<Pending[]>([]);
   useEffect(() => {
@@ -187,7 +192,10 @@ export default function FieldReviewList({
   const compact = density === "compact";
   const visible = items
     .slice(0, limit)
-    .map((item, index) => ({ key: itemKey(item, index), item }))
+    .map((item, index) => {
+      const key = itemKey(item, index);
+      return { key, item: corrections[key] ? { ...item, ...corrections[key] } : item };
+    })
     .filter((row) => !hidden.has(row.key));
   const selectedRows = visible.filter((row) => selected.has(row.key));
   const highConfidenceRows = visible.filter((row) => isHighConfidence(row.item));
@@ -297,8 +305,22 @@ export default function FieldReviewList({
                 <span className="mx-1 hidden h-4 w-px bg-border sm:inline-block" aria-hidden="true" />
                 <button
                   type="button"
-                  onClick={() => decide(selectedRows, "accept")}
-                  disabled={!reviewEnabled}
+                  onClick={() => {
+                    const approvable = selectedRows.filter((row) => !blocksApproval(row.item.validation));
+                    const skipped = selectedRows.length - approvable.length;
+                    decide(approvable, "accept");
+                    if (skipped) {
+                      setNotice(`${skipped} selected value${skipped === 1 ? "" : "s"} failed validation and ${skipped === 1 ? "was" : "were"} not approved. Open ${skipped === 1 ? "it" : "each one"} to correct or override.`);
+                    }
+                  }}
+                  disabled={!reviewEnabled || selectedRows.every((row) => blocksApproval(row.item.validation))}
+                  title={
+                    !reviewEnabled
+                      ? REVIEW_READ_ONLY_MESSAGE
+                      : selectedRows.every((row) => blocksApproval(row.item.validation))
+                        ? VALIDATION_BLOCK_MESSAGE
+                        : undefined
+                  }
                   className="disabled:cursor-not-allowed disabled:opacity-50 inline-flex items-center gap-1 rounded-md border border-[var(--success)]/40 bg-[var(--success)]/10 px-2.5 py-1 font-semibold text-[var(--success)] hover:border-[var(--success)]"
                 >
                   <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
@@ -479,9 +501,15 @@ export default function FieldReviewList({
                         <button
                           type="button"
                           onClick={() => decide([{ key, item }], "accept")}
-                          disabled={!reviewEnabled}
+                          disabled={!reviewEnabled || blocksApproval(item.validation)}
                           aria-label={`Approve ${item.label}`}
-                          title="Approve"
+                          title={
+                            !reviewEnabled
+                              ? REVIEW_READ_ONLY_MESSAGE
+                              : blocksApproval(item.validation)
+                                ? VALIDATION_BLOCK_MESSAGE
+                                : "Approve"
+                          }
                           className="disabled:cursor-not-allowed disabled:opacity-50 inline-flex h-7 items-center gap-1 rounded-md border border-border bg-surface px-2 text-xs font-medium text-[var(--success)] hover:border-[var(--success)]"
                         >
                           <Check className="h-3.5 w-3.5" aria-hidden="true" />
@@ -538,9 +566,13 @@ export default function FieldReviewList({
           reviewer={reviewer}
           onClose={() => setInspecting(null)}
           onDecide={(action) => decide([inspected], action)}
-          onEdited={(item, value) => {
+          onCorrected={(item, patch) => {
+            setCorrections((current) => ({ ...current, [inspected.key]: patch }));
+            setNotice(`Saved the correction for ${item.label}: ${patch.value}. It is waiting for approval.`);
+          }}
+          onOverridden={(item) => {
             setInspecting(null);
-            setNotice(`Saved the correction for ${item.label}: ${value}`);
+            setNotice(`Approved ${item.label} with a validation override.`);
             onDecided(item);
           }}
         />

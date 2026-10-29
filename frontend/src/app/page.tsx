@@ -13,7 +13,6 @@ import FeatureStack from "@/components/marketing/feature-stack";
 import LogoMarquee from "@/components/marketing/logo-marquee";
 import NextStepBand from "@/components/marketing/next-step-band";
 import PlaybookPreview from "@/components/marketing/playbook-preview";
-import TrustDeploymentSection from "@/components/marketing/trust-deployment-section";
 import { getDashboardStats, listDocuments } from "@/lib/documents";
 import type { DashboardStats, DocumentSummary } from "@/types/document";
 
@@ -138,10 +137,6 @@ export default function HomePage() {
 
         <div className="mb-20">
           <ComparisonSection />
-        </div>
-
-        <div className="mb-20">
-          <TrustDeploymentSection />
         </div>
 
         <section className="mt-4" aria-live="polite">

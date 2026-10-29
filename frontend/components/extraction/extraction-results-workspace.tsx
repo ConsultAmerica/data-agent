@@ -8,6 +8,7 @@ import ExtractedDataPanel, {
   type FieldFilter,
 } from "@/components/extraction/extracted-data-panel";
 import ExtractionDocumentHeader from "@/components/extraction/extraction-document-header";
+import { getClassification, showsClauses } from "@/lib/classification";
 import ExtractionTabBar, {
   type ExtractionTab,
 } from "@/components/extraction/extraction-tab-bar";
@@ -94,17 +95,34 @@ export default function ExtractionResultsWorkspace({
   const [tablesLoading, setTablesLoading] = useState(false);
   const [tablesLoaded, setTablesLoaded] = useState(false);
   const [expandedTable, setExpandedTable] = useState<number | null>(null);
+  // The document's family (classification): undefined while loading.
+  const [family, setFamily] = useState<string | null | undefined>(undefined);
+  const clauseDocument = showsClauses(family);
 
+  useEffect(() => {
+    let active = true;
+    getClassification(document.document_id)
+      .then((state) => active && setFamily(state.family))
+      .catch(() => active && setFamily(null));
+    return () => {
+      active = false;
+    };
+  }, [document.document_id]);
+
+  // Clauses are extracted only for contract and FAR documents; any other
+  // document just shows clauses that were already extracted from it.
   const loadClauses = useCallback(async () => {
-    if (clausesLoaded || clausesLoading) return;
+    if (clausesLoaded || clausesLoading || family === undefined) return;
     setClausesLoading(true);
     try {
       const existing = await getClauses(document.document_id).catch(() => null);
       if (existing?.clauses?.length) {
         setClauses(existing.clauses);
-      } else {
+      } else if (clauseDocument) {
         const extracted = await extractClauses(document.document_id);
         setClauses(extracted.clauses);
+      } else {
+        setClauses([]);
       }
     } catch {
       setClauses([]);
@@ -112,7 +130,7 @@ export default function ExtractionResultsWorkspace({
       setClausesLoading(false);
       setClausesLoaded(true);
     }
-  }, [clausesLoaded, clausesLoading, document.document_id]);
+  }, [clausesLoaded, clausesLoading, document.document_id, family, clauseDocument]);
 
   const loadTables = useCallback(async () => {
     if (tablesLoaded || tablesLoading) return;
@@ -193,6 +211,15 @@ export default function ExtractionResultsWorkspace({
     );
   }, [clauses, clauseFilter]);
 
+  // Clauses and parent/child relationships belong to contracts; an invoice,
+  // passport or transcript doesn't show them unless it actually has them.
+  const showClauses = showsClauses(family, clauses.length);
+  const hiddenTabs: ExtractionTab[] = [
+    ...(showClauses ? [] : (["Clauses"] as const)),
+    ...(clauseDocument || analysis.relationship ? [] : (["Relationships"] as const)),
+  ];
+  const shownTab: ExtractionTab = hiddenTabs.includes(activeTab) ? "Overview" : activeTab;
+
   function goToDataFilter(filter: FieldFilter) {
     setDataFilter(filter);
     setActiveTab("Extracted Data");
@@ -202,13 +229,14 @@ export default function ExtractionResultsWorkspace({
     <div className="extraction-workspace -mx-[max(1.5rem,3vw)] mt-10 border-t border-border">
       <ExtractionDocumentHeader document={document} analysis={analysis} />
       <ExtractionTabBar
-        active={activeTab}
+        active={shownTab}
         onChange={setActiveTab}
         showUniversal={Boolean(universalResult)}
+        hidden={hiddenTabs}
       />
 
       <div className="extraction-workspace-inner py-8">
-        {activeTab === "Overview" && (
+        {shownTab === "Overview" && (
           <OverviewTab
             analysis={analysis}
             reviewCounts={reviewCounts}
@@ -218,16 +246,16 @@ export default function ExtractionResultsWorkspace({
             showAllKeyFields={showAllKeyFields}
             onShowAllKeyFields={() => setShowAllKeyFields(true)}
             onGoToData={() => setActiveTab("Extracted Data")}
-            onGoToRelationships={() => setActiveTab("Relationships")}
+            onGoToRelationships={hiddenTabs.includes("Relationships") ? undefined : () => setActiveTab("Relationships")}
             onFilterData={goToDataFilter}
             metadataCount={analysis.metadata_fields.length}
-            clauseCount={clausesLoaded ? clauses.length : undefined}
+            clauseCount={showClauses ? (clausesLoaded ? clauses.length : undefined) : null}
             tableCount={tablesLoaded ? tables.length : undefined}
             pageCount={pages.length}
           />
         )}
 
-        {activeTab === "Extracted Data" && (
+        {shownTab === "Extracted Data" && (
           <ExtractedDataPanel
             key={dataFilter}
             fields={analysis.metadata_fields}
@@ -235,7 +263,7 @@ export default function ExtractionResultsWorkspace({
           />
         )}
 
-        {activeTab === "Clauses" && (
+        {shownTab === "Clauses" && (
           <ClausesTab
             clauses={filteredClauses}
             loading={clausesLoading}
@@ -248,7 +276,7 @@ export default function ExtractionResultsWorkspace({
           />
         )}
 
-        {activeTab === "Tables" && (
+        {shownTab === "Tables" && (
           <TablesTab
             tables={tables}
             loading={tablesLoading}
@@ -259,7 +287,7 @@ export default function ExtractionResultsWorkspace({
           />
         )}
 
-        {activeTab === "Pages" && (
+        {shownTab === "Pages" && (
           <PaginatedPages
             pages={pages}
             extracting={extractingPages}
@@ -278,7 +306,7 @@ export default function ExtractionResultsWorkspace({
           />
         )}
 
-        {activeTab === "Relationships" && (
+        {shownTab === "Relationships" && (
           <RelationshipCard
             documentId={document.document_id}
             relationship={analysis.relationship}
@@ -290,7 +318,7 @@ export default function ExtractionResultsWorkspace({
           />
         )}
 
-        {activeTab === "Universal" && universalResult && (
+        {shownTab === "Universal" && universalResult && (
           <div className="space-y-6">
             <div className="editorial-card p-6">
               <h3 className="text-lg font-medium text-foreground">
@@ -320,7 +348,7 @@ export default function ExtractionResultsWorkspace({
           </div>
         )}
 
-        {activeTab === "Structured Output" && (
+        {shownTab === "Structured Output" && (
           structuredOutput ? (
             <StructuredOutputPanel data={structuredOutput} />
           ) : (
@@ -328,7 +356,7 @@ export default function ExtractionResultsWorkspace({
           )
         )}
 
-        {activeTab === "Activity" && (
+        {shownTab === "Activity" && (
           <div className="space-y-6">
             <IngestionChecklist steps={document.pipeline_log ?? []} />
             {analysis.warnings.length > 0 && (
@@ -385,10 +413,12 @@ function OverviewTab({
   showAllKeyFields: boolean;
   onShowAllKeyFields: () => void;
   onGoToData: () => void;
-  onGoToRelationships: () => void;
+  /** Absent when relationships don't apply to this document. */
+  onGoToRelationships?: () => void;
   onFilterData: (f: FieldFilter) => void;
   metadataCount: number;
-  clauseCount?: number;
+  /** null: clauses don't apply to this document (not shown). */
+  clauseCount?: number | null;
   tableCount?: number;
   pageCount: number;
 }) {
@@ -531,13 +561,15 @@ function OverviewTab({
               {relationship.parent_document_title}
             </p>
           )}
-          <button
-            type="button"
-            onClick={onGoToRelationships}
-            className="btn-tertiary mt-3"
-          >
-            View relationships
-          </button>
+          {onGoToRelationships && (
+            <button
+              type="button"
+              onClick={onGoToRelationships}
+              className="btn-tertiary mt-3"
+            >
+              View relationships
+            </button>
+          )}
         </div>
 
         <div className="editorial-card p-6">
@@ -546,12 +578,14 @@ function OverviewTab({
           </h3>
           <dl className="mt-3 space-y-2 text-sm">
             <SummaryRow label="Metadata fields" value={String(metadataCount)} />
-            <SummaryRow
-              label="Clauses"
-              value={
-                clauseCount !== undefined ? String(clauseCount) : "Loading…"
-              }
-            />
+            {clauseCount !== null && (
+              <SummaryRow
+                label="Clauses"
+                value={
+                  clauseCount !== undefined ? String(clauseCount) : "Loading…"
+                }
+              />
+            )}
             <SummaryRow
               label="Tables"
               value={tableCount !== undefined ? String(tableCount) : "Loading…"}

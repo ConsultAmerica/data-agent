@@ -22,7 +22,6 @@ _SOURCE_TYPE_BY_SUFFIX: dict[str, SourceType] = {
     ".tsv": "xlsx",
     ".txt": "text",
     ".json": "text",
-    ".eml": "text",
     ".rtf": "text",
     ".png": "image",
     ".jpg": "image",

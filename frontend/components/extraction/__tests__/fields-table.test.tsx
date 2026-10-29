@@ -1,9 +1,16 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import FieldsTable from "@/components/extraction/fields-table";
 import { buildFieldRows } from "@/components/extraction/field-row";
 import type { ScalarTargetResult } from "@/types/document";
+import { REVIEW_READ_ONLY_MESSAGE } from "@/lib/review-gate";
+
+const gate = vi.hoisted(() => ({ enabled: true }));
+vi.mock("@/lib/review-gate", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/review-gate")>()),
+  useReviewMutationsEnabled: () => gate.enabled,
+}));
 
 function scalar(overrides: Partial<ScalarTargetResult> = {}): ScalarTargetResult {
   return {
@@ -32,6 +39,31 @@ function expandRow(id: string) {
 }
 
 describe("FieldsTable", () => {
+  afterEach(() => {
+    gate.enabled = true;
+  });
+
+  it("disables Edit, Accept and Reject with an explanation while review is read-only", () => {
+    gate.enabled = false;
+    const rows = buildFieldRows([scalar({ verified: false })], [], new Map());
+    render(
+      <FieldsTable
+        title="Fields"
+        rows={rows}
+        onSaveCorrection={vi.fn()}
+        onMarkVerified={vi.fn()}
+        onReject={vi.fn()}
+      />,
+    );
+    expandRow("contract_number");
+    for (const name of ["Edit", "Accept", "Reject"]) {
+      const button = screen.getByRole("button", { name: new RegExp(`^${name}`) });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("title", REVIEW_READ_ONLY_MESSAGE);
+    }
+    expect(screen.getByTestId("review-locked")).toHaveTextContent("Read-only in this release");
+  });
+
   it("renders a compact collapsed card with label, value, confidence, method, and page", () => {
     const rows = buildFieldRows([scalar()], [], new Map());
     render(<FieldsTable title="Fields" rows={rows} />);

@@ -33,6 +33,7 @@ from app.schemas.v3_document import (
 )
 from app.services.extraction_outcome import build_extraction_outcome
 from app.services.source_documents_builder import build_source_documents
+from app.services.evidence_text import source_text_of
 
 
 def _all_fields_status(label: str, value: str, stored: str) -> str:
@@ -56,7 +57,7 @@ def _evidence_page(evidence_json: dict | None) -> int:
 def _evidence_text(evidence_json: dict | None) -> str:
     if not evidence_json:
         return ""
-    return str(evidence_json.get("source_text") or "")
+    return source_text_of(evidence_json)
 
 
 def _row_provenance(

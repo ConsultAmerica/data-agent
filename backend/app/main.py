@@ -33,6 +33,8 @@ from app.api import (
     target_corrections,
     universal_extraction,
     validation_rules,
+    document_intelligence,
+    source_view,
     staging_workbook,
     v3_export,
 )
@@ -197,6 +199,22 @@ app.include_router(
     # Document isolation for every /{document_id} route (core/document_access.py).
     dependencies=[Depends(enforce_document_access)],
     tags=["Page Extraction"],
+)
+
+app.include_router(
+    document_intelligence.router,
+    prefix="/api/documents",
+    # Document isolation for every /{document_id} route (core/document_access.py).
+    dependencies=[Depends(enforce_document_access)],
+    tags=["Document Intelligence"],
+)
+
+app.include_router(
+    source_view.router,
+    prefix="/api/documents",
+    # Document isolation for every /{document_id} route (core/document_access.py).
+    dependencies=[Depends(enforce_document_access)],
+    tags=["Source View"],
 )
 
 app.include_router(

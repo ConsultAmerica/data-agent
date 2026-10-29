@@ -5,7 +5,10 @@ import { ArrowDown, ArrowUp, Download, Plus, Save, Search, Trash2, X } from "luc
 
 import {
   downloadCustomExport,
+  previewCustomExport,
   type CustomExportManifest,
+  type CustomExportPreview,
+  type CustomExportTransform,
   type CustomExportSource,
   type SelectedExportFormat,
   type StagingCell,
@@ -69,14 +72,28 @@ interface ColumnState {
   label: string;
   sources: string[];
   separator: string;
+  transform?: CustomExportTransform;
 }
+
+const TRANSFORMS: { value: CustomExportTransform; label: string }[] = [
+  { value: "as_is", label: "As extracted" },
+  { value: "trim", label: "Trim spaces" },
+  { value: "upper", label: "UPPER CASE" },
+  { value: "lower", label: "lower case" },
+  { value: "date_iso", label: "Date as YYYY-MM-DD" },
+];
 
 interface Template {
   name: string;
   rowTable: string;
   format: SelectedExportFormat;
   includeHeader: boolean;
-  columns: { label: string; separator: string; refs: FieldRef[] }[];
+  columns: { label: string; separator: string; refs: FieldRef[]; transform?: CustomExportTransform }[];
+  /** Bumped each time the template is saved again under its name. */
+  version?: number;
+  /** The document type it was made for (its staging profile). */
+  category?: string;
+  updatedAt?: string;
 }
 
 function exportable(key: string): boolean {
@@ -209,15 +226,18 @@ export default function CustomExportDialog({
 
   const [rowTable, setRowTable] = useState("");
   const [columns, setColumns] = useState<ColumnState[]>(() => {
+    // Start from the structured document fields, one per label. Key/value
+    // scans (All Fields) also hold flattened line items ("Line 1 / …"),
+    // which would repeat on every row; they stay available to add by hand,
+    // and are the starting point only for types with no structured fields.
     const taken = new Set<string>();
-    return options
-      .filter((option) => option.kind !== "column" && option.sample.trim())
+    const filled = options.filter((option) => option.kind !== "column" && option.sample.trim());
+    const kind = filled.some((option) => option.kind === "single") ? "single" : "pair";
+    return filled
+      .filter((option) => option.kind === kind)
+      .filter((option) => !taken.has(option.label) && Boolean(taken.add(option.label)))
       .slice(0, MAX_DEFAULT_COLUMNS)
-      .map((option) => {
-        const label = uniqueLabel(option.label, taken);
-        taken.add(label);
-        return { id: newId(), label, sources: [option.key], separator: " " };
-      });
+      .map((option) => ({ id: newId(), label: option.label, sources: [option.key], separator: " " }));
   });
   const [format, setFormat] = useState<SelectedExportFormat>("xlsx");
   const [includeHeader, setIncludeHeader] = useState(true);
@@ -226,6 +246,9 @@ export default function CustomExportDialog({
   // The dialog only opens in the browser, so storage is readable here.
   const [templates, setTemplates] = useState<Template[]>(() => loadTemplates(profileId));
   const [templateName, setTemplateName] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
+  const [serverPreview, setServerPreview] = useState<CustomExportPreview | null>(null);
+  const [previewError, setPreviewError] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -322,6 +345,27 @@ export default function CustomExportDialog({
     );
   }, [activeTable, byKey, columns]);
 
+  // The preview comes from the server's own export builder, so it shows
+  // exactly what the file will hold (and how many rows).
+  const manifestKey = JSON.stringify([rowTable, columns.map((c) => [c.label, c.separator, c.transform, c.sources]), includeHeader]);
+  useEffect(() => {
+    if (columns.length === 0 || problems.length) {
+      queueMicrotask(() => setServerPreview(null));
+      return;
+    }
+    let active = true;
+    const timer = window.setTimeout(() => {
+      previewCustomExport(documentId, manifest())
+        .then((result) => active && (setServerPreview(result), setPreviewError("")))
+        .catch((err: unknown) => active && (setServerPreview(null), setPreviewError(err instanceof Error ? err.message : "Preview failed.")));
+    }, 250);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- manifestKey captures the inputs
+  }, [manifestKey, documentId]);
+
   function manifest(): CustomExportManifest {
     return {
       format,
@@ -330,6 +374,7 @@ export default function CustomExportDialog({
       columns: columns.map((column) => ({
         label: column.label.trim(),
         separator: column.separator,
+        transform: column.transform ?? "as_is",
         sources: column.sources.map((key) => byKey.get(key)!.source),
       })),
     };
@@ -352,22 +397,32 @@ export default function CustomExportDialog({
   function saveTemplate() {
     const name = templateName.trim();
     if (!name) return;
+    const previous = templates.find((item) => item.name === name);
+    const version = (previous?.version ?? (previous ? 1 : 0)) + 1;
     const template: Template = {
       name,
       rowTable: activeTable?.dataset_id ?? "",
       format,
       includeHeader,
+      version,
+      category: workbook.profile.display_name,
+      updatedAt: new Date().toISOString(),
       columns: columns.map((column) => ({
         label: column.label.trim(),
         separator: column.separator,
+        transform: column.transform ?? "as_is",
         refs: column.sources.map((key) => byKey.get(key)!.ref),
       })),
     };
     const next = [...templates.filter((item) => item.name !== name), template];
     setTemplates(next);
     storeTemplates(profileId, next);
-    setTemplateName("");
-    setNotice(`Saved template "${name}" for ${workbook.profile.display_name} documents.`);
+    setEditing(name);
+    setNotice(
+      previous
+        ? `Updated template "${name}" to version ${version}.`
+        : `Saved template "${name}" for ${workbook.profile.display_name} documents.`,
+    );
   }
 
   function applyTemplate(name: string) {
@@ -382,13 +437,16 @@ export default function CustomExportDialog({
             if (!key) missing += 1;
             return Boolean(key);
           });
-        return { id: newId(), label: column.label, separator: column.separator, sources };
+        return { id: newId(), label: column.label, separator: column.separator, transform: column.transform ?? "as_is", sources };
       })
       .filter((column) => column.sources.length > 0);
     setColumns(next);
     setRowTable(template.rowTable);
     setFormat(template.format);
     setIncludeHeader(template.includeHeader);
+    // Editing this template: saving again under its name makes a new version.
+    setEditing(name);
+    setTemplateName(name);
     setNotice(
       missing
         ? `Applied "${name}". ${missing} field${missing === 1 ? " isn't" : "s aren't"} in this document and were left out.`
@@ -567,6 +625,10 @@ export default function CustomExportDialog({
                             <option key={option.key} value={option.key}>{option.group} › {option.label}</option>
                           ))}
                         </select>
+                        <select value={column.transform ?? "as_is"} onChange={(event) => update(column.id, { transform: event.target.value as CustomExportTransform })}
+                                aria-label={`Format of ${column.label}`} className="rounded-md border border-border bg-surface px-1.5 py-0.5 text-xs text-text-secondary">
+                          {TRANSFORMS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                        </select>
                         {column.sources.length > 1 && (
                           <label className="flex items-center gap-1 text-xs text-text-secondary">
                             joined by
@@ -584,9 +646,12 @@ export default function CustomExportDialog({
 
               {columns.length > 0 && (
                 <div className="mt-4">
-                  <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
-                    Preview {activeTable ? `(first ${Math.min(PREVIEW_ROWS, activeTable.records.length)} of ${activeTable.records.length} rows)` : "(1 row)"}
+                  <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-muted" data-testid="custom-export-preview-caption">
+                    {serverPreview
+                      ? `Preview · first ${serverPreview.rows.length} of ${serverPreview.total_rows.toLocaleString()} row${serverPreview.total_rows === 1 ? "" : "s"} in the file`
+                      : `Preview ${activeTable ? `(first ${Math.min(PREVIEW_ROWS, activeTable.records.length)} of ${activeTable.records.length} rows)` : "(1 row)"} · checking with the export…`}
                   </p>
+                  {previewError && <p className="mb-1 text-xs text-danger">{previewError}</p>}
                   <div className="overflow-auto rounded-lg border border-border">
                     <table className="min-w-full text-xs" data-testid="custom-export-preview">
                       {includeHeader && (
@@ -595,7 +660,7 @@ export default function CustomExportDialog({
                         </thead>
                       )}
                       <tbody>
-                        {preview.map((row, rowIndex) => (
+                        {(serverPreview ? serverPreview.rows : preview).map((row, rowIndex) => (
                           <tr key={rowIndex} className="border-t border-border/60">
                             {row.map((value, cellIndex) => <td key={cellIndex} className="max-w-[16rem] truncate px-2.5 py-1.5" title={value}>{value || "—"}</td>)}
                           </tr>
@@ -619,7 +684,11 @@ export default function CustomExportDialog({
               disabled={templates.length === 0}
             >
               <option value="">{templates.length ? "Apply template…" : "No saved templates"}</option>
-              {templates.map((template) => <option key={template.name} value={template.name}>{template.name}</option>)}
+              {templates.map((template) => (
+                <option key={template.name} value={template.name}>
+                  {template.name}{template.version ? ` · v${template.version}` : ""}
+                </option>
+              ))}
             </select>
             {templates.length > 0 && (
               <select value="" onChange={(event) => event.target.value && deleteTemplate(event.target.value)}
@@ -633,7 +702,7 @@ export default function CustomExportDialog({
             <button type="button" onClick={saveTemplate} disabled={!templateName.trim() || columns.length === 0}
                     className="btn-secondary px-3 py-1.5 text-sm disabled:opacity-50">
               <Save className="h-4 w-4" aria-hidden="true" />
-              Save template
+              {editing && templateName.trim() === editing ? "Update template" : "Save template"}
             </button>
           </div>
           <div className="ml-auto flex items-center gap-3">

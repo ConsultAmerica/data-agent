@@ -15,9 +15,6 @@ vi.mock("@/components/global-search", () => ({
   useGlobalSearchShortcut: () => undefined,
 }));
 
-vi.mock("@/components/navigation/BackendStatusPill", () => ({
-  default: () => <span>status</span>,
-}));
 
 import AppShell from "@/components/layout/AppShell";
 

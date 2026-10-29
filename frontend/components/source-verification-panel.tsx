@@ -196,6 +196,42 @@ export default function SourceVerificationPanel({
     }
   }
 
+  function handleFitPage() {
+    if (!viewerRef.current || !pageRender) return;
+    const width = viewerRef.current.clientWidth - 32;
+    const height = viewerRef.current.clientHeight - 32;
+    const isSideways = rotation === 90 || rotation === 270;
+    const pageWidth = isSideways ? pageRender.page_height : pageRender.page_width;
+    const pageHeight = isSideways ? pageRender.page_width : pageRender.page_height;
+    if (width > 0 && height > 0 && pageWidth > 0 && pageHeight > 0) {
+      setZoom(Math.max(0.5, Math.min(2.5, +Math.min(width / pageWidth, height / pageHeight).toFixed(2))));
+    }
+  }
+
+  // Keyboard: PageUp/PageDown (or ←/→ with nothing else focused) change
+  // page; + and − zoom; R rotates.
+  function handleViewerKey(event: React.KeyboardEvent) {
+    const target = event.target as HTMLElement;
+    if (target.closest("input, textarea, select, button")) return;
+    const last = Math.max(pageCount, 1);
+    if ((event.key === "PageDown" || event.key === "ArrowRight") && currentPage < last) {
+      event.preventDefault();
+      setCurrentPage(currentPage + 1);
+    } else if ((event.key === "PageUp" || event.key === "ArrowLeft") && currentPage > 1) {
+      event.preventDefault();
+      setCurrentPage(currentPage - 1);
+    } else if (event.key === "+" || event.key === "=") {
+      event.preventDefault();
+      setZoom((z) => Math.min(2.5, +(z + 0.1).toFixed(2)));
+    } else if (event.key === "-") {
+      event.preventDefault();
+      setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)));
+    } else if (event.key.toLowerCase() === "r") {
+      event.preventDefault();
+      handleRotate();
+    }
+  }
+
   async function handleSearch(query: string) {
     setSearching(true);
     setLastQuery(query);
@@ -278,6 +314,7 @@ export default function SourceVerificationPanel({
         onPageChange={setCurrentPage}
         onZoomChange={setZoom}
         onFitWidth={handleFitWidth}
+        onFitPage={textOnly ? undefined : handleFitPage}
         onRotate={handleRotate}
         searching={searching}
         searchResults={searchResults}
@@ -285,7 +322,14 @@ export default function SourceVerificationPanel({
         onJumpToResult={handleJumpToResult}
       />
 
-      <div ref={viewerRef} className="min-h-0 flex-1">
+      <div
+        ref={viewerRef}
+        className="min-h-0 flex-1 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50"
+        tabIndex={0}
+        role="region"
+        aria-label={`${documentName}, page ${currentPage} of ${Math.max(pageCount, 1)}. Page Up and Page Down change page; plus and minus zoom; R rotates.`}
+        onKeyDown={handleViewerKey}
+      >
         {textOnly ? (
           <PageTextView
             page={documentPages?.find((page) => page.page_number === currentPage) ?? null}

@@ -3,7 +3,7 @@
 import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 import { Fragment, useState } from "react";
 
-import type { Form, FormGroup, FormValue } from "@/lib/doc-schemas";
+import type { Form, FormField, FormGroup, FormValue } from "@/lib/doc-schemas";
 
 const STATUS_HINT: Record<FormValue["status"], string> = {
   found: "Extracted from the document",
@@ -25,11 +25,16 @@ export default function SchemaForm({
   form,
   layout = "form",
   onEvidence,
+  onSelectField,
+  selectedFieldId = null,
 }: {
   form: Form;
   layout?: FormLayout;
   /** A value with a source page was clicked. */
   onEvidence?: (value: FormValue, label: string) => void;
+  /** A field card was chosen (with or without a source page): its details. */
+  onSelectField?: (field: FormField) => void;
+  selectedFieldId?: string | null;
 }) {
   const [tab, setTab] = useState(0);
   const group = form.groups[Math.min(tab, form.groups.length - 1)];
@@ -70,7 +75,7 @@ export default function SchemaForm({
           ))}
         </ul>
       )}
-      {group && <GroupView group={group} layout={layout} issues={issuesByField} onEvidence={onEvidence} />}
+      {group && <GroupView group={group} layout={layout} issues={issuesByField} onEvidence={onEvidence} onSelectField={onSelectField} selectedFieldId={selectedFieldId} />}
     </div>
   );
 }
@@ -104,12 +109,16 @@ function GroupView({
   layout,
   issues,
   onEvidence,
+  onSelectField,
+  selectedFieldId = null,
   nested = false,
 }: {
   group: FormGroup;
   layout: FormLayout;
   issues: Map<string, string[]>;
   onEvidence?: (v: FormValue, l: string) => void;
+  onSelectField?: (field: FormField) => void;
+  selectedFieldId?: string | null;
   nested?: boolean;
 }) {
   const [page, setPage] = useState(0);
@@ -167,7 +176,7 @@ function GroupView({
                       <tr className="bg-surface-soft/40">
                         <td colSpan={group.columns.length + 1} className="px-6 py-2">
                           {row.children.map((child) => (
-                            <GroupView key={child.group_id} group={child} layout={layout} issues={issues} onEvidence={onEvidence} nested />
+                            <GroupView key={child.group_id} group={child} layout={layout} issues={issues} onEvidence={onEvidence} onSelectField={onSelectField} selectedFieldId={selectedFieldId} nested />
                           ))}
                         </td>
                       </tr>
@@ -210,15 +219,39 @@ function GroupView({
             return (
               <div
                 key={field.field_id}
-                className={`rounded-lg border px-3 py-2 ${fieldIssues ? "border-danger/40 bg-danger/5" : "border-border bg-surface"}`}
+                className={`rounded-lg border px-3 py-2 ${fieldIssues ? "border-danger/40 bg-danger/5" : selectedFieldId === field.field_id ? "border-primary/60 bg-primary/[0.05] ring-1 ring-primary/30" : "border-border bg-surface"} ${
+                  onSelectField ? "cursor-pointer transition hover:border-primary/40 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50" : ""
+                }`}
                 title={field.description ?? field.instructions ?? field.field_id}
+                data-testid="schema-field-card"
+                {...(onSelectField
+                  ? {
+                      role: "button",
+                      tabIndex: 0,
+                      "aria-pressed": selectedFieldId === field.field_id,
+                      "aria-label": `${field.label}: ${field.value.value || "not found"}${field.value.page ? `, page ${field.value.page}` : ""}. Show details and source.`,
+                      onClick: () => onSelectField(field),
+                      onKeyDown: (event: React.KeyboardEvent) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          onSelectField(field);
+                        }
+                      },
+                    }
+                  : {})}
               >
-                <dt className="text-[11px] font-medium text-text-secondary">
-                  {field.label}
-                  {field.required && <span className="text-danger"> *</span>}
+                <dt className="flex items-baseline justify-between gap-2 text-[11px] font-medium text-text-secondary">
+                  <span>
+                    {field.label}
+                    {field.required && <span className="text-danger"> *</span>}
+                  </span>
+                  {onSelectField && field.value.page && (
+                    <span className="shrink-0 text-[10px] font-normal text-primary" aria-hidden="true">p. {field.value.page} ›</span>
+                  )}
                 </dt>
                 <dd className="mt-0.5 break-words text-[13px]">
-                  <ValueCell value={field.value} label={field.label} onEvidence={onEvidence} />
+                  {/* The whole card is the control; the value itself isn't a nested button. */}
+                  <ValueCell value={field.value} label={field.label} onEvidence={onSelectField ? undefined : onEvidence} />
                 </dd>
                 {fieldIssues && <p className="mt-0.5 text-[10px] text-danger">{fieldIssues[0]}</p>}
               </div>
@@ -227,7 +260,7 @@ function GroupView({
         </dl>
       )}
       {group.children.map((child) => (
-        <GroupView key={child.group_id} group={child} layout={layout} issues={issues} onEvidence={onEvidence} nested />
+        <GroupView key={child.group_id} group={child} layout={layout} issues={issues} onEvidence={onEvidence} onSelectField={onSelectField} selectedFieldId={selectedFieldId} nested />
       ))}
     </section>
   );

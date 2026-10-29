@@ -1,26 +1,37 @@
 "use client";
 
-import { Brain, FileText, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, X } from "lucide-react";
+import { Brain, PanelLeftOpen, PanelRightClose, PanelRightOpen, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
-import ContractSmartView, { type CategoryId, type SelectedRecord } from "@/components/smart-view/contract-smart-view";
+import ContractSmartView, { NO_DESTINATION, type CategoryId, type SelectedRecord } from "@/components/smart-view/contract-smart-view";
 import { MAPPING_LABEL, MAPPING_TONE, useOracleMappings, type CategoryMapping } from "@/components/smart-view/oracle-status";
-import { ReviewSignals } from "@/components/smart-view/review-indicators";
+import DocumentIntelligenceCard from "@/components/document-intelligence/document-intelligence-card";
+import FieldDetails from "@/components/smart-view/field-details";
+import RecordDetails, { sourceRequestFor } from "@/components/smart-view/record-details";
+import SourceFileCard from "@/components/smart-view/source-file-card";
 import SchemaForm from "@/components/schemas/schema-form";
-import SourceVerificationPanel, { type SourceViewRequest } from "@/components/source-verification-panel";
-import { getClassification, LEVEL_LABELS, STATUS_LABELS, type ClassificationState } from "@/lib/classification";
-import { documentForm, type DocumentForm, type FormValue } from "@/lib/doc-schemas";
+import { type SourceViewRequest } from "@/components/source-verification-panel";
+import DocumentViewer from "@/components/viewers/document-viewer";
+import { documentForm, type DocumentForm, type FormField, type FormValue } from "@/lib/doc-schemas";
+import { useReviewMutationsEnabled } from "@/lib/review-gate";
 import { getStagingRecord, type StagingRecord, type StagingWorkbook } from "@/lib/staging-workbook";
+import type { UploadedDocument } from "@/types/document";
+
+type LayoutMode = "split" | "source" | "data";
 
 interface Layout {
+  /** Split view (document beside the data), the document alone, or the
+   * data alone. */
+  mode: LayoutMode;
   source: boolean;
   intel: boolean;
   sourceWidth: number;
   intelWidth: number;
 }
 const LAYOUT_KEY = "dx-smart-layout";
-const DEFAULT_LAYOUT: Layout = { source: true, intel: true, sourceWidth: 420, intelWidth: 320 };
+const DEFAULT_LAYOUT: Layout = { mode: "split", source: true, intel: true, sourceWidth: 420, intelWidth: 320 };
+const MODE_LABEL: Record<LayoutMode, string> = { split: "Split view", source: "Source only", data: "Data only" };
 
 function useLayout(): [Layout, (patch: Partial<Layout>) => void] {
   const [layout, setLayout] = useState<Layout>(DEFAULT_LAYOUT);
@@ -102,30 +113,27 @@ export default function SmartWorkspace({
   workbook,
   filename,
   pageCount,
+  document = null,
 }: {
   documentId: string;
   workbook: StagingWorkbook;
   filename: string;
   pageCount: number;
+  /** The document record (format, encoding, origin) when loaded. */
+  document?: UploadedDocument | null;
 }) {
   const [layout, setLayout] = useLayout();
   const wide = useWide();
   const [drawer, setDrawer] = useState<"source" | "intel" | null>(null);
   const [category, setCategory] = useState<CategoryId>("overview");
   const [selected, setSelected] = useState<SelectedRecord | null>(null);
+  // A schema field chosen in the form view (invoices, IDs, transcripts…).
+  const [selectedField, setSelectedField] = useState<FormField | null>(null);
   const [full, setFull] = useState<StagingRecord | null>(null);
   const [request, setRequest] = useState<SourceViewRequest | null>(null);
-  const [classification, setClassification] = useState<ClassificationState | null>(null);
   const isContract = workbook.profile.profile_id === "contract_v3";
   const mappings = useOracleMappings(documentId, workbook.profile.profile_id);
-
-  useEffect(() => {
-    let active = true;
-    getClassification(documentId).then((c) => active && setClassification(c)).catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [documentId]);
+  const reviewEnabled = useReviewMutationsEnabled();
 
   // A selected record: load it in full (evidence, validation) and open its page.
   useEffect(() => {
@@ -135,20 +143,8 @@ export default function SmartWorkspace({
     const open = (record: StagingRecord) => {
       if (!active) return;
       setFull(record);
-      const cell = Object.values(record.cells).find((c) => c.provenance?.source_page && c.provenance.source_page > 0 && c.value != null);
-      const provenance = cell?.provenance;
-      if (provenance?.source_page) {
-        setRequest({
-          id: `${selected.datasetId}:${record.record_id}`,
-          pageNumber: provenance.source_page,
-          highlightText: provenance.highlight_text ?? (cell?.value != null ? String(cell.value) : null),
-          anchorText: provenance.anchor_text ?? null,
-          label: selected.title,
-          value: cell?.value != null ? String(cell.value) : undefined,
-          reviewStatus: record.record_status,
-          extractionMethod: provenance.extraction_method ?? null,
-        });
-      }
+      const source = sourceRequestFor(selected, record);
+      if (source) setRequest(source.request);
     };
     getStagingRecord(documentId, selected.datasetId, selected.record.record_id)
       .then((loaded) => open(loaded ?? fallback))
@@ -158,32 +154,54 @@ export default function SmartWorkspace({
     };
   }, [documentId, selected]);
 
+  // Selecting a record opens its details (the panel on wide screens, the
+  // drawer on narrow ones); "View in source" then shows its page.
   const select = (selection: SelectedRecord) => {
     setSelected(selection);
-    if (!wide) setDrawer("source");
+    if (wide) {
+      if (!layout.intel) setLayout({ intel: true });
+    } else {
+      setDrawer("intel");
+    }
   };
+  const closeDetails = () => {
+    setSelected(null);
+    setFull(null);
+  };
+  const viewSource = (next: SourceViewRequest) => {
+    setRequest({ ...next });
+    if (wide) {
+      if (!layout.source || layout.mode === "data") setLayout({ source: true, mode: "split" });
+    } else {
+      setDrawer("source");
+    }
+  };
+  const loading = selected != null && full?.record_id !== selected.record.record_id;
 
+  // The original document in the viewer its format calls for; the
+  // selected record's evidence is passed in as the request.
   const sourcePanel = (
-    <div className="h-full min-h-[520px]" data-testid="smart-source">
-      {request ? (
-        <SourceVerificationPanel documentId={documentId} documentName={filename} pageCount={pageCount} request={request} />
-      ) : (
-        <div className="flex h-full min-h-[520px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border px-6 text-center text-sm text-text-muted">
-          <FileText className="h-6 w-6" aria-hidden="true" />
-          Select a record to see where it is in the document.
-        </div>
-      )}
+    <div className="h-[78vh] min-h-[520px]" data-testid="smart-source">
+      <DocumentViewer documentId={documentId} documentName={filename} pageCount={pageCount} request={request} />
     </div>
   );
 
   const intelPanel = (
     <IntelligencePanel
       selected={selected}
-      full={full}
-      classification={classification}
+      full={loading ? null : full}
+      loading={loading}
       mappings={mappings}
       category={category}
       documentId={documentId}
+      documentName={filename}
+      document={document}
+      reviewEnabled={reviewEnabled}
+      onViewSource={viewSource}
+      onClose={closeDetails}
+      selectedField={selectedField}
+      onCloseField={() => setSelectedField(null)}
+      isContract={isContract}
     />
   );
 
@@ -191,34 +209,67 @@ export default function SmartWorkspace({
     <ContractSmartView documentId={documentId} workbook={workbook} category={category} onCategory={setCategory}
       onSelect={select} selectedId={selected?.record.record_id ?? null} mappings={mappings} />
   ) : (
-    <GenericSmartView documentId={documentId} onEvidence={(value, label) => {
-      if (!value.page) return;
-      setRequest({ pageNumber: value.page, highlightText: value.highlight, label, value: value.value, anchorText: value.document_label });
-      if (!wide) setDrawer("source");
-    }} />
+    <GenericSmartView
+      documentId={documentId}
+      selectedFieldId={selectedField?.field_id ?? null}
+      onEvidence={(value, label) => {
+        if (!value.page) return;
+        setRequest({ pageNumber: value.page, highlightText: value.highlight, label, value: value.value, anchorText: value.document_label });
+        if (!wide) setDrawer("source");
+      }}
+      onSelectField={(field) => {
+        // A field: its details beside the form, and its page in the source.
+        setSelectedField(field);
+        if (wide) {
+          if (!layout.intel) setLayout({ intel: true });
+        }
+        const value = field.value;
+        if (value.page) {
+          setRequest({ pageNumber: value.page, highlightText: value.highlight, label: field.label, value: value.value, anchorText: value.document_label });
+          if (wide && (!layout.source || layout.mode === "data")) setLayout({ source: true, mode: "split" });
+        }
+        if (!wide) setDrawer("intel");
+      }}
+    />
   );
 
   return (
     <div className="mt-4" data-testid="smart-workspace">
-      <div className="mb-3 flex items-center gap-2 text-xs">
-        <button type="button" onClick={() => (wide ? setLayout({ source: !layout.source }) : setDrawer("source"))} className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 hover:bg-surface-soft" aria-pressed={wide ? layout.source : undefined}>
-          {wide && layout.source ? <PanelLeftClose className="h-3.5 w-3.5" /> : <PanelLeftOpen className="h-3.5 w-3.5" />}Source
-        </button>
-        <button type="button" onClick={() => (wide ? setLayout({ intel: !layout.intel }) : setDrawer("intel"))} className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 hover:bg-surface-soft" aria-pressed={wide ? layout.intel : undefined}>
-          {wide && layout.intel ? <PanelRightClose className="h-3.5 w-3.5" /> : <PanelRightOpen className="h-3.5 w-3.5" />}Intelligence
-        </button>
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+        {wide ? (
+          <div className="inline-flex overflow-hidden rounded-md border border-border" role="radiogroup" aria-label="Layout">
+            {(["split", "source", "data"] as const).map((mode) => (
+              <button key={mode} type="button" role="radio" aria-checked={layout.mode === mode}
+                onClick={() => setLayout({ mode, ...(mode === "split" ? { source: true } : {}) })}
+                className={`px-2.5 py-1 ${layout.mode === mode ? "bg-primary-soft font-medium text-primary" : "hover:bg-surface-soft"}`}>
+                {MODE_LABEL[mode]}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <button type="button" onClick={() => setDrawer("source")} className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 hover:bg-surface-soft">
+            <PanelLeftOpen className="h-3.5 w-3.5" />Source
+          </button>
+        )}
+        {(!wide || layout.mode !== "source") && (
+          <button type="button" onClick={() => (wide ? setLayout({ intel: !layout.intel }) : setDrawer("intel"))} className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 hover:bg-surface-soft" aria-pressed={wide ? layout.intel : undefined}>
+            {wide && layout.intel ? <PanelRightClose className="h-3.5 w-3.5" /> : <PanelRightOpen className="h-3.5 w-3.5" />}Intelligence
+          </button>
+        )}
       </div>
 
       {wide ? (
-        <div className="flex items-start gap-1">
-          {layout.source && (
+        <div className="flex items-start gap-1" data-layout={layout.mode}>
+          {layout.mode === "source" ? (
+            <aside className="min-w-0 flex-1" aria-label="Source document">{sourcePanel}</aside>
+          ) : layout.mode === "split" && layout.source && (
             <>
               <aside className="sticky top-4 shrink-0" style={{ width: layout.sourceWidth }} aria-label="Source document">{sourcePanel}</aside>
               <Resizer label="Resize source panel" onDrag={(dx) => setLayout({ sourceWidth: clamp(layout.sourceWidth + dx, 300, 820) })} />
             </>
           )}
-          <main className="min-w-0 flex-1 px-1" aria-label="Extracted data">{center}</main>
-          {layout.intel && (
+          {layout.mode !== "source" && <main className="min-w-0 flex-1 px-1" aria-label="Extracted data">{center}</main>}
+          {layout.mode !== "source" && layout.intel && (
             <>
               <Resizer label="Resize intelligence panel" onDrag={(dx) => setLayout({ intelWidth: clamp(layout.intelWidth - dx, 260, 520) })} />
               <aside className="sticky top-4 shrink-0" style={{ width: layout.intelWidth }} aria-label="Intelligence and mapping">{intelPanel}</aside>
@@ -251,7 +302,12 @@ export default function SmartWorkspace({
   );
 }
 
-function GenericSmartView({ documentId, onEvidence }: { documentId: string; onEvidence: (value: FormValue, label: string) => void }) {
+function GenericSmartView({ documentId, onEvidence, onSelectField, selectedFieldId }: {
+  documentId: string;
+  onEvidence: (value: FormValue, label: string) => void;
+  onSelectField: (field: FormField) => void;
+  selectedFieldId: string | null;
+}) {
   const [data, setData] = useState<DocumentForm | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -268,66 +324,65 @@ function GenericSmartView({ documentId, onEvidence }: { documentId: string; onEv
       <p className="mb-2 text-xs text-text-secondary">
         Organised by the <Link href={`/schemas/${data.schema_id}?version=${data.version_id}`} className="text-primary hover:underline">{data.schema_name} v{data.version}</Link> schema.
       </p>
-      <SchemaForm form={data.form} onEvidence={onEvidence} />
+      <SchemaForm form={data.form} onEvidence={onEvidence} onSelectField={onSelectField} selectedFieldId={selectedFieldId} />
     </div>
   );
 }
 
-function IntelligencePanel({ selected, full, classification, mappings, category, documentId }: {
+function IntelligencePanel({ selected, full, loading, mappings, category, documentId, documentName, document, reviewEnabled, onViewSource, onClose, selectedField, onCloseField, isContract }: {
   selected: SelectedRecord | null;
   full: StagingRecord | null;
-  classification: ClassificationState | null;
+  loading: boolean;
   mappings: CategoryMapping[] | null;
   category: CategoryId;
   documentId: string;
+  documentName: string;
+  document: UploadedDocument | null;
+  reviewEnabled: boolean;
+  onViewSource: (request: SourceViewRequest) => void;
+  onClose: () => void;
+  selectedField: FormField | null;
+  onCloseField: () => void;
+  isContract: boolean;
 }) {
-  const relevant = (mappings ?? []).filter((m) => m.category === (selected?.category ?? category));
-  const fields = full ? Object.values(full.cells).filter((c) => c.value != null && String(c.value).trim()) : [];
+  const relevant = (mappings ?? []).filter((m) => m.category === category);
   return (
     <div className="space-y-4 rounded-xl border border-border bg-surface p-3 text-sm" data-testid="intelligence-panel">
-      <section>
-        <h3 className="mb-1 flex items-center gap-1.5 text-[13px] font-semibold"><Brain className="h-4 w-4 text-primary" aria-hidden="true" />{selected ? selected.title : "No record selected"}</h3>
-        {full ? <ReviewSignals record={full} /> : <p className="text-xs text-text-muted">Select a record to see its evidence, validation and review status.</p>}
-      </section>
-      {full && fields.length > 0 && (
-        <section>
-          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Extracted values</p>
-          <dl className="max-h-64 space-y-1 overflow-y-auto text-xs" data-testid="record-values">
-            {fields.map((c) => (
-              <div key={c.canonical_field}>
-                <dt className="text-text-secondary">{c.display_label}</dt>
-                <dd className="whitespace-pre-wrap break-words text-foreground">{String(c.value)}</dd>
-              </div>
-            ))}
-          </dl>
-          <Link href={`/documents/${documentId}/review`} className="mt-1 inline-block text-xs text-primary hover:underline">Correct a value in Metadata review</Link>
-        </section>
+      {selected ? (
+        <RecordDetails key={`${selected.datasetId}:${selected.record.record_id}`} selection={selected} record={full} loading={loading} mappings={mappings} documentId={documentId}
+          documentName={documentName} reviewEnabled={reviewEnabled} onViewSource={onViewSource} onClose={onClose} />
+      ) : selectedField ? (
+        <FieldDetails key={selectedField.field_id} field={selectedField} documentId={documentId} onViewSource={onViewSource} onClose={onCloseField} />
+      ) : (
+        <>
+          <section>
+            <h3 className="mb-1 flex items-center gap-1.5 text-[13px] font-semibold"><Brain className="h-4 w-4 text-primary" aria-hidden="true" />{isContract ? "No record selected" : "No field selected"}</h3>
+            <p className="text-xs text-text-muted">
+              {isContract
+                ? "Select a record to see its full values, source evidence, validation, review status and Oracle mapping."
+                : "Select a field card to see its value, how it was found, and where it is in the document."}
+            </p>
+          </section>
+          <section>
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Oracle mapping</p>
+            {relevant.length ? relevant.map((m) => (
+              <p key={m.profile.id} className="text-xs">
+                <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${MAPPING_TONE[m.state]}`}>{MAPPING_LABEL[m.state]}</span>{" "}
+                {m.template.object_name} · {m.mapped}/{m.columns} columns
+                <Link href={`/mapping/designer?template=${m.template.id}&document=${documentId}`} className="ml-1 text-primary hover:underline">Open</Link>
+              </p>
+            )) : (
+              <p className="text-xs text-text-muted">
+                {NO_DESTINATION.includes(category)
+                  ? "No Verified Oracle Import Destination"
+                  : "No saved mapping for this category."}
+              </p>
+            )}
+          </section>
+        </>
       )}
-      <section>
-        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Classification</p>
-        {classification ? (
-          <p className="text-xs">
-            {classification.family_label}{classification.subtype ? ` — ${classification.subtype}` : ""}
-            <span className="block text-text-secondary">{STATUS_LABELS[classification.status]} · confidence {LEVEL_LABELS[classification.confidence_level]}</span>
-          </p>
-        ) : <p className="text-xs text-text-muted">—</p>}
-      </section>
-      <section>
-        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Oracle mapping</p>
-        {relevant.length ? relevant.map((m) => (
-          <p key={m.profile.id} className="text-xs">
-            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${MAPPING_TONE[m.state]}`}>{MAPPING_LABEL[m.state]}</span>{" "}
-            {m.template.object_name} · {m.mapped}/{m.columns} columns
-            <Link href={`/mapping/designer?template=${m.template.id}&document=${documentId}`} className="ml-1 text-primary hover:underline">Open</Link>
-          </p>
-        )) : (
-          <p className="text-xs text-text-muted">
-            {["clauses", "deliveries", "attachments", "sections"].includes(selected?.category ?? category)
-              ? "No Verified Oracle Import Destination"
-              : "No saved mapping for this category."}
-          </p>
-        )}
-      </section>
+      <DocumentIntelligenceCard documentId={documentId} onViewSource={onViewSource} />
+      <SourceFileCard document={document} />
     </div>
   );
 }

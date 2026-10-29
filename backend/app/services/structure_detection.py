@@ -33,6 +33,7 @@ from app.services.label_rejection import (
     looks_like_toc_entry,
 )
 from app.services.table_quality import assess_table_candidate
+from app.services.table_shapes import page_tables
 
 DETECTION_PAGE_LIMIT = 40
 
@@ -1044,7 +1045,7 @@ async def detect_document_structures(
     line_item_pages: set[int] = {
         page.page_number
         for page in scan_pages
-        for table in (page.tables_json or [])
+        for table in page_tables(page.tables_json)
         if len(table.get("headers") or []) >= 3
     }
     # Generic, single-word probes/labels that are legitimate document

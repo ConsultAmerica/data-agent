@@ -33,6 +33,8 @@ from app.services.label_rejection import reject_as_field_value
 from app.services.reviewed_export import extracted_value_for
 from app.services.section_detection import section_for_value
 from app.services.source_validator import validate_source_value
+from app.services.evidence_text import source_text_of
+from app.services.review_validation import validation_summary
 
 _HUMAN_LOCKED = frozenset({"edited", "accepted", "rejected"})
 
@@ -519,7 +521,7 @@ def _persisted_evidence(evidence_json: dict | None) -> SourceEvidence:
     evidence = dict(evidence_json or {})
     page_number = evidence.get("page_number")
     evidence["page_number"] = page_number if isinstance(page_number, int) else 0
-    evidence["source_text"] = evidence.get("source_text") or ""
+    evidence["source_text"] = source_text_of(evidence_json)
     evidence["source_reference"] = evidence.get("source_reference") or (
         f"page {page_number}" if isinstance(page_number, int) else ""
     )
@@ -558,6 +560,7 @@ def field_to_result(
         evidence=_persisted_evidence(field.evidence_json),
         verified=field.verified,
         review_status=field.review_status,
+        validation=validation_summary(field),
         original_value=field.original_value or extracted,
         extracted_value=extracted,
     )

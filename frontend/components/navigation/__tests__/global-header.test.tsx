@@ -2,7 +2,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/obligations", useRouter: () => ({ push: vi.fn() }) }));
-vi.mock("@/lib/api", () => ({ probeBackend: () => Promise.resolve({ state: "healthy", retryable: false, message: null }) }));
+const { probeBackend } = vi.hoisted(() => ({
+  probeBackend: vi.fn(() => Promise.resolve({ state: "healthy", retryable: false, message: null as string | null })),
+}));
+vi.mock("@/lib/api", () => ({ probeBackend }));
 vi.mock("@/lib/auth", () => ({
   getCurrentActor: () => Promise.resolve({ display_name: "Doris Castro", role: "reviewer", email: "d@x.mil" }),
 }));
@@ -19,15 +22,24 @@ describe("GlobalHeader", () => {
     expect(screen.queryByRole("button", { name: "More" })).toBeNull();
   });
 
-  it("offers the command palette with its shortcut, environment health and the profile", async () => {
+  it("offers the command palette with its shortcut and the profile, with no status badge while the API is healthy", async () => {
     const onOpenSearch = vi.fn();
     render(<GlobalHeader onOpenSearch={onOpenSearch} />);
     const triggers = screen.getAllByRole("button", { name: /Search or jump to/ });
     triggers[0].click();
     expect(onOpenSearch).toHaveBeenCalled();
-    await waitFor(() => expect(screen.getAllByTestId("backend-status")[0]).toHaveAttribute("title", expect.stringContaining("Environment: Local · API Ready")));
     await waitFor(() => expect(screen.getAllByTestId("user-chip")[0]).toHaveTextContent("DC"));
     expect(screen.getAllByTestId("user-chip")[0]).toHaveTextContent("Reviewer");
+    expect(screen.queryByTestId("backend-status")).toBeNull();
+    expect(screen.queryByText(/API Ready/)).toBeNull();
+  });
+
+  it("never shows a backend status or environment badge, even while the backend wakes up", async () => {
+    probeBackend.mockResolvedValue({ state: "unreachable", retryable: true, message: "Starting" });
+    render(<GlobalHeader onOpenSearch={() => {}} />);
+    await waitFor(() => expect(screen.getAllByTestId("user-chip")[0]).toBeInTheDocument());
+    expect(screen.queryByTestId("backend-status")).toBeNull();
+    expect(screen.queryByText(/waking up|Local ·/)).toBeNull();
   });
 });
 

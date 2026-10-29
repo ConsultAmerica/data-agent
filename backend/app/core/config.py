@@ -19,13 +19,6 @@ class Settings(BaseSettings):
     max_pdf_pages: int = 1000
     allow_encrypted_pdf: bool = False
 
-    # ZIP archives and email attachments (app/services/containers.py).
-    # Each file inside is also held to max_upload_mb.
-    container_max_entries: int = 2000
-    container_max_files: int = 200
-    container_max_total_mb: int = 500
-    container_max_ratio: int = 100
-
     # Backs up uploaded files to Supabase Storage so they survive Render's
     # free-tier ephemeral disk being wiped on every redeploy/idle restart.
     # Local disk is still used as a working cache; when unset, storage
@@ -123,7 +116,11 @@ class Settings(BaseSettings):
     # separated by ";;". Unset = the format check is not configured.
     invoice_po_formats: str | None = None
     # Key dates: how far ahead an expiry counts as "expiring soon".
-    key_date_expiring_days: int = 90
+    # "Expiring soon" window (days); the lifecycle evaluator also offers 60
+    # and 90 per request.
+    key_date_expiring_days: int = 30
+    # Lifecycle statuses compare calendar dates against "today" in this zone.
+    lifecycle_timezone: str = "UTC"
 
     # When true, discover-schema may ask the AI provider to refine
     # display names / groups for generic heuristic targets only.
@@ -230,6 +227,8 @@ class Settings(BaseSettings):
         # works out of the box if the service is ever recreated.
         for origin in (
             "http://localhost:3000",
+            "https://dataomatix.com",
+            "https://www.dataomatix.com",
             "https://data-agent-ca.vercel.app",
             "https://frontend-ivory-nine-22.vercel.app",
         ):

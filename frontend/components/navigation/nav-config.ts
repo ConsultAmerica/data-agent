@@ -101,7 +101,6 @@ export const PLATFORM_SECTIONS: MegaMenuSection[] = [
       { label: "DataoAI", description: "Query document data", href: "/ask", icon: Sparkles },
       { label: "Search", description: "Search documents and fields", href: "/search", icon: Search },
       { label: "Analytics", description: "Portfolio insights", href: "/analytics", icon: BarChart3 },
-      { label: "FAR / DFARS", description: "Contract intelligence", href: "/clauses", icon: ScrollText },
       { label: "Obligations", description: "Deliverables and deadlines", href: "/obligations", icon: CalendarClock },
       { label: "Agent Actions", description: "Summaries, risk and funding reports", href: "/actions", icon: Bot },
     ],

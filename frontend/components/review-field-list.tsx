@@ -22,7 +22,7 @@ import type {
   ReviewAction,
 } from "@/types/document";
 import ReviewReadOnlyNotice from "@/components/review/review-read-only-notice";
-import { useReviewMutationsEnabled } from "@/lib/review-gate";
+import { REVIEW_READ_ONLY_MESSAGE, useReviewMutationsEnabled } from "@/lib/review-gate";
 
 interface ReviewFieldListProps {
   documentId: string;
@@ -35,6 +35,8 @@ interface ReviewFieldListProps {
     value?: string,
   ) => Promise<void> | void;
   onAcceptAll: () => void;
+  /** The outcome of the last "Accept", shown under the button. */
+  acceptAllMessage?: { tone: "info" | "error"; text: string } | null;
   reviewingFieldId: number | null;
   acceptingAll: boolean;
 }
@@ -69,6 +71,7 @@ const ACTION_LABELS: Record<ReviewAction, string> = {
   edit: "Edited",
   reject: "Rejected",
   mark_unknown: "Marked Unknown",
+  correct: "Corrected",
 };
 
 export default function ReviewFieldList({
@@ -78,6 +81,7 @@ export default function ReviewFieldList({
   onSelectField,
   onReviewField,
   onAcceptAll,
+  acceptAllMessage = null,
   reviewingFieldId,
   acceptingAll,
 }: ReviewFieldListProps) {
@@ -123,12 +127,24 @@ export default function ReviewFieldList({
           type="button"
           onClick={onAcceptAll}
           disabled={!reviewEnabled || acceptingAll || allReviewed || pendingCount === 0}
+          title={reviewEnabled ? undefined : REVIEW_READ_ONLY_MESSAGE}
           className="btn-primary px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
         >
           <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
           {allReviewed ? "All reviewed" : "Accept low-risk pending"}
         </button>
       </div>
+
+      {acceptAllMessage && (
+        <p
+          role={acceptAllMessage.tone === "error" ? "alert" : "status"}
+          className={`mx-6 mt-3 rounded-lg px-3 py-2 text-xs ${
+            acceptAllMessage.tone === "error" ? "bg-danger/10 text-danger" : "bg-surface-soft text-text-secondary"
+          }`}
+        >
+          {acceptAllMessage.text}
+        </p>
+      )}
 
       <ReviewReadOnlyNotice className="mx-6 mt-3" />
 

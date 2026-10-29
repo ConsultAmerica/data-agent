@@ -1,9 +1,9 @@
-"""Native parsers for JSON, ODS spreadsheets and EML email.
+"""Native parsers for JSON and ODS spreadsheets.
 
 Same output shape as office_text_parsers: paragraphs, tables and text for
 one page (or one page per sheet). Nothing here executes or fetches
 anything: JSON is data, ODS content.xml is read with the hardened XML
-parser, and an email's attachments are left to app/services/containers.py.
+parser.
 """
 
 from __future__ import annotations
@@ -181,59 +181,3 @@ def parse_ods_sheets(file_path: str | Path) -> list[dict]:
             }
         )
     return sheets
-
-
-# ── EML (RFC 822 email) ──────────────────────────────────────────────
-
-_EMAIL_HEADERS = ("From", "To", "Cc", "Date", "Subject")
-
-
-def read_email(raw: bytes):
-    from email import policy
-    from email.parser import BytesParser
-
-    return BytesParser(policy=policy.default).parsebytes(raw)
-
-
-def email_body_text(message) -> str:
-    """The plain-text body; the HTML body as readable text otherwise."""
-
-    body = message.get_body(preferencelist=("plain", "html"))
-    if body is None:
-        return ""
-    try:
-        content = body.get_content()
-    except (LookupError, ValueError):
-        payload = body.get_payload(decode=True) or b""
-        content = decode_text_bytes(payload)[0]
-    if body.get_content_subtype() == "html":
-        from app.source_structure.html_structure import readable_dom_text
-
-        content, _ = readable_dom_text(content.encode("utf-8"))
-    return content.strip()
-
-
-def parse_email_file(file_path: str | Path) -> dict:
-    """Headers, then the attachment names, then the body."""
-
-    from app.services.containers import email_attachment_names
-
-    message = read_email(Path(file_path).read_bytes())
-    lines: list[str] = []
-    for header in _EMAIL_HEADERS:
-        value = message.get(header)
-        if value:
-            lines.append(f"{header}: {' '.join(str(value).split())}")
-    attachments = email_attachment_names(message)
-    if attachments:
-        lines.append(f"Attachments: {', '.join(attachments)}")
-    header_count = len(lines)
-    body = email_body_text(message)
-    text = "\n".join(lines) + ("\n\n" + body if body else "")
-    paragraphs = lines + [line for line in body.splitlines() if line.strip()]
-    header_table = [["Field", "Value"]] + [line.split(": ", 1) for line in lines[:header_count]]
-    return {
-        "paragraphs": paragraphs,
-        "tables": [header_table] if header_count else [],
-        "text": text,
-    }

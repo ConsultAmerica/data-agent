@@ -9,6 +9,7 @@ import {
   Search,
   ZoomIn,
   ZoomOut,
+  Shrink,
 } from "lucide-react";
 
 export interface SearchMatch {
@@ -24,6 +25,8 @@ interface PdfToolbarProps {
   zoom: number;
   onZoomChange: (zoom: number) => void;
   onFitWidth?: () => void;
+  /** Fit the whole page in the viewer. */
+  onFitPage?: () => void;
 
   onRotate: () => void;
 
@@ -44,6 +47,7 @@ export default function PdfToolbar({
   zoom,
   onZoomChange,
   onFitWidth,
+  onFitPage,
   onRotate,
   onSearch,
   searching,
@@ -161,6 +165,18 @@ export default function PdfToolbar({
           className="rounded-md border border-border p-1.5 text-text-secondary transition hover:bg-surface-soft"
         >
           <Maximize2 className="h-3.5 w-3.5" />
+        </button>
+      )}
+
+      {onFitPage && (
+        <button
+          type="button"
+          onClick={onFitPage}
+          aria-label="Fit page"
+          title="Fit page"
+          className="rounded-md border border-border p-1.5 text-text-secondary transition hover:bg-surface-soft"
+        >
+          <Shrink className="h-3.5 w-3.5" />
         </button>
       )}
 

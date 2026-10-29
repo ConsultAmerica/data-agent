@@ -11,6 +11,7 @@ import EmptyState from "@/components/ui/empty-state";
 import {
   evidenceHref,
   formatKeyDate,
+  keyDateText,
   KIND_LABELS,
   listKeyDates,
   relativeLabel,
@@ -31,12 +32,14 @@ const STATUS_STYLE: Record<KeyDateStatus, string> = {
   expiring: "bg-warning/10 text-warning",
   upcoming: "bg-success/10 text-success",
   past: "bg-surface-soft text-text-secondary",
+  ambiguous: "bg-warning/10 text-warning",
 };
 const STATUS_LABEL: Record<KeyDateStatus, string> = {
   expired: "Expired",
   expiring: "Expiring soon",
   upcoming: "Valid",
   past: "Past",
+  ambiguous: "Date needs review",
 };
 
 export default function ExpirationsPage() {
@@ -135,12 +138,17 @@ export default function ExpirationsPage() {
                       <span className="text-foreground">{KIND_LABELS[row.kind] ?? row.kind}</span>
                       <span className="block text-xs">{row.label}</span>
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2 text-foreground">{formatKeyDate(row.date)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-foreground">
+                      {keyDateText(row)}
+                      {row.ambiguous && row.interpretations?.length ? (
+                        <span className="block text-xs text-warning">Could be {row.interpretations.map(formatKeyDate).join(" or ")}</span>
+                      ) : null}
+                    </td>
                     <td className="whitespace-nowrap px-3 py-2">
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[row.status]}`}>
                         {STATUS_LABEL[row.status]}
                       </span>
-                      <span className="ml-2 text-xs text-text-secondary">{relativeLabel(row)}</span>
+                      {!row.ambiguous && <span className="ml-2 text-xs text-text-secondary">{relativeLabel(row)}</span>}
                     </td>
                     <td className="px-3 py-2 text-xs">
                       <Link href={evidenceHref(row)} className="text-primary hover:underline">

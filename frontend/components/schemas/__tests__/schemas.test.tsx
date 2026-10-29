@@ -112,6 +112,50 @@ describe("SchemaForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("0007")).toBeInTheDocument();
   });
+
+  it("makes each field card selectable, by click or keyboard, and marks the selected one", () => {
+    const onSelectField = vi.fn();
+    const onEvidence = vi.fn();
+    const { rerender } = render(<SchemaForm form={form} onEvidence={onEvidence} onSelectField={onSelectField} />);
+    const card = screen.getByRole("button", { name: "Contract Number: FA30, page 1. Show details and source." });
+    expect(card).toHaveAttribute("aria-pressed", "false");
+    expect(within(card).getByText("p. 1 ›")).toBeInTheDocument();
+    fireEvent.click(card);
+    expect(onSelectField).toHaveBeenCalledWith(form.groups[0].fields[0]);
+    // The card is the control; the value inside is not a second button.
+    expect(onEvidence).not.toHaveBeenCalled();
+
+    const missing = screen.getByRole("button", { name: "Currency: not found. Show details and source." });
+    fireEvent.keyDown(missing, { key: "Enter" });
+    expect(onSelectField).toHaveBeenLastCalledWith(form.groups[0].fields[1]);
+
+    rerender(<SchemaForm form={form} onEvidence={onEvidence} onSelectField={onSelectField} selectedFieldId="contract.number" />);
+    expect(screen.getByRole("button", { name: /^Contract Number: FA30/ })).toHaveAttribute("aria-pressed", "true");
+  });
+});
+
+describe("FieldDetails", () => {
+  it("shows the value, how it was found and its source page, or says no page was recorded", async () => {
+    const { default: FieldDetails } = await import("@/components/smart-view/field-details");
+    const onViewSource = vi.fn();
+    const [found, missing] = [
+      { field_id: "contract.number", label: "Contract Number", type: "identifier", required: true, description: null, instructions: null,
+        value: { value: "FA30", status: "found", review_status: "Verified", page: 1, highlight: "FA30", document_label: "2. CONTRACT NUMBER", method: null } },
+      { field_id: "contract.currency", label: "Currency", type: "text", required: false, description: null, instructions: null,
+        value: { value: "", status: "not_found", review_status: null, page: null, highlight: null, document_label: null, method: null } },
+    ] as Form["groups"][number]["fields"];
+    const { rerender } = render(<FieldDetails field={found} documentId="doc-1" onViewSource={onViewSource} onClose={vi.fn()} />);
+    const panel = screen.getByTestId("field-details");
+    expect(within(panel).getByText("FA30")).toBeInTheDocument();
+    expect(within(panel).getByText("Found in the document")).toBeInTheDocument();
+    expect(within(panel).getByText("2. CONTRACT NUMBER")).toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole("button", { name: "View in source" }));
+    expect(onViewSource).toHaveBeenCalledWith(expect.objectContaining({ pageNumber: 1, highlightText: "FA30", label: "Contract Number" }));
+
+    rerender(<FieldDetails field={missing} documentId="doc-1" onViewSource={onViewSource} onClose={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "View in source" })).toBeNull();
+    expect(screen.getByText(/No source page was recorded/)).toBeInTheDocument();
+  });
 });
 
 describe("SchemaDesigner", () => {

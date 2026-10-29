@@ -19,6 +19,8 @@ ReviewActionLiteral = Literal[
     "edit",
     "reject",
     "mark_unknown",
+    # Save a corrected value without approving it (it stays pending).
+    "correct",
 ]
 
 # Audit read models take `action: str`: the log holds field review actions
@@ -97,6 +99,34 @@ class ClassificationHistoryEntry(BaseModel):
     changed_at: datetime
 
 
+class FailedValidationRule(BaseModel):
+    rule: str
+    label: str
+    detail: str | None = None
+
+
+class ValidationOverride(BaseModel):
+    reason: str
+    reviewer: str
+    at: str
+    failed_rules: list[str] = Field(default_factory=list)
+    messages: list[str] = Field(default_factory=list)
+
+
+class FieldValidationSummary(BaseModel):
+    """Validation as recorded by extraction (or re-run on a correction)."""
+
+    # passed | failed | skipped | not_run
+    status: str = "not_run"
+    failed_rules: list[FailedValidationRule] = Field(default_factory=list)
+    messages: list[str] = Field(default_factory=list)
+    # Only when extraction stored one; never invented.
+    suggested_value: str | None = None
+    # A failed validation blocks an ordinary approval (an override needs a reason).
+    blocking: bool = False
+    override: ValidationOverride | None = None
+
+
 class MetadataFieldResult(BaseModel):
     # Immutable primary key — preferred address for Accept/Edit/Reject.
     id: int | None = None
@@ -128,6 +158,8 @@ class MetadataFieldResult(BaseModel):
     # Distinct from `value`, which is the authoritative effective value.
     extracted_value: str = ""
 
+    validation: FieldValidationSummary | None = None
+
 
 class FieldReviewRequest(BaseModel):
     action: ReviewActionLiteral
@@ -135,6 +167,10 @@ class FieldReviewRequest(BaseModel):
     value: str | None = None
 
     changed_by: str = Field(min_length=1, max_length=120)
+
+    # Approving a value whose validation failed needs an explicit reason;
+    # it is recorded on the field and in the audit log.
+    override_reason: str | None = Field(default=None, max_length=500)
 
 
 class AcceptAllRequest(BaseModel):

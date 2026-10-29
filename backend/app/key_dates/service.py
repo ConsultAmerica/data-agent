@@ -3,6 +3,7 @@
 refresh_key_dates runs when a document is staged (staging/preparation.py)
 and on demand; status is computed against today on every read:
 
+    ambiguous  a numeric date with two valid readings, not yet resolved
     expired    an expiring kind whose date has passed
     expiring   an expiring kind within KEY_DATE_EXPIRING_DAYS
     upcoming   any other date in the future
@@ -43,8 +44,14 @@ def refresh_key_dates(database: Session, document: Document) -> list[DocumentKey
 
 
 def status_of(row: DocumentKeyDate, today: date | None = None) -> tuple[str, int]:
-    today = today or date.today()
+    from app.key_dates.lifecycle import today_in
+
+    today = today or today_in(get_settings().lifecycle_timezone)
     days = (row.date - today).days
+    # Either reading of 03/04/2026 could be right: it can't be called
+    # expired or expiring until someone confirms it.
+    if (row.details or {}).get("ambiguous"):
+        return "ambiguous", days
     if row.kind in EXPIRING_KINDS:
         if days < 0:
             return "expired", days

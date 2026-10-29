@@ -30,7 +30,6 @@ _PROCESSORS = {
     ".csv": _NATIVE,
     ".tsv": _NATIVE,
     ".json": _NATIVE,
-    ".eml": _NATIVE,
     ".html": _NATIVE,
     ".htm": _NATIVE,
     ".xml": _NATIVE,

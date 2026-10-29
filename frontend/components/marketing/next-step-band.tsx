@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, FileSearch, Upload } from "lucide-react";
+import { FileSearch, Upload } from "lucide-react";
 
 export default function NextStepBand() {
   return (
@@ -31,10 +31,6 @@ export default function NextStepBand() {
               <Link href="/extraction/new" className="btn-hero-secondary">
                 <Upload className="h-4 w-4 shrink-0" />
                 Start an extraction
-              </Link>
-              <Link href="/#trust" className="next-step-link">
-                Deployment options
-                <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>
           </div>

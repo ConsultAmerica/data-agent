@@ -38,7 +38,7 @@ import {
   type ReviewQueueFieldItem,
 } from "@/types/document";
 import ReviewReadOnlyNotice from "@/components/review/review-read-only-notice";
-import { useReviewMutationsEnabled } from "@/lib/review-gate";
+import { REVIEW_READ_ONLY_MESSAGE, useReviewMutationsEnabled } from "@/lib/review-gate";
 
 const DEFAULT_REVIEWER = "Dataomatix";
 
@@ -353,7 +353,7 @@ export default function ReviewQueuePage() {
                 <button
                   type="button"
                   onClick={() => void acceptLowRisk()}
-                  disabled={acceptingLowRisk}
+                  disabled={!reviewEnabled || acceptingLowRisk}
                   className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50"
                 >
                   {acceptingLowRisk ? "Accepting…" : `Confirm: accept ${lowRiskItems.length}`}
@@ -372,6 +372,7 @@ export default function ReviewQueuePage() {
                 type="button"
                 onClick={() => setConfirmLowRisk(true)}
                 disabled={!reviewEnabled}
+                title={reviewEnabled ? undefined : REVIEW_READ_ONLY_MESSAGE}
                 className="btn-secondary px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Accept low-risk values

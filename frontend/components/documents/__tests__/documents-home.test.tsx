@@ -425,3 +425,21 @@ describe("Documents repository (RC2-02)", { timeout: 15_000 }, () => {
     expect((screen.getByRole("menuitem", { name: "Reprocess" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
+
+describe("Documents lifecycle (6B.1)", { timeout: 15_000 }, () => {
+  it("shows format, dates and lifecycle, and filters by lifecycle", async () => {
+    rows = [
+      doc("p1", "passport.pdf", { file_format: "pdf", lifecycle_status: "expired", lifecycle_label: "Expired", lifecycle_end_date: "2024-01-31" }),
+      doc("c1", "policy.pdf", { file_format: "pdf", lifecycle_status: "expiring_soon", lifecycle_start_date: "2026-01-01", lifecycle_end_date: "2026-11-15" }),
+      doc("i1", "invoice.xlsx", { file_format: "xlsx", lifecycle_status: "not_applicable" }),
+    ];
+    render(<DocumentsHome />);
+    await screen.findByText("passport.pdf");
+    expect(within(row("passport.pdf")).getByTestId("lifecycle-badge")).toHaveTextContent("Expired");
+    expect(within(row("policy.pdf")).getByTestId("lifecycle-badge")).toHaveTextContent("Expiring Soon");
+    expect(within(row("invoice.xlsx")).getByTestId("lifecycle-badge")).toHaveTextContent("Not Applicable");
+    expect(row("invoice.xlsx")).toHaveTextContent("xlsx");
+    fireEvent.change(screen.getByLabelText("Lifecycle"), { target: { value: "expiring_soon" } });
+    await waitFor(() => expect(vi.mocked(searchDocuments)).toHaveBeenLastCalledWith(expect.objectContaining({ lifecycle: "expiring_soon" })));
+  });
+});

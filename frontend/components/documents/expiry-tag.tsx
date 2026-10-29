@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 
 import {
-  formatKeyDate,
   getDocumentKeyDates,
+  keyDateText,
   KIND_LABELS,
   relativeLabel,
   SOURCE_LABELS,
@@ -16,6 +16,7 @@ const TONE: Record<string, string> = {
   expiring: "text-warning",
   upcoming: "text-success",
   past: "text-text-secondary",
+  ambiguous: "text-warning",
 };
 
 /** Header tag with the document's own expiry, when it states one. */
@@ -43,8 +44,12 @@ export default function ExpiryTag({ documentId, className }: { documentId: strin
     >
       <dt className="text-text-muted">{KIND_LABELS[expiry.kind] ?? "Expiry"}</dt>
       <dd className={`font-medium ${TONE[expiry.status] ?? "text-foreground"}`}>
-        {formatKeyDate(expiry.date)}
-        <span className="ml-1 font-normal text-text-secondary">· {relativeLabel(expiry)}</span>
+        {keyDateText(expiry)}
+        {expiry.ambiguous ? (
+          <span className="ml-1 font-normal text-text-secondary">· confirm the date</span>
+        ) : (
+          <span className="ml-1 font-normal text-text-secondary">· {relativeLabel(expiry)}</span>
+        )}
       </dd>
     </div>
   );

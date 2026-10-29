@@ -3,7 +3,8 @@ import { apiFetch } from "@/lib/api";
 // Key dates the backend detects for any document (app/key_dates/):
 // MRZ expiry, contract period ends and labelled dates in the text.
 
-export type KeyDateStatus = "expired" | "expiring" | "upcoming" | "past";
+/** ambiguous: a numeric date with two valid readings, not yet confirmed. */
+export type KeyDateStatus = "expired" | "expiring" | "upcoming" | "past" | "ambiguous";
 
 export interface KeyDate {
   document_id: string;
@@ -17,6 +18,15 @@ export interface KeyDate {
   confidence: number;
   status: KeyDateStatus;
   days_remaining: number;
+  /** As printed; with both readings when the date is ambiguous. */
+  original_text?: string | null;
+  ambiguous?: boolean;
+  interpretations?: string[];
+}
+
+/** The date as text: formatted, or as printed with "(ambiguous)". */
+export function keyDateText(item: Pick<KeyDate, "date" | "ambiguous" | "original_text">): string {
+  return item.ambiguous ? `${item.original_text ?? item.date} (ambiguous)` : formatKeyDate(item.date);
 }
 
 export interface DocumentKeyDates {

@@ -31,6 +31,10 @@ interface ExtractionWorkspaceProps {
   signaturesError: string;
   onExtractSignatures: () => void;
   onViewSignatureSource: (signature: SignatureResult) => void;
+
+  /** False for documents with no clauses to find (invoices, IDs…):
+   * the Clauses tab is left out. */
+  showClauses?: boolean;
 }
 
 export default function ExtractionWorkspace({
@@ -48,10 +52,12 @@ export default function ExtractionWorkspace({
   signaturesError,
   onExtractSignatures,
   onViewSignatureSource,
+  showClauses = true,
 }: ExtractionWorkspaceProps) {
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>("clauses");
+  const [chosenTab, setActiveTab] = useState<WorkspaceTab>(showClauses ? "clauses" : "tables");
+  const activeTab: WorkspaceTab = !showClauses && chosenTab === "clauses" ? "tables" : chosenTab;
 
-  const tabs: {
+  const allTabs: {
     key: WorkspaceTab;
     label: string;
     icon: typeof ScrollText;
@@ -76,6 +82,7 @@ export default function ExtractionWorkspace({
       count: signatures.length,
     },
   ];
+  const tabs = showClauses ? allTabs : allTabs.filter((tab) => tab.key !== "clauses");
 
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">

@@ -49,7 +49,6 @@ from app.schemas.structured_tables import StructuredTablesResponse
 from app.services.ai_provider import AIProviderError
 from app.services.ai_enrichment import start_session
 from app.services.ai_provider_factory import create_ai_provider
-from app.services.containers import EMAIL_ATTACHMENT_RELATIONSHIP
 from app.services.contract_classifier import classify_contract
 from app.services.contract_field_schema import FieldSpec
 from app.services.contract_clause_extractor import (
@@ -84,10 +83,20 @@ from app.services.contract_table_extractor import (
 from app.services.dashboard_stats import compute_document_status
 from app.services.document_status import compute_document_status_label
 from app.services.review_routing import low_risk_blockers
+from app.services.review_validation import (
+    blocks_approval,
+    record_override,
+    revalidate_correction,
+    validation_summary,
+)
 from app.services.relationship_detector import (
     DetectedRelationshipMatch,
     detect_relationship,
 )
+
+# Documents imported from an email before email ingestion was removed keep
+# their link to that email (a recorded fact, not a guess).
+EMAIL_ATTACHMENT_RELATIONSHIP = "email_attachment"
 
 router = APIRouter()
 settings = get_settings()
@@ -1046,6 +1055,8 @@ _ACTION_TO_STATUS: dict[str, str] = {
     "edit": "edited",
     "reject": "rejected",
     "mark_unknown": "unknown",
+    # A correction is saved for review, never approved by saving it.
+    "correct": "pending",
 }
 
 _REVIEW_PERMISSION_BY_ACTION = {
@@ -1053,6 +1064,7 @@ _REVIEW_PERMISSION_BY_ACTION = {
     "edit": "review.edit",
     "reject": "review.reject",
     "mark_unknown": "review.edit",
+    "correct": "review.edit",
 }
 
 
@@ -1078,15 +1090,50 @@ def _apply_metadata_field_review(
 ) -> MetadataFieldResult:
     """Shared Accept/Edit/Reject mutation — one state machine for key and id paths."""
 
-    if payload.action == "edit" and not payload.value:
+    if payload.action in {"edit", "correct"} and not (payload.value or "").strip():
         raise HTTPException(
             status_code=400,
             detail="A value is required to edit a field.",
         )
+    display_name = payload.changed_by or actor.display_name
+    override_reason = (payload.override_reason or "").strip()
+
+    if payload.action == "correct":
+        if payload.value == field.value:
+            raise HTTPException(
+                status_code=400,
+                detail="The corrected value is the same as the current value.",
+            )
+        document = database.get(Document, document_id)
+        if document is not None and document.approved_at is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="This document has been approved, so its values are locked.",
+            )
 
     previous_value = field.value
     previous_status = field.review_status
-    new_value = payload.value if payload.action == "edit" else field.value
+    new_value = payload.value if payload.action in {"edit", "correct"} else field.value
+
+    # A value that changes is validated again before anything else is decided.
+    if payload.action in {"edit", "correct"}:
+        revalidate_correction(field, payload.value or "", reviewer=display_name)
+
+    overridden = None
+    if payload.action in {"accept", "edit"} and blocks_approval(field):
+        if not override_reason:
+            summary = validation_summary(field)
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": (
+                        "This value failed validation, so it can't be approved "
+                        "as is. Correct it, or approve with an override reason."
+                    ),
+                    "validation": summary,
+                },
+            )
+        overridden = record_override(field, reason=override_reason, reviewer=display_name)
 
     evidence = dict(field.evidence_json) if isinstance(field.evidence_json, dict) else {}
     if "machine_value" not in evidence or evidence.get("machine_value") in (None, ""):
@@ -1094,31 +1141,36 @@ def _apply_metadata_field_review(
     if not field.original_value:
         field.original_value = str(evidence.get("machine_value") or previous_value or "")
 
-    if payload.action == "edit":
+    if payload.action in {"edit", "correct"}:
         field.value = payload.value or ""
         evidence["reviewed_value"] = field.value
 
     field.review_status = _ACTION_TO_STATUS[payload.action]
     field.human_approved = payload.action in {"accept", "edit"}
     field.evidence_json = evidence
-    display_name = payload.changed_by or actor.display_name
+
+    reason = {
+        "edit": "Reviewer correction",
+        "accept": "Reviewer accept",
+        "reject": "Reviewer reject",
+        "mark_unknown": "Marked unknown",
+        "correct": "Reviewer correction (pending approval)",
+    }.get(payload.action)
+    if overridden is not None:
+        failed = ", ".join(overridden["failed_rules"] or overridden["messages"]) or "validation failed"
+        reason = f"Validation override ({failed}): {override_reason}"
 
     database.add(
         MetadataFieldAuditLog(
             document_id=document_id,
             field_key=field.field_key,
             metadata_field_id=field.id,
-            action=payload.action,
+            action="override_" + payload.action if overridden is not None else payload.action,
             previous_value=previous_value,
             new_value=new_value,
             previous_status=previous_status,
             new_status=field.review_status,
-            reason={
-                "edit": "Reviewer correction",
-                "accept": "Reviewer accept",
-                "reject": "Reviewer reject",
-                "mark_unknown": "Marked unknown",
-            }.get(payload.action),
+            reason=reason,
             request_id=get_request_id(),
             actor_id=actor.id,
             actor_type=actor.actor_type,

@@ -7,6 +7,7 @@ LibreOffice when available.
 
 from __future__ import annotations
 
+import re
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -226,36 +227,6 @@ UPLOAD_TYPES: dict[str, UploadTypeSpec] = {
         ),
         signature=None,
     ),
-    ".eml": UploadTypeSpec(
-        kind="email",
-        extension=".eml",
-        content_type="message/rfc822",
-        allowed_content_types=frozenset(
-            {
-                "message/rfc822",
-                "text/plain",
-                "application/octet-stream",
-            }
-        ),
-        signature=None,
-    ),
-    # A container: never stored as a document; its files are unpacked
-    # (with limits, app/services/containers.py) into documents of their own.
-    ".zip": UploadTypeSpec(
-        kind="archive",
-        extension=".zip",
-        content_type="application/zip",
-        allowed_content_types=frozenset(
-            {
-                "application/zip",
-                "application/x-zip-compressed",
-                "application/x-zip",
-                "multipart/x-zip",
-                "application/octet-stream",
-            }
-        ),
-        signature=b"PK\x03\x04",
-    ),
     ".html": UploadTypeSpec(
         kind="html",
         extension=".html",
@@ -386,19 +357,28 @@ UPLOAD_TYPES: dict[str, UploadTypeSpec] = {
 
 SUPPORTED_TYPE_LABEL = (
     "PDF, DOCX, DOC, XLSX, XLSM, XLS, ODS, PPTX, PPT, TXT, CSV, TSV, JSON, "
-    "RTF, HTML, XML, EML, ZIP, PNG, JPG, TIFF, BMP, WEBP"
+    "RTF, HTML, XML, PNG, JPG, TIFF, BMP, WEBP"
 )
 
 # Kinds whose text/tables are ingested at upload into DocumentPage rows.
 NATIVE_PAGE_KINDS = frozenset(
     {
         "docx", "xlsx", "ods", "pptx", "text", "csv", "json", "html", "xml",
-        "rtf", "email",
+        "rtf",
     }
 )
 
-# Kinds that hold other files rather than content of their own.
-CONTAINER_KINDS = frozenset({"archive"})
+# Not accepted: archives and email messages hold other files, which would
+# reach processing unscanned. Named in the refusal so the user knows to
+# upload the documents themselves.
+UNSUPPORTED_CONTAINERS = {
+    ".zip": "ZIP archives",
+    ".eml": "email (.eml) files",
+    ".msg": "email (.msg) files",
+}
+CONTAINER_REFUSAL = (
+    "{name} aren't supported. Upload the documents they contain individually."
+)
 
 RASTER_EXTENSIONS = frozenset(
     {
@@ -414,6 +394,10 @@ RASTER_EXTENSIONS = frozenset(
 
 
 def resolve_upload_type(extension: str) -> UploadTypeSpec:
+    container = UNSUPPORTED_CONTAINERS.get(extension.lower())
+    if container is not None:
+        raise SecurityValidationError(CONTAINER_REFUSAL.format(name=container[0].upper() + container[1:]))
+
     spec = UPLOAD_TYPES.get(extension.lower())
 
     if spec is None:
@@ -453,8 +437,37 @@ def detect_kind_from_bytes(first_chunk: bytes) -> str | None:
     return None
 
 
+_HEADER_LINE = re.compile(rb"^[A-Za-z][A-Za-z0-9-]*:[ \t]")
+_MESSAGE_HEADERS = {b"mime-version", b"message-id", b"received", b"return-path", b"content-transfer-encoding"}
+
+
+def looks_like_email_message(first_chunk: bytes) -> bool:
+    """An RFC 822 message: the file opens with a block of header lines that
+    names a sender and at least one transport header (MIME-Version,
+    Message-ID, Received…). A note that merely starts with "From:" doesn't."""
+
+    lines = first_chunk[:16_384].replace(b"\r\n", b"\n").split(b"\n")
+    names: set[bytes] = set()
+    for line in lines:
+        if not line.strip():
+            break
+        if line[:1] in (b" ", b"\t") and names:
+            continue  # folded header continuation
+        if not _HEADER_LINE.match(line):
+            return False
+        names.add(line.split(b":", 1)[0].strip().lower())
+    return b"from" in names and bool(names & _MESSAGE_HEADERS) and len(names) >= 3
+
+
 def validate_signature(spec: UploadTypeSpec, first_chunk: bytes) -> None:
     if spec.signature is None:
+        # An email message renamed to .txt/.csv/… is still an email: refused
+        # like .eml, so attachments can't reach processing that way.
+        if looks_like_email_message(first_chunk):
+            raise SecurityValidationError(
+                CONTAINER_REFUSAL.format(name="Email messages")
+                + " (The file content is an email message.)"
+            )
         # Plain-text family: still reject strong binary signatures that
         # clearly belong to another format (signature wins over .txt/.csv).
         sniffed = detect_kind_from_bytes(first_chunk)

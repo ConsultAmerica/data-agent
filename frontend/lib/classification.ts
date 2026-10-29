@@ -109,6 +109,17 @@ export const LEVEL_LABELS: Record<ConfidenceLevel, string> = {
   none: "—",
 };
 
+/** Classification families whose documents carry contract clauses
+ * (FAR/DFARS). Invoices, passports, transcripts, reports… have none, so
+ * clause tools are left out for them. */
+export const CLAUSE_FAMILIES = new Set(["government_contract", "contract", "far_regulation", "far_regulatory_change"]);
+
+/** Clause tools apply: a contract or FAR document, or clauses were
+ * already extracted from it. */
+export function showsClauses(family: string | null | undefined, clauseCount = 0): boolean {
+  return (family != null && CLAUSE_FAMILIES.has(family)) || clauseCount > 0;
+}
+
 export async function getClassification(documentId: string): Promise<ClassificationState> {
   return apiFetch(`/api/documents/${documentId}/classification`);
 }

@@ -113,7 +113,8 @@ export function fileTypeLabel(contentType: string, filename: string): string {
   if (mime.includes("pdf")) return "PDF";
   if (mime === "message/rfc822" || /\.eml$/i.test(filename)) return "Email";
   if (mime.includes("json") || /\.json$/i.test(filename)) return "JSON";
-  if (mime.includes("xml") || filename.toLowerCase().endsWith(".xml")) return "XML";
+  // Exact XML types only: Office types ("…openxmlformats…") contain "xml".
+  if (mime === "application/xml" || mime === "text/xml" || filename.toLowerCase().endsWith(".xml")) return "XML";
   if (mime.includes("html") || /\.html?$/i.test(filename)) return "HTML";
   if (mime.includes("spreadsheet") || mime.includes("excel") || /\.xlsx?$/i.test(filename))
     return "Spreadsheet";

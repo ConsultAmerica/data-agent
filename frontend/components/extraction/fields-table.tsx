@@ -1,5 +1,6 @@
 "use client";
 
+import { REVIEW_READ_ONLY_MESSAGE, useReviewMutationsEnabled } from "@/lib/review-gate";
 import { Check, CheckCircle2, ChevronDown, ChevronRight, Eye, Pencil, ShieldCheck, X, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -183,6 +184,10 @@ function FieldCard({
   const canEdit = Boolean(onSaveCorrection) && row.status !== "not_found";
   const canVerify = Boolean(onMarkVerified) && row.status !== "not_found";
   const canReject = Boolean(onReject) && row.status !== "not_found";
+  // Review changes are refused by the server while the release gate is
+  // off; the controls say so instead of looking actionable.
+  const reviewEnabled = useReviewMutationsEnabled();
+  const lockedTitle = reviewEnabled ? undefined : REVIEW_READ_ONLY_MESSAGE;
   const highlighted = selected || expanded;
   const reasonLabels = reviewReasonLabels(row);
 
@@ -423,7 +428,9 @@ function FieldCard({
                       setDraft(value);
                       setEditing(true);
                     }}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-text-secondary hover:text-primary"
+                    disabled={!reviewEnabled}
+                    title={lockedTitle}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-text-secondary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Pencil className="h-3 w-3" />
                     Edit
@@ -433,8 +440,9 @@ function FieldCard({
                   <button
                     type="button"
                     onClick={handleMarkVerified}
-                    disabled={verifying || isHumanVerified(row)}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-text-secondary hover:text-primary disabled:cursor-default disabled:text-success disabled:opacity-100"
+                    disabled={!reviewEnabled || verifying || isHumanVerified(row)}
+                    title={isHumanVerified(row) ? undefined : lockedTitle}
+                    className={`inline-flex items-center gap-1 text-xs font-semibold text-text-secondary hover:text-primary disabled:cursor-default ${isHumanVerified(row) ? "disabled:text-success disabled:opacity-100" : "disabled:cursor-not-allowed disabled:opacity-50"}`}
                   >
                     <ShieldCheck className="h-3 w-3" />
                     {isHumanVerified(row) ? "Verified" : verifying ? "Marking…" : "Accept"}
@@ -444,13 +452,15 @@ function FieldCard({
                   <button
                     type="button"
                     onClick={handleReject}
-                    disabled={rejecting || isRejected(row)}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-text-secondary hover:text-danger disabled:cursor-default disabled:text-danger disabled:opacity-100"
+                    disabled={!reviewEnabled || rejecting || isRejected(row)}
+                    title={isRejected(row) ? undefined : lockedTitle}
+                    className={`inline-flex items-center gap-1 text-xs font-semibold text-text-secondary hover:text-danger disabled:cursor-default ${isRejected(row) ? "disabled:text-danger disabled:opacity-100" : "disabled:cursor-not-allowed disabled:opacity-50"}`}
                   >
                     <XCircle className="h-3 w-3" />
                     {isRejected(row) ? "Rejected" : rejecting ? "Rejecting…" : "Reject"}
                   </button>
                 )}
+                {!reviewEnabled && <span className="text-[11px] text-text-muted" data-testid="review-locked">Read-only in this release</span>}
               </div>
             )
           )}

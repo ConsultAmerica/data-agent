@@ -27,7 +27,7 @@ from app.source_structure.service import get_or_build_source_structure, page_tra
 from app.staging import registry
 from app.staging.engine import profile_descriptor
 from app.staging.document_labels import document_labels
-from app.staging.custom_export import CustomExportManifest, build_custom_export
+from app.staging.custom_export import CustomExportManifest, build_custom_export, preview_custom_export
 from app.staging.export import build_dataset_csv, build_profile_xlsx, build_workbook_xlsx, find_dataset
 from app.staging.models import ProfileDescriptor, StagingRecord, StagingWorkbook
 from app.staging.selection_export import (
@@ -254,6 +254,23 @@ def export_staging_custom(
         media_type=media_type,
         headers={"Content-Disposition": attachment_header(filename)},
     )
+
+
+@router.post("/{document_id}/staging-workbook/export-custom/preview")
+def preview_staging_custom(
+    document_id: str,
+    manifest: CustomExportManifest,
+    database: Session = Depends(get_database),
+    actor: ActorContext = Depends(require_permission("export.read")),
+) -> dict:
+    """The custom export's first rows, built exactly as the file is, and its
+    row count — so the preview can't disagree with the download."""
+
+    workbook = _workbook_or_404(database, document_id)
+    try:
+        return preview_custom_export(workbook, manifest)
+    except SelectionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/{document_id}/staging-workbook/exports/{export_id}")

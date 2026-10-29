@@ -5,6 +5,7 @@ from typing import Literal
 from app.models.document_page import DocumentPage
 from app.services.label_rejection import reject_as_field_value
 from app.services.request_interpreter import STOP_WORDS
+from app.services.table_shapes import page_tables
 
 MAX_PAIRS_PER_PAGE = 40
 
@@ -448,7 +449,7 @@ def _scan_form_fields(page: DocumentPage) -> list[ScannedPair]:
 
 def _scan_two_column_tables(page: DocumentPage) -> list[ScannedPair]:
     pairs: list[ScannedPair] = []
-    for table in page.tables_json or []:
+    for table in page_tables(page.tables_json):
         headers = [str(h) for h in (table.get("headers") or [])]
         if len(headers) != 2:
             continue

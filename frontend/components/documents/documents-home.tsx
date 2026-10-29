@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+
+import LifecycleBadge from "@/components/document-intelligence/lifecycle-badge";
+import { formatCalendarDate, LIFECYCLE_FILTERS } from "@/lib/document-intelligence";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -52,7 +55,7 @@ import { useTableDensity } from "@/lib/table-density";
 import { presentDocument, statusMark } from "@/lib/document-presentation";
 import { downloadExport, getStagingProfile } from "@/lib/staging-workbook";
 import type { CategoryCount, DocumentStatus, DocumentSummary } from "@/types/document";
-import { useReviewMutationsEnabled } from "@/lib/review-gate";
+import { REVIEW_READ_ONLY_MESSAGE, useReviewMutationsEnabled } from "@/lib/review-gate";
 
 export { FAMILY_LABELS };
 
@@ -106,6 +109,7 @@ export default function DocumentsHome() {
   const urlFamily = params.get("family") ?? "";
   const urlProfile = params.get("profile") ?? "";
   const urlCategory = params.get("category") ?? "";
+  const urlLifecycle = params.get("lifecycle") ?? "";
   const urlQ = params.get("q") ?? "";
   const urlSort = params.get("sort");
   const urlDir = params.get("dir");
@@ -114,6 +118,7 @@ export default function DocumentsHome() {
   const [family, setFamily] = useState(urlFamily);
   const [profileId, setProfileId] = useState(urlProfile);
   const [category, setCategory] = useState(urlCategory);
+  const [lifecycle, setLifecycle] = useState(urlLifecycle);
   const [categories, setCategories] = useState<CategoryCount[]>([]);
   const [query, setQuery] = useState(urlQ);
   const [debouncedQuery, setDebouncedQuery] = useState(urlQ.trim());
@@ -146,6 +151,7 @@ export default function DocumentsHome() {
     setFamily(urlFamily);
     setProfileId(urlProfile);
     setCategory(urlCategory);
+    setLifecycle(urlLifecycle);
     setQuery(urlQ);
     setDebouncedQuery(urlQ.trim());
     // Ignore legacy sort=updated_at deep links (capped scan; not globally accurate).
@@ -153,7 +159,7 @@ export default function DocumentsHome() {
     setSortDir(isSortDir(urlDir) ? urlDir : "desc");
     const nextOffset = Number(params.get("offset") || 0) || 0;
     setOffset(nextOffset);
-  }, [params, urlFilter, urlFamily, urlProfile, urlCategory, urlQ, urlSort, urlDir]);
+  }, [params, urlFilter, urlFamily, urlProfile, urlCategory, urlLifecycle, urlQ, urlSort, urlDir]);
 
   // Persist filters in the URL so returning from a document keeps the view.
   useEffect(() => {
@@ -163,6 +169,7 @@ export default function DocumentsHome() {
     if (family) next.set("family", family);
     if (profileId) next.set("profile", profileId);
     if (category) next.set("category", category);
+    if (lifecycle) next.set("lifecycle", lifecycle);
     if (sortBy !== "uploaded_at") next.set("sort", sortBy);
     if (sortDir !== "desc") next.set("dir", sortDir);
     if (offset > 0) next.set("offset", String(offset));
@@ -173,7 +180,7 @@ export default function DocumentsHome() {
     }
     lastWrittenUrl.current = qs;
     router.replace(qs ? `/documents?${qs}` : "/documents", { scroll: false });
-  }, [debouncedQuery, filter, family, profileId, category, sortBy, sortDir, offset, router, params]);
+  }, [debouncedQuery, filter, family, profileId, category, lifecycle, sortBy, sortDir, offset, router, params]);
 
   useEffect(() => {
     let active = true;
@@ -219,6 +226,7 @@ export default function DocumentsHome() {
           family: family || undefined,
           profileId: profileId || undefined,
           category: category || undefined,
+          lifecycle: lifecycle || undefined,
           sortBy,
           sortDir,
           limit: PAGE_SIZE,
@@ -240,14 +248,14 @@ export default function DocumentsHome() {
     return () => {
       active = false;
     };
-  }, [filter, debouncedQuery, offset, reloadKey, family, profileId, category, sortBy, sortDir]);
+  }, [filter, debouncedQuery, offset, reloadKey, family, profileId, category, lifecycle, sortBy, sortDir]);
 
   const from = total === 0 ? 0 : offset + 1;
   const to = Math.min(offset + PAGE_SIZE, total);
   const pageIds = useMemo(() => documents.map((document) => document.document_id), [documents]);
   const allSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
   const someSelected = pageIds.some((id) => selected.has(id));
-  const filtersActive = Boolean(debouncedQuery || filter !== "all" || family || profileId || category || sortBy !== "uploaded_at" || sortDir !== "desc");
+  const filtersActive = Boolean(debouncedQuery || filter !== "all" || family || profileId || category || lifecycle || sortBy !== "uploaded_at" || sortDir !== "desc");
   const selectedList = useMemo(() => Array.from(selected.values()), [selected]);
   // "All types" groups this page's rows under their category headings.
   const sections = useMemo(() => groupByCategory(documents, category ? [] : categories, !category), [documents, categories, category]);
@@ -259,6 +267,7 @@ export default function DocumentsHome() {
     setFamily("");
     setProfileId("");
     setCategory("");
+    setLifecycle("");
     setSortBy("uploaded_at");
     setSortDir("desc");
     setOffset(0);
@@ -271,6 +280,7 @@ export default function DocumentsHome() {
     if (family) next.set("family", family);
     if (profileId) next.set("profile", profileId);
     if (category) next.set("category", category);
+    if (lifecycle) next.set("lifecycle", lifecycle);
     if (sortBy !== "uploaded_at") next.set("sort", sortBy);
     if (sortDir !== "desc") next.set("dir", sortDir);
     if (offset > 0) next.set("offset", String(offset));
@@ -515,6 +525,16 @@ export default function DocumentsHome() {
         />
 
         <FilterSelect
+          label="Lifecycle"
+          value={lifecycle}
+          onChange={(value) => {
+            setLifecycle(value);
+            setOffset(0);
+          }}
+          options={LIFECYCLE_FILTERS.map((option) => ({ id: option.id, label: option.label }))}
+        />
+
+        <FilterSelect
           label="Sort"
           value={`${sortBy}:${sortDir}`}
           onChange={(value) => {
@@ -582,7 +602,7 @@ export default function DocumentsHome() {
             type="button"
             disabled={!reviewEnabled || acceptingLowRisk}
             onClick={() => void acceptLowRiskSelected()}
-            title={`Accept every unflagged pending value scoring ${Math.round(HIGH_BAND_MIN * 100)}% or higher in the selected documents`}
+            title={reviewEnabled ? `Accept every unflagged pending value scoring ${Math.round(HIGH_BAND_MIN * 100)}% or higher in the selected documents` : REVIEW_READ_ONLY_MESSAGE}
             className="rounded-md border border-success/40 bg-success/10 px-2.5 py-1 text-xs font-semibold text-success hover:border-success disabled:opacity-50"
           >
             {acceptingLowRisk ? "Accepting…" : "Accept low-risk values"}
@@ -682,6 +702,10 @@ export default function DocumentsHome() {
                   </>
                 )}
                 <th className="hidden px-3 py-2.5 text-right md:table-cell">Pages</th>
+                <th className="hidden px-3 py-2.5 md:table-cell">Format</th>
+                <th className="hidden px-3 py-2.5 xl:table-cell">Effective / start</th>
+                <th className="hidden px-3 py-2.5 lg:table-cell">Expiration</th>
+                <th className="px-3 py-2.5">Lifecycle</th>
                 <th className="px-3 py-2.5">Extracted status</th>
                 <SortableTh label="Upload date" active={sortBy === "uploaded_at"} dir={sortDir} onClick={() => toggleSort("uploaded_at")} className="hidden sm:table-cell" />
                 <th className="w-12 px-3 py-2.5">
@@ -693,7 +717,7 @@ export default function DocumentsHome() {
               {sections.flatMap((section) => [
                 section.label ? (
                   <tr key={`category-${section.key}`} className="border-b border-border bg-surface-soft/60" data-testid="documents-category">
-                    <td colSpan={showContractColumns ? 8 : 6} className="px-3 py-1.5">
+                    <td colSpan={showContractColumns ? 12 : 10} className="px-3 py-1.5">
                       <CategoryHeading label={section.label} count={section.documents.length} />
                     </td>
                   </tr>
@@ -747,6 +771,16 @@ export default function DocumentsHome() {
                     )}
                     <td className="hidden px-3 py-2 text-right tabular-nums text-text-secondary md:table-cell">
                       {document.page_count ? document.page_count.toLocaleString() : "—"}
+                    </td>
+                    <td className="hidden px-3 py-2 text-xs uppercase text-text-secondary md:table-cell">{document.file_format || "—"}</td>
+                    <td className="hidden whitespace-nowrap px-3 py-2 tabular-nums text-text-secondary xl:table-cell">
+                      {formatCalendarDate(document.lifecycle_start_date)}
+                    </td>
+                    <td className="hidden whitespace-nowrap px-3 py-2 tabular-nums text-text-secondary lg:table-cell">
+                      {formatCalendarDate(document.lifecycle_end_date)}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2" data-testid="lifecycle-cell">
+                      <LifecycleBadge status={document.lifecycle_status} title={document.lifecycle_review ? "Dates need review" : undefined} />
                     </td>
                     <td className="whitespace-nowrap px-3 py-2">
                       <StatusCell status={row.status} />

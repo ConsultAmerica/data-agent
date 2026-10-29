@@ -35,6 +35,10 @@ class KeyDateOut(BaseModel):
     confidence: float
     status: str
     days_remaining: int
+    # As printed, and both readings when the date is ambiguous.
+    original_text: str | None = None
+    ambiguous: bool = False
+    interpretations: list[str] = []
 
 
 class DocumentKeyDates(BaseModel):
@@ -49,6 +53,9 @@ def _out(row: DocumentKeyDate, name: str | None = None) -> KeyDateOut:
         document_id=row.document_id, document_name=name, kind=row.kind, date=row.date, label=row.label,
         source=row.source, page=row.page, evidence_text=row.evidence_text, confidence=row.confidence,
         status=status, days_remaining=days,
+        original_text=(row.details or {}).get("original_text"),
+        ambiguous=bool((row.details or {}).get("ambiguous")),
+        interpretations=list((row.details or {}).get("interpretations") or []),
     )
 
 
@@ -86,7 +93,7 @@ async def refresh_document_key_dates(
 
 @router.get("", response_model=list[KeyDateOut])
 async def list_key_dates(
-    status: str | None = Query(None, pattern="^(expired|expiring|upcoming|past)$"),
+    status: str | None = Query(None, pattern="^(expired|expiring|upcoming|past|ambiguous)$"),
     within_days: int | None = Query(None, ge=1, le=3650),
     expiring_only: bool = Query(True, description="Only expiry-type dates (expiry, validity end, termination, period end)."),
     limit: int = Query(200, ge=1, le=1000),

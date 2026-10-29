@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from app.schemas.document_target import ScalarTargetResult
+from app.services.evidence_text import source_text_of
 
 ReviewDecisionStatus = Literal["needs_review", "ready_to_accept"]
 # Queue order, not urgency: the review queue sorts ascending
@@ -160,7 +161,7 @@ def low_risk_blockers(field: Any) -> list[str]:
     if decision.get("status") == "needs_review" and not decision.get("reasons"):
         blockers.append("needs_review")
     page = evidence.get("page_number")
-    text = str(evidence.get("source_text") or "").strip()
+    text = source_text_of(evidence).strip()
     if not (isinstance(page, int) and page >= 1 and text):
         if REASON_NO_SOURCE_EVIDENCE not in blockers:
             blockers.append(REASON_NO_SOURCE_EVIDENCE)

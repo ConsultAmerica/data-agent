@@ -40,7 +40,6 @@ from app.schemas.document import (
     EmbeddedFileSummary,
     ExistingDocumentSummary,
     HierarchyNode,
-    ContainerMemberSummary,
     ResolveDuplicateRequest,
     SelectPortfolioFileRequest,
     UploadedDocumentResponse,
@@ -91,7 +90,7 @@ from app.services.pdf_validation import (
     list_embedded_pdfs,
     validate_pdf_structure,
 )
-from app.services.native_ingest import ingest_native_document
+from app.services.native_ingest import TEXT_DIALECT_KEYS, ingest_native_document
 from app.services.upload_processing import (
     assert_legacy_office_supported,
     enqueue_processing_job,
@@ -99,7 +98,6 @@ from app.services.upload_processing import (
     upload_processing_plan,
 )
 from app.services.security_validation import (
-    CONTAINER_KINDS,
     NATIVE_PAGE_KINDS,
     SecurityValidationError,
     UPLOAD_TYPES,
@@ -111,19 +109,10 @@ from app.services.security_validation import (
     validate_signature,
     validate_xlsx_structure,
 )
-from app.services.containers import (
-    EMAIL_ATTACHMENT_RELATIONSHIP,
-    ContainerError,
-    ContainerLimits,
-    ContainerMember,
-    iter_email_attachments,
-    iter_zip_members,
-)
 from app.parsers.data_file_parsers import (
     DataFileError,
     load_json_bytes,
     parse_ods_sheets,
-    read_email,
 )
 
 router = APIRouter()
@@ -271,15 +260,7 @@ def _extract_metadata(
         except DataFileError as exc:
             raise SecurityValidationError(str(exc)) from exc
 
-    if spec.kind == "email":
-        message = read_email(file_path.read_bytes())
-        if not any(message.get(header) for header in ("From", "To", "Subject", "Date")):
-            raise SecurityValidationError(
-                "The file is not an email message (no From, To, Subject "
-                "or Date header)."
-            )
-
-    if spec.kind in {"text", "csv", "html", "xml", "rtf", "json", "email"}:
+    if spec.kind in {"text", "csv", "html", "xml", "rtf", "json"}:
         return PDFMetadata(
             page_count=1,
             encrypted=False,
@@ -361,186 +342,6 @@ def _ingest_native_pages(
     return page_count
 
 
-def _container_member_document(
-    *,
-    database: Session,
-    background_tasks: BackgroundTasks,
-    actor: ActorContext,
-    intake: IntakeFields,
-    member: ContainerMember,
-    source_label: str,
-    parent: Document | None = None,
-) -> list[ContainerMemberSummary]:
-    """Store one file from a ZIP or email as a document of its own, queued
-    for background processing. Returns its summary — followed by its
-    attachments' summaries when the file is itself an email."""
-
-    summary = ContainerMemberSummary(
-        filename=member.filename,
-        path=member.path,
-        status="skipped",
-        parent_document_id=parent.id if parent is not None else None,
-        message=member.skipped_reason,
-    )
-    if member.data is None:
-        return [summary]
-
-    summary.size_bytes = len(member.data)
-    document_id = uuid4()
-    destination: Path | None = None
-    document: Document | None = None
-    try:
-        spec = resolve_upload_type(Path(member.filename).suffix)
-        assert_legacy_office_supported(spec)
-        validate_signature(spec, member.data[:1024 * 1024])
-
-        checksum = sha256(member.data).hexdigest()
-        duplicate = _find_duplicate(database, checksum, actor)
-        if duplicate is not None:
-            summary.status = "duplicate"
-            summary.document_id = UUID(duplicate.id)
-            summary.message = f"Same content as '{duplicate.original_filename}'."
-            return [summary]
-
-        stored_filename = f"{document_id}{spec.extension}"
-        destination = settings.upload_path / stored_filename
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(member.data)
-        metadata = _extract_metadata(spec, destination)
-
-        document, _ = _create_document_record(
-            database=database,
-            document_id=document_id,
-            stored_filename=stored_filename,
-            display_filename=sanitize_display_filename(
-                member.filename, extension=spec.extension
-            ),
-            content_type=spec.content_type,
-            size_bytes=len(member.data),
-            checksum=checksum,
-            metadata=metadata,
-            owner_workspace=actor.workspace,
-        )
-        if parent is not None:
-            document.parent_document_id = parent.id
-            document.parent_relationship_type = EMAIL_ATTACHMENT_RELATIONSHIP
-            document.parent_relationship_status = "confirmed"
-            document.parent_relationship_confidence = 1.0
-            document.parent_relationship_matched_on = "attachment"
-            document.parent_relationship_detection_method = "container"
-            document.parent_relationship_reasons = [
-                f"Attached to the email '{parent.original_filename}'."
-            ]
-        upload_object(
-            settings,
-            stored_filename,
-            content_type=spec.content_type,
-            file_path=destination,
-            size_bytes=len(member.data),
-        )
-        upsert_intake(database, str(document_id), intake, actor.id)
-        seed_upload_provenance(
-            document,
-            spec=spec,
-            size_bytes=len(member.data),
-            processing_mode="background",
-        )
-        document.ingestion_provenance["container_source"] = (
-            f"{source_label} › {member.path}"
-        )
-        database.commit()
-
-        # Every member is processed in the background, so a large archive
-        # returns as soon as its files are stored.
-        summary.processing_job_id = enqueue_processing_job(
-            database=database,
-            background_tasks=background_tasks,
-            document_id=str(document_id),
-        )
-        summary.status = "created"
-        summary.document_id = document_id
-        summary.message = None
-    except (
-        UploadValidationError,
-        SecurityValidationError,
-        PDFValidationError,
-        ContainerError,
-    ) as exc:
-        summary.status = "failed"
-        summary.message = str(exc)
-    except Exception as exc:  # noqa: BLE001 - one bad file never fails the rest
-        database.rollback()
-        summary.status = "failed"
-        summary.message = "The file could not be stored securely."
-        log_event(
-            "container_member_failed",
-            stage="upload",
-            status="error",
-            error_category=type(exc).__name__,
-            document_id=str(document_id),
-        )
-
-    if summary.status == "failed":
-        if destination is not None:
-            destination.unlink(missing_ok=True)
-        if document is not None:
-            try:
-                database.delete(document)
-                database.commit()
-            except Exception:  # noqa: BLE001 - as the single upload: record kept, file removed
-                database.rollback()
-        return [summary]
-
-    summaries = [summary]
-    if spec.kind == "email" and document is not None:
-        summaries += _email_attachment_documents(
-            database=database,
-            background_tasks=background_tasks,
-            actor=actor,
-            intake=intake,
-            email_document=document,
-            raw=member.data,
-        )
-    return summaries
-
-
-def _email_attachment_documents(
-    *,
-    database: Session,
-    background_tasks: BackgroundTasks,
-    actor: ActorContext,
-    intake: IntakeFields,
-    email_document: Document,
-    raw: bytes,
-) -> list[ContainerMemberSummary]:
-    """Each attachment of an email becomes a document linked to it."""
-
-    summaries: list[ContainerMemberSummary] = []
-    limits = ContainerLimits.from_settings(settings)
-    for member in iter_email_attachments(read_email(raw), limits):
-        summaries += _container_member_document(
-            database=database,
-            background_tasks=background_tasks,
-            actor=actor,
-            intake=intake,
-            member=member,
-            source_label=email_document.original_filename,
-            parent=email_document,
-        )
-    return summaries
-
-
-def _member_log_line(summaries: list[ContainerMemberSummary]) -> str:
-    counts = {status: 0 for status in ("created", "duplicate", "skipped", "failed")}
-    for summary in summaries:
-        counts[summary.status] += 1
-    return (
-        f"Unpacked {len(summaries)} file(s): {counts['created']} imported, "
-        f"{counts['duplicate']} already uploaded, {counts['skipped']} skipped, "
-        f"{counts['failed']} failed"
-    )
-
-
 @router.post(
     "/upload",
     response_model=UploadedDocumentResponse,
@@ -601,54 +402,6 @@ async def upload_document(
             "Ran security validation "
             "(signature, extension, and MIME checks)"
         )
-
-        if spec.kind in CONTAINER_KINDS:
-            # The archive is not a document: each file in it becomes one,
-            # and the archive itself is not kept.
-            members: list[ContainerMemberSummary] = []
-            try:
-                for member in iter_zip_members(
-                    destination, ContainerLimits.from_settings(settings)
-                ):
-                    members += _container_member_document(
-                        database=database,
-                        background_tasks=background_tasks,
-                        actor=actor,
-                        intake=intake,
-                        member=member,
-                        source_label=display_filename,
-                    )
-            except ContainerError as exc:
-                raise SecurityValidationError(str(exc)) from exc
-            finally:
-                destination.unlink(missing_ok=True)
-            if not members:
-                raise SecurityValidationError(
-                    "The archive contains no files."
-                )
-            log.append(_member_log_line(members))
-            imported = sum(1 for m in members if m.status == "created")
-            reused = sum(1 for m in members if m.status == "duplicate")
-            response.status_code = 200
-            return UploadedDocumentResponse(
-                document_id=document_id,
-                original_filename=display_filename,
-                status="container_expanded",
-                content_type=spec.content_type,
-                size_bytes=saved.size_bytes,
-                checksum_sha256=saved.checksum_sha256,
-                page_count=1,
-                encrypted=False,
-                uploaded_at=datetime.now(timezone.utc),
-                message=(
-                    f"Imported {imported} of {len(members)} file(s) from "
-                    "the archive"
-                    + (f"; {reused} were already uploaded" if reused else "")
-                    + "."
-                ),
-                container_members=members,
-                pipeline_log=log,
-            )
 
         if spec.kind == "pdf":
             portfolio_files = _peek_portfolio_embedded_files(destination)
@@ -837,7 +590,7 @@ async def upload_document(
                 detected = {
                     key: value
                     for key, value in (document.ingestion_provenance or {}).items()
-                    if key in {"encoding", "delimiter"}
+                    if key in TEXT_DIALECT_KEYS
                 }
                 provenance = seed_upload_provenance(
                     document,
@@ -879,19 +632,6 @@ async def upload_document(
                     "you want to extract."
                 )
 
-        container_members: list[ContainerMemberSummary] | None = None
-        if spec.kind == "email":
-            container_members = _email_attachment_documents(
-                database=database,
-                background_tasks=background_tasks,
-                actor=actor,
-                intake=intake,
-                email_document=document,
-                raw=destination.read_bytes(),
-            )
-            if container_members:
-                log.append(_member_log_line(container_members))
-
         return UploadedDocumentResponse(
             document_id=document_id,
             original_filename=display_filename,
@@ -903,7 +643,6 @@ async def upload_document(
             encrypted=metadata.encrypted,
             uploaded_at=uploaded_at,
             message=message,
-            container_members=container_members,
             pipeline_log=log,
             size_tier=size_tier,
             prefer_background=prefer_background,
@@ -1009,7 +748,6 @@ async def upload_document(
 async def resolve_duplicate(
     document_id: UUID,
     payload: ResolveDuplicateRequest,
-    background_tasks: BackgroundTasks,
     database: Session = Depends(get_database),
     actor: ActorContext = Depends(get_current_actor),
 ) -> UploadedDocumentResponse:
@@ -1168,21 +906,6 @@ async def resolve_duplicate(
             )
             log.append("Extracted document text")
 
-        container_members: list[ContainerMemberSummary] | None = None
-        if spec.kind == "email":
-            # No intake fields here: the client tags the documents after
-            # resolving, attachments included.
-            container_members = _email_attachment_documents(
-                database=database,
-                background_tasks=background_tasks,
-                actor=actor,
-                intake=IntakeFields(),
-                email_document=document,
-                raw=destination.read_bytes(),
-            )
-            if container_members:
-                log.append(_member_log_line(container_members))
-
         return UploadedDocumentResponse(
             document_id=document_id,
             original_filename=display_filename,
@@ -1194,7 +917,6 @@ async def resolve_duplicate(
             encrypted=metadata.encrypted,
             uploaded_at=uploaded_at,
             message="Uploaded as a new document alongside the existing one.",
-            container_members=container_members,
             pipeline_log=log,
         )
 
@@ -1437,9 +1159,52 @@ def _build_document_summary(
         source_status=source_status_for(
             settings, stored_filename=document.stored_filename
         ),
+        **_lifecycle_summary(database, document),
         **document_labels(database, document),
         **intake_summary_fields(database.get(DocumentIntake, document.id)),
     )
+
+
+def _lifecycle_summary(database: Session, document: Document) -> dict:
+    """Lifecycle from stored dates only — listing never re-detects."""
+
+    from app.key_dates.intelligence import document_family, lifecycle_for
+    from app.models.document_key_date import DocumentKeyDate
+
+    from app.key_dates.detector import EXTRACTOR_VERSION
+    from app.key_dates.service import key_dates_for
+
+    rows = list(database.scalars(select(DocumentKeyDate).where(DocumentKeyDate.document_id == document.id)))
+    if rows and any(row.extractor_version != EXTRACTOR_VERSION for row in rows):
+        # Read by an older detector: re-read once (pages only, no extraction).
+        rows = key_dates_for(database, document)
+    family = document_family(database, document)
+    if family is None:
+        pin = database.scalars(
+            select(DocumentStagingWorkbook).where(DocumentStagingWorkbook.document_id == document.id)
+        ).first()
+        family = pin.document_family if pin else None
+    lifecycle, _ = lifecycle_for(database, document, rows, family=family)
+    return {
+        "file_format": Path(document.stored_filename or document.original_filename).suffix.lstrip(".").lower() or None,
+        "lifecycle_status": lifecycle.status,
+        "lifecycle_label": lifecycle.label,
+        "lifecycle_start_date": lifecycle.start.date.isoformat() if lifecycle.start and lifecycle.start.date and not lifecycle.start.ambiguous else None,
+        # An ambiguous date isn't shown as a date: the status says why.
+        "lifecycle_end_date": lifecycle.end.date.isoformat() if lifecycle.end and lifecycle.end.date and not lifecycle.end.ambiguous else None,
+        "lifecycle_review": bool(lifecycle.review_required),
+    }
+
+
+# Search filter → lifecycle statuses it matches.
+_LIFECYCLE_FILTERS = {
+    "expired": {"expired"},
+    "expiring_soon": {"expiring_soon", "expires_today"},
+    "missing_dates": {"no_expiration_date"},
+    "needs_review": {"needs_review"},
+    "active": {"active"},
+    "not_yet_effective": {"not_yet_effective"},
+}
 
 
 @router.get(
@@ -1538,6 +1303,7 @@ def search_documents(
     family: str | None = None,
     profile_id: str | None = None,
     category: str | None = None,
+    lifecycle: str | None = None,
     sort_by: str = "uploaded_at",
     sort_dir: str = "desc",
     limit: int = 25,
@@ -1620,6 +1386,7 @@ def search_documents(
         or confidence_min is not None
         or confidence_max is not None
         or repository_status
+        or lifecycle
         or sort_key == "updated_at"
     )
 
@@ -1684,6 +1451,10 @@ def search_documents(
             for summary in summaries
             if summary.repository_status == repository_status
         ]
+
+    if lifecycle:
+        wanted = _LIFECYCLE_FILTERS.get(lifecycle, {lifecycle})
+        summaries = [summary for summary in summaries if summary.lifecycle_status in wanted]
 
     if sort_key == "updated_at":
         summaries.sort(
@@ -1918,6 +1689,41 @@ async def get_global_audit_log(
     ]
 
     return GlobalAuditLogResponse(entries=entries, total=total)
+
+
+# The tree view in the review pane renders the whole value at once; larger
+# files fall back to the page-text view.
+_SOURCE_JSON_MAX_BYTES = 5 * 1024 * 1024
+
+
+@router.get("/{document_id}/source-json")
+async def get_source_json(
+    document_id: str,
+    database: Session = Depends(get_database),
+    actor: ActorContext = Depends(require_permission("documents.view")),
+):
+    """A JSON document's parsed content, for the review pane's tree view.
+
+    Returned as data (never interpreted); JSON documents only."""
+
+    require_document_access(database, actor, document_id)
+    document = database.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if Path(document.stored_filename).suffix.lower() != ".json":
+        raise HTTPException(status_code=422, detail="The document is not a JSON file.")
+    if document.size_bytes > _SOURCE_JSON_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="The JSON file is too large for the tree view.",
+        )
+    try:
+        path = ensure_local_copy(settings, stored_filename=document.stored_filename)
+        return {"data": load_json_bytes(path.read_bytes())}
+    except DocumentStorageError as exc:
+        raise HTTPException(status_code=404, detail="The source file is not available.") from exc
+    except DataFileError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get(

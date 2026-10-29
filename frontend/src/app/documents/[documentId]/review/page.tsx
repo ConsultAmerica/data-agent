@@ -10,7 +10,8 @@ import {
 } from "lucide-react";
 
 import ContractRelationshipsTree from "@/components/contract-relationships-tree";
-import ContractTabs, { type ContractTab } from "@/components/contract-tabs";
+import ContractTabs, { TABS as CONTRACT_TABS, type ContractTab } from "@/components/contract-tabs";
+import { getClassification, showsClauses } from "@/lib/classification";
 import DocumentProfileCard from "@/components/document-profile-card";
 import ExportMenu from "@/components/export-menu";
 import ExtractionWorkspace from "@/components/extraction-workspace";
@@ -64,6 +65,7 @@ interface ReviewPageProps {
   params: Promise<{ documentId: string }>;
 }
 
+
 export default function ReviewWorkspacePage({
   params,
 }: ReviewPageProps) {
@@ -114,6 +116,8 @@ export default function ReviewWorkspacePage({
     null,
   );
   const [acceptingAll, setAcceptingAll] = useState(false);
+  // What the last "Accept" did, or why it was refused — never silent.
+  const [acceptAllMessage, setAcceptAllMessage] = useState<{ tone: "info" | "error"; text: string } | null>(null);
 
   const [relationshipBusy, setRelationshipBusy] = useState(false);
 
@@ -141,6 +145,9 @@ export default function ReviewWorkspacePage({
   const [signaturesError, setSignaturesError] = useState("");
 
   const [activeTab, setActiveTab] = useState<ContractTab>("Data");
+  // The document's family (classification); clause tools apply to
+  // contracts and FAR documents only.
+  const [family, setFamily] = useState<string | null>(null);
   const [mobilePanel, setMobilePanel] = useState<"document" | "data">(
     "document",
   );
@@ -172,6 +179,9 @@ export default function ReviewWorkspacePage({
       if (!active) return;
 
       setDocument(documentResult);
+      getClassification(documentId)
+        .then((state) => active && setFamily(state.family))
+        .catch(() => undefined);
 
       const [analysisResult, clausesResult, signaturesResult, childrenResult] =
         await Promise.all([
@@ -427,10 +437,12 @@ export default function ReviewWorkspacePage({
 
   async function handleAcceptAll() {
     if (!reviewerName.trim()) {
+      setAcceptAllMessage({ tone: "error", text: "Enter a reviewer name (Reviewed by) before accepting values." });
       return;
     }
 
     setAcceptingAll(true);
+    setAcceptAllMessage(null);
 
     try {
       const updated = await acceptAllMetadataFields(
@@ -454,8 +466,19 @@ export default function ReviewWorkspacePage({
           ),
         };
       });
-    } catch {
-      // Non-fatal.
+      // Only low-risk values are accepted in bulk; say what's left.
+      const stillPending = updated.filter((field) => field.review_status === "pending").length;
+      if (stillPending > 0) {
+        setAcceptAllMessage({
+          tone: "info",
+          text: `Low-risk values accepted. ${stillPending} flagged value${stillPending === 1 ? "" : "s"} still need${stillPending === 1 ? "s" : ""} an individual decision.`,
+        });
+      }
+    } catch (error) {
+      setAcceptAllMessage({
+        tone: "error",
+        text: error instanceof Error && error.message ? error.message : "The values could not be accepted.",
+      });
     } finally {
       setAcceptingAll(false);
     }
@@ -778,6 +801,13 @@ export default function ReviewWorkspacePage({
   const approved = Boolean(document.approved_at);
   const promoted = Boolean(document.promoted_at);
 
+  // Clauses belong to contracts and FAR documents; an invoice or a
+  // passport has none, so the tab (and its clause tools) is left out
+  // unless clauses were already extracted.
+  const showClauses = showsClauses(family, clauses.length);
+  const visibleTabs = showClauses ? CONTRACT_TABS : CONTRACT_TABS.filter((tab) => tab !== "Clauses");
+  const shownTab: ContractTab = activeTab === "Clauses" && !showClauses ? "Data" : activeTab;
+
   return (
     <div className="flex h-[calc(100vh-3.5rem)] flex-col">
       <div className="shrink-0 border-b border-border bg-surface px-6 py-4">
@@ -878,7 +908,7 @@ export default function ReviewWorkspacePage({
         </div>
       </div>
 
-      <ContractTabs active={activeTab} onChange={setActiveTab} />
+      <ContractTabs active={shownTab} onChange={setActiveTab} tabs={visibleTabs} />
 
       <div className="flex shrink-0 gap-1 border-b border-border bg-background px-4 py-2 lg:hidden">
         <button
@@ -963,7 +993,7 @@ export default function ReviewWorkspacePage({
             />
           </div>
 
-          {(activeTab === "Clauses" || activeTab === "Documents") && (
+          {shownTab === "Documents" && (
             <div className="shrink-0 max-h-[45vh] overflow-y-auto border-t border-border bg-background p-4">
               <ExtractionWorkspace
                 clauses={clauses}
@@ -980,6 +1010,7 @@ export default function ReviewWorkspacePage({
                 signaturesError={signaturesError}
                 onExtractSignatures={handleExtractSignatures}
                 onViewSignatureSource={handleViewSignatureSource}
+                showClauses={showClauses}
               />
             </div>
           )}
@@ -987,7 +1018,7 @@ export default function ReviewWorkspacePage({
         }
         right={
         <>
-          {activeTab === "Overview" && (
+          {shownTab === "Overview" && (
             <div className="space-y-4 overflow-y-auto p-4">
               <DocumentProfileCard
                 documentId={documentId}
@@ -1017,7 +1048,7 @@ export default function ReviewWorkspacePage({
             </div>
           )}
 
-          {(activeTab === "Data" || activeTab === "Documents") && (
+          {(shownTab === "Data" || shownTab === "Documents") && (
             <div className="min-h-0 flex-1">
               <ReviewFieldList
                 documentId={documentId}
@@ -1026,13 +1057,14 @@ export default function ReviewWorkspacePage({
                 onSelectField={handleSelectField}
                 onReviewField={handleReviewField}
                 onAcceptAll={handleAcceptAll}
+                acceptAllMessage={acceptAllMessage}
                 reviewingFieldId={reviewingFieldId}
                 acceptingAll={acceptingAll}
               />
             </div>
           )}
 
-          {activeTab === "Relationships" && (
+          {shownTab === "Relationships" && (
             <div className="space-y-4 overflow-y-auto p-4">
               <RelationshipCard
                 documentId={documentId}
@@ -1060,7 +1092,7 @@ export default function ReviewWorkspacePage({
             </div>
           )}
 
-          {activeTab === "Clauses" && (
+          {shownTab === "Clauses" && (
             <div className="overflow-y-auto p-4">
               <ExtractionWorkspace
                 clauses={clauses}
@@ -1077,11 +1109,12 @@ export default function ReviewWorkspacePage({
                 signaturesError={signaturesError}
                 onExtractSignatures={handleExtractSignatures}
                 onViewSignatureSource={handleViewSignatureSource}
+                showClauses={showClauses}
               />
             </div>
           )}
 
-          {activeTab === "Activity" && (
+          {shownTab === "Activity" && (
             <div className="min-h-0 flex-1">
               <DocumentAuditTrail documentId={documentId} refreshKey={analysis.metadata_fields.filter((field) => field.review_status !== "pending").length} />
             </div>

@@ -20,9 +20,6 @@ export interface UploadedDocument {
   duplicate?: boolean;
   existing_document?: ExistingDocumentSummary | null;
   embedded_files?: EmbeddedFileSummary[] | null;
-  /** ZIP upload (status "container_expanded"): every file found in it.
-   * Email upload: its attachments. */
-  container_members?: ContainerMemberSummary[] | null;
   pipeline_log?: string[];
   approved_by?: string | null;
   approved_at?: string | null;
@@ -71,6 +68,13 @@ export interface DocumentSummary {
   expiration_date?: string | null;
   contract_value?: string | null;
   relationship?: string | null;
+  /** File extension, and lifecycle from stated / approved dates. */
+  file_format?: string | null;
+  lifecycle_status?: string | null;
+  lifecycle_label?: string | null;
+  lifecycle_start_date?: string | null;
+  lifecycle_end_date?: string | null;
+  lifecycle_review?: boolean;
   repository_status?: RepositoryStatus;
   source_status?: "available" | "missing";
   /** The persisted staging resolution — what the document is listed as.
@@ -496,21 +500,6 @@ export interface EmbeddedFileSummary {
   page_count?: number | null;
 }
 
-/** A file found in an uploaded ZIP, or attached to an uploaded email. */
-export interface ContainerMemberSummary {
-  filename: string;
-  /** Where it was inside the container. */
-  path: string;
-  status: "created" | "duplicate" | "skipped" | "failed";
-  /** The new document ("created") or the existing one ("duplicate"). */
-  document_id: string | null;
-  /** The email it was attached to. */
-  parent_document_id: string | null;
-  processing_job_id: number | null;
-  size_bytes: number | null;
-  message: string | null;
-}
-
 export interface StructureDetectionResult {
   document_id: string;
 
@@ -744,11 +733,40 @@ export type ReviewAction =
   | "accept"
   | "edit"
   | "reject"
-  | "mark_unknown";
+  | "mark_unknown"
+  /** Save a corrected value without approving it (it stays pending). */
+  | "correct";
 
-/** Actions the global audit log can hold: field review actions plus
- * document-level events (approve/promote and the deletion record). */
-export type AuditAction = ReviewAction | "approve" | "promote" | "delete";
+/** Actions the global audit log can hold: field review actions (an approval
+ * past a failed validation is logged as override_*) plus document-level
+ * events (approve/promote and the deletion record). */
+export type AuditAction =
+  | ReviewAction
+  | "override_accept"
+  | "override_edit"
+  | "approve"
+  | "promote"
+  | "delete";
+
+/** Validation as extraction recorded it (or as re-run on a correction).
+ * Mirrors backend FieldValidationSummary. */
+export interface FieldValidation {
+  /** passed | failed | skipped | not_run */
+  status: string;
+  failed_rules: { rule: string; label: string; detail?: string | null }[];
+  messages: string[];
+  /** Only when extraction stored one; never invented. */
+  suggested_value?: string | null;
+  /** A failed validation blocks an ordinary approval. */
+  blocking: boolean;
+  override?: {
+    reason: string;
+    reviewer: string;
+    at: string;
+    failed_rules: string[];
+    messages: string[];
+  } | null;
+}
 
 export interface MetadataField {
   /** Persisted DocumentMetadataField.id — preferred review address. */
@@ -774,6 +792,7 @@ export interface MetadataField {
   original_value: string;
   /** Machine extraction when the API provides it; else fall back to original_value. */
   extracted_value?: string;
+  validation?: FieldValidation | null;
 }
 
 export interface FieldAuditEntry {

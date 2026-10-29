@@ -5,9 +5,12 @@ import CustomExportDialog, { fieldCatalogue } from "@/components/documents/custo
 import type { StagingCell, StagingDataset, StagingWorkbook } from "@/lib/staging-workbook";
 
 const download = vi.fn(async () => undefined);
+// The server preview: pending unless a test answers it.
+const preview = vi.fn((..._args: unknown[]) => new Promise<unknown>(() => undefined));
 vi.mock("@/lib/staging-workbook", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/staging-workbook")>()),
   downloadCustomExport: (...args: unknown[]) => download(...(args as [])),
+  previewCustomExport: (...args: unknown[]) => preview(...args),
 }));
 
 function cell(field: string, value: string | null): StagingCell {
@@ -78,6 +81,28 @@ describe("CustomExportDialog", () => {
     render(<CustomExportDialog documentId="d1" workbook={workbook()} filename="passport.pdf" onClose={vi.fn()} onDownloaded={vi.fn()} />);
   }
 
+  it("starts from structured fields, one per label, not the key/value scan's flattened lines", () => {
+    const base = workbook();
+    const summary = dataset({
+      dataset_id: "summary", display_name: "Summary", cardinality: "single",
+      columns: [column("number", "Invoice Number", "s"), column("date", "Invoice Date", "s")],
+      records: [{ record_id: "s", record_status: null, links_to_dataset: null,
+        cells: { "s.number": cell("s.number", "INV-1"), "s.date": cell("s.date", "2026-09-01") } }],
+    });
+    const again = dataset({
+      dataset_id: "header", display_name: "Header", cardinality: "single",
+      columns: [column("number", "Invoice Number", "h")],
+      records: [{ record_id: "h", record_status: null, links_to_dataset: null, cells: { "h.number": cell("h.number", "INV-1") } }],
+    });
+    render(
+      <CustomExportDialog documentId="d1" workbook={{ ...base, datasets: [summary, again, ...base.datasets] }}
+        filename="invoice.pdf" onClose={vi.fn()} onDownloaded={vi.fn()} />,
+    );
+    const labels = screen.getAllByTestId("custom-export-column").map((_, index) =>
+      (screen.getByLabelText(`Column ${index + 1} label`) as HTMLInputElement).value);
+    expect(labels).toEqual(["Invoice Number", "Invoice Date"]);
+  });
+
   it("renames and combines fields, previews them, and downloads the mapping by id", async () => {
     open();
     const columns = screen.getAllByTestId("custom-export-column");
@@ -102,6 +127,7 @@ describe("CustomExportDialog", () => {
         columns: [{
           label: "FullName",
           separator: ", ",
+          transform: "as_is",
           sources: [
             { dataset_id: "passport_data", field: "p.printed", record_id: "field:surname" },
             { dataset_id: "passport_data", field: "p.printed", record_id: "field:given_names" },
@@ -129,11 +155,37 @@ describe("CustomExportDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: /Save template/ }));
     const saved = JSON.parse(window.localStorage.getItem("dataomatix.customExport.v1.passport") ?? "[]");
     expect(saved[0].name).toBe("ERP import");
+    expect(saved[0].version).toBe(1);
     expect(saved[0].columns[0].refs[0]).toEqual({ dataset_id: "passport_data", field: "p.printed", kind: "pair", pair_name: "Surname" });
 
     fireEvent.click(screen.getByLabelText("Remove Surname"));
     fireEvent.change(screen.getByLabelText("Apply a saved template"), { target: { value: "ERP import" } });
     expect(screen.getAllByTestId("custom-export-column")).toHaveLength(4);
     expect(screen.getByRole("status").textContent).toMatch(/Applied "ERP import"/);
+  });
+
+  it("previews the rows exactly as the server will export them, with the file's row count", async () => {
+    preview.mockResolvedValueOnce({ headers: ["Surname", "Given Names"], rows: [["ERIKSSON", "ANNA MARIA"]], total_rows: 500, row_dataset: "lines" });
+    open();
+    await waitFor(() => expect(screen.getByTestId("custom-export-preview-caption").textContent).toBe("Preview · first 1 of 500 rows in the file"));
+    expect(preview.mock.calls[0][0]).toBe("d1");
+  });
+
+  it("sends a column's format and updates a template as a new version", async () => {
+    open();
+    fireEvent.change(screen.getByLabelText("Format of Surname"), { target: { value: "upper" } });
+    fireEvent.change(screen.getByLabelText("Template name"), { target: { value: "ERP import" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save template/ }));
+    // Saving again under the same name: an update, version 2.
+    fireEvent.click(screen.getByRole("button", { name: /Update template/ }));
+    const saved = JSON.parse(window.localStorage.getItem("dataomatix.customExport.v1.passport") ?? "[]");
+    expect(saved).toHaveLength(1);
+    expect(saved[0].version).toBe(2);
+    expect(saved[0].columns[0].transform).toBe("upper");
+    expect(screen.getByRole("status").textContent).toMatch(/version 2/);
+    fireEvent.click(screen.getByTestId("custom-export-download"));
+    await waitFor(() => expect(download).toHaveBeenCalled());
+    const manifest = (download.mock.calls[0] as unknown[])[1] as { columns: { transform: string }[] };
+    expect(manifest.columns[0].transform).toBe("upper");
   });
 });

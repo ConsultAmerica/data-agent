@@ -5,7 +5,6 @@ import { Menu, Plus, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 
-import BackendStatusPill from "@/components/navigation/BackendStatusPill";
 import CommandTrigger from "@/components/navigation/command-trigger";
 import DataomatixLogo from "@/components/navigation/dataomatix-logo";
 import MobileNavigation from "@/components/navigation/MobileNavigation";
@@ -61,21 +60,19 @@ export default function GlobalHeader({ onOpenSearch }: GlobalHeaderProps) {
 
           <CommandTrigger onOpen={onOpenSearch} kbdClassName="hidden xl:inline" labelClassName="hidden 2xl:inline" />
 
-          {/* The public header stays lean: status text and role live in the
-              tooltip here (the app's top bar spells them out). */}
+          {/* The public header stays lean: the profile only (no backend status
+              or environment; connection problems surface where they matter). */}
           <div className="flex shrink-0 items-center gap-2 border-l border-white/10 pl-3">
-            <BackendStatusPill labelClassName="hidden min-[1800px]:inline" />
             <span className="hidden xl:inline-flex">
               <UserChip showRole={false} />
             </span>
           </div>
         </div>
 
-        {/* Phones and tablets: logo, search and the menu (status and profile
-            from tablet width up). */}
+        {/* Phones and tablets: logo, search and the menu (profile from
+            tablet width up). */}
         <div className="header-mobile-triggers">
           <span className="hidden items-center gap-2 sm:flex">
-            <BackendStatusPill labelled={false} />
             <UserChip showRole={false} />
           </span>
           <CommandTrigger onOpen={onOpenSearch} compact />

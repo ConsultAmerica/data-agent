@@ -45,6 +45,16 @@ def decode_text_bytes(raw: bytes) -> tuple[str, str]:
         return raw.decode("latin-1"), "latin-1"
 
 
+# What decode_text_bytes returns when it knows: a byte-order mark, or bytes
+# that are valid UTF-8. Anything else is charset-normalizer's guess or the
+# Windows-1252 fallback, which reviewers should double-check.
+_CERTAIN_ENCODINGS = frozenset({"utf-8", "utf-8-sig", "utf-16", "utf-32"})
+
+
+def encoding_was_guessed(encoding: str) -> bool:
+    return encoding not in _CERTAIN_ENCODINGS
+
+
 def parse_plain_text(file_path: str | Path) -> dict:
     text, encoding = decode_text_bytes(Path(file_path).read_bytes())
     paragraphs = [line for line in text.splitlines() if line.strip()]
@@ -53,6 +63,7 @@ def parse_plain_text(file_path: str | Path) -> dict:
         "tables": [],
         "text": text,
         "encoding": encoding,
+        "encoding_guessed": encoding_was_guessed(encoding),
     }
 
 
@@ -99,6 +110,7 @@ def parse_csv_file(file_path: str | Path) -> dict:
         "tables": tables,
         "text": "\n".join(paragraphs),
         "encoding": encoding,
+        "encoding_guessed": encoding_was_guessed(encoding),
         "delimiter": _DELIMITER_NAMES.get(delimiter, delimiter),
     }
 

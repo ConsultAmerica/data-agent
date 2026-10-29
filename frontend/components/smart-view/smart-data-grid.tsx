@@ -22,10 +22,25 @@ export interface GridColumn {
   width?: number;
   /** Pinned by default (identifiers: CLIN, clause number…). */
   pinned?: boolean;
-  /** "options" filters with a value list (low-cardinality columns). */
-  filter?: "text" | "options";
+  /** "options" filters with a value list (low-cardinality columns);
+   * "range" with minimum / maximum numbers (amounts, quantities). */
+  filter?: "text" | "options" | "range";
   /** Hidden by default even when filled (still in the column menu). */
   optional?: boolean;
+  /** Shown even when empty (the record's identifier). Pinned columns are
+   * essential unless they say otherwise. */
+  essential?: boolean;
+}
+
+/** The number a printed value states ("USD 1,420,351.70" → 1420351.7),
+ * or null. A printed "(1,000.00)" is negative, as in accounting. */
+export function numberOf(text: string): number | null {
+  const trimmed = text.trim();
+  const match = trimmed.match(/-?\d[\d,]*(?:\.\d+)?|-?\.\d+/);
+  if (!match) return null;
+  const n = Number(match[0].replaceAll(",", ""));
+  if (Number.isNaN(n)) return null;
+  return /^\(.*\)$/.test(trimmed) && n > 0 ? -n : n;
 }
 
 export interface GridRow {
@@ -48,9 +63,13 @@ interface Prefs {
   text: TextMode;
   density: Density;
   pageSize: number;
+  /** Show every column, empty ones included. */
+  showAll: boolean;
 }
 
-const DEFAULT_PREFS: Prefs = { widths: {}, order: [], hidden: [], shown: [], pinned: [], unpinned: [], text: "single", density: "comfortable", pageSize: 50 };
+const DEFAULT_PREFS: Prefs = { widths: {}, order: [], hidden: [], shown: [], pinned: [], unpinned: [], text: "single", density: "comfortable", pageSize: 50, showAll: false };
+/** Prefs that "Reset columns" restores (density, text and page size stay). */
+const COLUMN_PREFS: Partial<Prefs> = { widths: {}, order: [], hidden: [], shown: [], pinned: [], unpinned: [], showAll: false };
 const MIN_WIDTH = 72;
 const CHECK = 36;
 const EXPAND = 30;
@@ -97,6 +116,8 @@ export interface SmartDataGridProps {
   toolbar?: React.ReactNode;
   /** Ids of the rows left after search and filters, whenever they change. */
   onFilteredChange?: (ids: string[]) => void;
+  /** Show this row: turn to its page and scroll it into view. */
+  focusId?: string | null;
 }
 
 export default function SmartDataGrid({
@@ -112,13 +133,14 @@ export default function SmartDataGrid({
   exportName = "records",
   toolbar,
   onFilteredChange,
+  focusId = null,
 }: SmartDataGridProps) {
   const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
   const [ready, setReady] = useState(false);
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<Record<string, string>>({});
+  const [ranges, setRanges] = useState<Record<string, { min: string; max: string }>>({});
   const [showFilters, setShowFilters] = useState(false);
-  const [showAll, setShowAll] = useState(false);
   const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -155,6 +177,14 @@ export default function SmartDataGrid({
 
   // ---------------------------------------------------------------- filtering
 
+  const activeRanges = useMemo(
+    () =>
+      Object.entries(ranges)
+        .map(([key, r]) => ({ key, min: numberOf(r.min), max: numberOf(r.max) }))
+        .filter((r) => r.min != null || r.max != null),
+    [ranges],
+  );
+
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const active = Object.entries(filters).filter(([, v]) => v.trim());
@@ -165,9 +195,14 @@ export default function SmartDataGrid({
         const column = columns.find((c) => c.key === key);
         if (column?.filter === "options" || key === "__status" ? cell !== value : !cell.toLowerCase().includes(value.toLowerCase())) return false;
       }
+      // A value range keeps only rows whose cell states a number in it.
+      for (const { key, min, max } of activeRanges) {
+        const n = numberOf(row.values[key] ?? "");
+        if (n == null || (min != null && n < min) || (max != null && n > max)) return false;
+      }
       return true;
     });
-  }, [rows, query, filters, columns]);
+  }, [rows, query, filters, columns, activeRanges]);
 
   const filteredListener = useRef(onFilteredChange);
   useEffect(() => {
@@ -183,22 +218,41 @@ export default function SmartDataGrid({
   const sorted = useMemo(() => {
     if (!sort) return filtered;
     const value = (r: GridRow) => (sort.key === "__status" ? r.status ?? "" : r.values[sort.key] ?? "");
+    // Amounts sort by the number they state ("USD 1,420,351.70" after
+    // "USD 142,035.17"), which digit-group collation gets wrong.
+    const numeric = columns.find((c) => c.key === sort.key)?.filter === "range";
     const list = [...filtered].sort((a, b) => {
       const x = value(a), y = value(b);
       if (!x && y) return 1;
       if (x && !y) return -1;
+      if (numeric) {
+        const nx = numberOf(x), ny = numberOf(y);
+        if (nx != null && ny != null && nx !== ny) return nx - ny;
+      }
       return collator.compare(x, y);
     });
     return sort.dir === "desc" ? list.reverse() : list;
-  }, [filtered, sort]);
+  }, [filtered, sort, columns]);
 
   // Reset to the first page when the result set changes shape.
-  const resultKey = `${query}|${JSON.stringify(filters)}|${sort?.key}${sort?.dir}|${rows.length}`;
+  const resultKey = `${query}|${JSON.stringify(filters)}|${JSON.stringify(activeRanges)}|${sort?.key}${sort?.dir}|${rows.length}`;
   const [seenKey, setSeenKey] = useState(resultKey);
   if (seenKey !== resultKey) {
     setSeenKey(resultKey);
     if (page !== 0) setPage(0);
   }
+
+  // Turn to a row asked for from outside (evidence), once per request.
+  const [focusedFor, setFocusedFor] = useState<string | null>(null);
+  if (focusId && focusId !== focusedFor && ready) {
+    const index = sorted.findIndex((r) => r.id === focusId);
+    setFocusedFor(focusId);
+    if (index >= 0) setPage(Math.floor(index / prefs.pageSize));
+  }
+  useEffect(() => {
+    if (!focusedFor) return;
+    tableRef.current?.querySelector(`[data-row-id="${focusedFor.replaceAll("\"", "")}"]`)?.scrollIntoView?.({ block: "center" });
+  }, [focusedFor, page]);
 
   // ---------------------------------------------------------------- columns
 
@@ -214,9 +268,13 @@ export default function SmartDataGrid({
     return order.map((k) => byKey.get(k)!);
   }, [columns, prefs.order]);
 
+  // The user's own choices win; then "show all"; then identifiers; then
+  // every column with a value somewhere in the filtered rows (all pages).
+  const showAll = prefs.showAll;
   const isVisible = useCallback((c: GridColumn) => {
     if (prefs.hidden.includes(c.key)) return false;
     if (prefs.shown.includes(c.key) || showAll) return true;
+    if (c.essential ?? c.pinned) return true;
     return !c.optional && filled.has(c.key);
   }, [prefs.hidden, prefs.shown, showAll, filled]);
 
@@ -295,7 +353,9 @@ export default function SmartDataGrid({
   }
 
   const activeFilters = Object.entries(filters).filter(([, v]) => v.trim());
-  const chipCount = activeFilters.length + (query.trim() ? 1 : 0);
+  const chipCount = activeFilters.length + activeRanges.length + (query.trim() ? 1 : 0);
+  const rangeText = ({ min, max }: { min: number | null; max: number | null }) =>
+    min != null && max != null ? `${min.toLocaleString()} – ${max.toLocaleString()}` : min != null ? `≥ ${min.toLocaleString()}` : `≤ ${max!.toLocaleString()}`;
   const textClass = prefs.text === "wrap" ? "whitespace-pre-wrap break-words" : prefs.text === "two" ? "line-clamp-2 break-words" : "truncate";
   const cellPad = prefs.density === "compact" ? "px-2 py-1" : "px-3 py-2";
   const exportCols = display;
@@ -347,15 +407,28 @@ export default function SmartDataGrid({
                   </button>
                 </div>
               ))}
-              <button type="button" onClick={() => update({ widths: {}, order: [], hidden: [], shown: [], pinned: [], unpinned: [] })}
+              <button type="button" onClick={() => update(COLUMN_PREFS)}
                 className="mt-1 w-full border-t border-border px-2 py-1.5 text-left text-xs text-primary">Reset columns</button>
             </div>
           )}
         </div>
-        <label className="flex items-center gap-1.5 text-xs text-text-secondary">
-          <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
-          Show all fields{autoHidden.length && !showAll ? ` (+${autoHidden.length} empty)` : ""}
-        </label>
+        {showAll ? (
+          <button type="button" onClick={() => update({ showAll: false })} aria-pressed={false}
+            className="inline-flex h-8 items-center rounded-lg border border-border px-2.5 text-xs font-medium hover:bg-surface-soft">
+            Hide empty columns
+          </button>
+        ) : (
+          <button type="button" onClick={() => update({ showAll: true })} disabled={autoHidden.length === 0}
+            title={autoHidden.length ? `${autoHidden.length} column${autoHidden.length === 1 ? " is" : "s are"} empty for these records or hidden by default` : "Every column is already shown"}
+            className="inline-flex h-8 items-center rounded-lg border border-border px-2.5 text-xs font-medium hover:bg-surface-soft disabled:opacity-50">
+            Show all fields{autoHidden.length ? ` (+${autoHidden.length})` : ""}
+          </button>
+        )}
+        <button type="button" onClick={() => update(COLUMN_PREFS)}
+          title="Restore the default columns, order, widths and pins for this table"
+          className="inline-flex h-8 items-center rounded-lg px-2 text-xs font-medium text-text-secondary hover:bg-surface-soft hover:text-foreground">
+          Reset columns
+        </button>
         <select value={prefs.text} onChange={(e) => update({ text: e.target.value as TextMode })} aria-label="Text display" className="h-8 rounded-lg border border-border bg-background px-1.5 text-xs">
           <option value="single">One line</option>
           <option value="two">Two lines</option>
@@ -385,7 +458,12 @@ export default function SmartDataGrid({
               {key === "__status" ? statusLabel : columns.find((c) => c.key === key)?.label}: {value} <X className="h-3 w-3" aria-label={`Remove ${value}`} />
             </button>
           ))}
-          <button type="button" onClick={() => { setQuery(""); setFilters({}); }} className="text-[11px] font-medium text-primary hover:underline">Clear all</button>
+          {activeRanges.map((range) => (
+            <button key={range.key} type="button" onClick={() => setRanges((r) => ({ ...r, [range.key]: { min: "", max: "" } }))} className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] text-foreground">
+              {columns.find((c) => c.key === range.key)?.label}: {rangeText(range)} <X className="h-3 w-3" aria-label={`Remove ${columns.find((c) => c.key === range.key)?.label} range`} />
+            </button>
+          ))}
+          <button type="button" onClick={() => { setQuery(""); setFilters({}); setRanges({}); }} className="text-[11px] font-medium text-primary hover:underline">Clear all</button>
         </div>
       )}
 
@@ -443,7 +521,16 @@ export default function SmartDataGrid({
                         {active ? (sort!.dir === "asc" ? <ArrowUp className="h-3 w-3 shrink-0 text-primary" /> : <ArrowDown className="h-3 w-3 shrink-0 text-primary" />) : <ArrowUpDown className="h-3 w-3 shrink-0 text-text-muted" />}
                       </button>
                       {showFilters && (
-                        c.filter === "options" ? (
+                        c.filter === "range" ? (
+                          <span className="mt-1 flex gap-1">
+                            {(["min", "max"] as const).map((bound) => (
+                              <input key={bound} inputMode="decimal" value={ranges[c.key]?.[bound] ?? ""}
+                                onChange={(e) => setRanges((r) => ({ ...r, [c.key]: { min: r[c.key]?.min ?? "", max: r[c.key]?.max ?? "", [bound]: e.target.value } }))}
+                                placeholder={bound === "min" ? "Min" : "Max"} aria-label={`${c.label} ${bound === "min" ? "minimum" : "maximum"}`}
+                                className="h-7 w-full min-w-0 rounded border border-border bg-background px-1.5 text-[11px] font-normal" />
+                            ))}
+                          </span>
+                        ) : c.filter === "options" ? (
                           <select value={filters[c.key] ?? ""} onChange={(e) => setFilters((f) => ({ ...f, [c.key]: e.target.value }))} aria-label={`Filter ${c.label}`}
                             className="mt-1 h-7 w-full rounded border border-border bg-background px-1 text-[11px] font-normal">
                             <option value="">All</option>
@@ -478,7 +565,7 @@ export default function SmartDataGrid({
                 const isOpen = expanded.has(row.id);
                 return (
                   <Fragment key={row.id}>
-                    <tr className={`group ${isSelected ? "bg-primary/[0.07]" : "hover:bg-surface-soft"} ${onOpen ? "cursor-pointer" : ""}`} onClick={() => onOpen?.(row)} data-testid="smart-row">
+                    <tr className={`group ${isSelected ? "bg-primary/[0.07]" : "hover:bg-surface-soft"} ${onOpen ? "cursor-pointer" : ""}`} onClick={() => onOpen?.(row)} data-testid="smart-row" data-row-id={row.id}>
                       <td className="sticky left-0 z-10 border-b border-border/60 bg-surface text-center group-hover:bg-surface-soft" onClick={(e) => e.stopPropagation()}>
                         <input type="checkbox" checked={selected.has(row.id)} onChange={() => toggleRow(row.id)} aria-label={`Select ${row.values[display[0]?.key] ?? row.id}`} />
                       </td>

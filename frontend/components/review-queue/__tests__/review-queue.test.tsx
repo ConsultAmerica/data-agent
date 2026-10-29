@@ -37,6 +37,15 @@ import * as documents from "@/lib/documents";
 import * as exporter from "@/lib/export";
 import ReviewQueuePage from "@/src/app/review-queue/page";
 
+const FAILED = {
+  status: "failed",
+  failed_rules: [{ rule: "data_type", label: "Data type", detail: null }],
+  messages: ["Value does not look like a phone number."],
+  suggested_value: null,
+  blocking: true,
+  override: null,
+};
+
 function item(overrides: Partial<ReviewQueueFieldDetail> = {}): ReviewQueueFieldDetail {
   return {
     document_id: "d1aaaaaa-0000-0000-0000-000000000000",
@@ -216,22 +225,49 @@ describe("FieldReviewList table, batch toolbar and drawer", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("says when no snippet is stored and links to the source", () => {
+  it("says when no source text is stored and links to the source", () => {
     renderList({ items: [item()] });
     fireEvent.click(screen.getByRole("button", { name: "Open details for Telephone" }));
     const dialog = screen.getByRole("dialog", { name: "Telephone" });
-    expect(within(dialog).getByText(/No source snippet stored/)).toBeInTheDocument();
-    expect(within(dialog).getByRole("link", { name: "open in source" })).toHaveAttribute(
+    expect(within(dialog).getByText("Original source text unavailable.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: "Open page 2 in source" })).toHaveAttribute(
       "href",
       "/documents/d1aaaaaa-0000-0000-0000-000000000000?view=source&page=2&hl=671-339-8465",
     );
   });
 
-  it("saves an inline correction as an edit review", async () => {
-    const onDecided = vi.fn();
-    renderList({ items: [item()], onDecided });
+  it("never shows a validation message as the original text", () => {
+    renderList({ items: [item({ source_snippet: null, validation: FAILED })] });
     fireEvent.click(screen.getByRole("button", { name: "Open details for Telephone" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit value" }));
+    const original = within(screen.getByRole("dialog")).getByRole("region", { name: "Original text" });
+    expect(within(original).getByText("Original source text unavailable.")).toBeInTheDocument();
+    expect(within(original).queryByText(/validation/i)).toBeNull();
+  });
+
+  it("enables Save correction only for a changed, non-empty value and says why otherwise", () => {
+    renderList({ items: [item()] });
+    fireEvent.click(screen.getByRole("button", { name: "Open details for Telephone" }));
+    const save = screen.getByRole("button", { name: "Save correction" });
+    expect(save).toBeDisabled();
+    expect(screen.getByTestId("save-help")).toHaveTextContent("Change the value to save a correction.");
+    fireEvent.change(screen.getByLabelText("Corrected value for Telephone"), { target: { value: "   " } });
+    expect(save).toBeDisabled();
+    expect(screen.getByTestId("save-help")).toHaveTextContent("A corrected value can't be empty.");
+    fireEvent.change(screen.getByLabelText("Corrected value for Telephone"), { target: { value: "671-339-8466" } });
+    expect(save).toBeEnabled();
+    // Approving now would approve the old value.
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(screen.getByTestId("approve-help")).toHaveTextContent("Save or discard your correction before approving.");
+  });
+
+  it("saves a correction without approving it and shows the re-run validation", async () => {
+    const onDecided = vi.fn();
+    vi.mocked(documents.reviewMetadataFieldById).mockResolvedValueOnce({
+      value: "671-339-8466",
+      validation: { status: "passed", failed_rules: [], messages: [], blocking: false },
+    } as never);
+    renderList({ items: [item({ validation: FAILED })], onDecided });
+    fireEvent.click(screen.getByRole("button", { name: "Open details for Telephone" }));
     fireEvent.change(screen.getByLabelText("Corrected value for Telephone"), { target: { value: "671-339-8466" } });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Save correction" }));
@@ -239,12 +275,72 @@ describe("FieldReviewList table, batch toolbar and drawer", () => {
     expect(documents.reviewMetadataFieldById).toHaveBeenCalledWith(
       "d1aaaaaa-0000-0000-0000-000000000000",
       42,
-      "edit",
+      "correct",
       "R",
       "671-339-8466",
+      undefined,
+    );
+    expect(onDecided).not.toHaveBeenCalled();
+    const dialog = screen.getByRole("dialog", { name: "Telephone" });
+    expect(within(dialog).getByText("Correction saved. It is waiting for approval.")).toBeInTheDocument();
+    expect(within(within(dialog).getByTestId("validation-section")).getByText("Passed")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Approve" })).toBeEnabled();
+  });
+
+  it("shows validation apart from the value and invents no suggested correction", () => {
+    renderList({ items: [item({ validation: FAILED })] });
+    fireEvent.click(screen.getByRole("button", { name: "Open details for Telephone" }));
+    const section = screen.getByTestId("validation-section");
+    expect(within(section).getByText("Failed")).toBeInTheDocument();
+    expect(within(section).getByText("Data type")).toBeInTheDocument();
+    expect(within(section).getByText("Value does not look like a phone number.")).toBeInTheDocument();
+    expect(within(section).getByText("None available")).toBeInTheDocument();
+    expect(within(section).getByText("Page 2")).toBeInTheDocument();
+  });
+
+  it("blocks an ordinary approval of a failed value and requires a reason to override", async () => {
+    const onDecided = vi.fn();
+    renderList({ items: [item({ validation: FAILED })], onDecided });
+    expect(screen.getByRole("button", { name: "Approve Telephone" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open details for Telephone" }));
+    const dialog = screen.getByRole("dialog", { name: "Telephone" });
+    expect(within(dialog).getByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(within(dialog).getByTestId("approve-help")).toHaveTextContent("failed validation");
+    expect(within(dialog).getByRole("button", { name: "Reject" })).toBeEnabled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Approve with override…" }));
+    const confirm = within(dialog).getByRole("button", { name: "Approve with override" });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText(/Why is this value correct/), { target: { value: "Printed this way on the award." } });
+    await act(async () => {
+      fireEvent.click(confirm);
+    });
+    expect(documents.reviewMetadataFieldById).toHaveBeenCalledWith(
+      "d1aaaaaa-0000-0000-0000-000000000000",
+      42,
+      "accept",
+      "R",
+      undefined,
+      "Printed this way on the award.",
     );
     expect(onDecided).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("leaves failed values out of Approve selected", () => {
+    vi.useFakeTimers();
+    try {
+      renderList({ items: [item({ metadata_field_id: 1, label: "PIID", validation: FAILED }), item({ metadata_field_id: 2, label: "Telephone" })] });
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select PIID" }));
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select Telephone" }));
+      fireEvent.click(screen.getByRole("button", { name: /Approve selected/ }));
+      expect(screen.getByText(/1 selected value failed validation and was not approved/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Open details for PIID" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Open details for Telephone" })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("approves from the drawer through the undo window", () => {

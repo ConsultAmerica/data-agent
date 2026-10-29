@@ -37,6 +37,7 @@ from app.services.review_routing import (
     decide_review_for_scalar,
 )
 from app.core.config import get_settings
+from app.services.evidence_text import source_text_of
 
 
 def _stringify_value(value: Any) -> str:
@@ -366,6 +367,8 @@ def load_persisted_extract_results(
     scalars: list[ScalarTargetResult] = []
     for row in scalar_rows:
         raw_evidence = dict(row.evidence_json or {})
+        if "source_text" in raw_evidence:
+            raw_evidence["source_text"] = source_text_of(row.evidence_json)
         signals = list(raw_evidence.pop("confidence_signals", []) or [])
         validation_status = raw_evidence.pop("validation_status", "passed")
         raw_evidence.pop("confidence_band", None)

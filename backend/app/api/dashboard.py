@@ -27,6 +27,10 @@ from app.services.dashboard_stats import (
 )
 from app.services.portfolio_insights import build_portfolio
 from app.services.review_routing import human_reason_labels
+from app.services.evidence_text import source_text_of
+from app.services.review_validation import validation_summary
+from app.schemas.contract_analysis import FieldValidationSummary
+from app.services.reviewed_export import extracted_value_for
 
 # Batches still being assembled, or turned away, stay out of the queue.
 UNQUEUED_INTAKE_STATUSES = ("draft", "rejected")
@@ -44,6 +48,9 @@ class ReviewQueueFieldItemDetail(ReviewQueueFieldItem):
     uploaded_at: datetime | None = None
     contract_type: str | None = None
     source_snippet: str | None = None
+    # The machine-extracted value, kept when a reviewer corrects it.
+    original_value: str | None = None
+    validation: FieldValidationSummary | None = None
 
 
 # Metadata keys whose value names the contract type, in preference order.
@@ -53,7 +60,8 @@ _SNIPPET_CHARS = 600
 
 
 def _source_snippet(field: DocumentMetadataField) -> str | None:
-    evidence = field.evidence_json or {}
+    evidence = dict(field.evidence_json or {})
+    evidence["source_text"] = source_text_of(field.evidence_json)
     for key in _SNIPPET_KEYS:
         value = evidence.get(key)
         if isinstance(value, str) and value.strip():
@@ -381,6 +389,8 @@ async def get_review_queue_fields(
                 uploaded_at=document.uploaded_at,
                 contract_type=contract_types.get(field.document_id),
                 source_snippet=_source_snippet(field),
+                original_value=extracted_value_for(field) or None,
+                validation=validation_summary(field),
             )
         )
 

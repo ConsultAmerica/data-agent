@@ -16,6 +16,10 @@ vi.mock("@/components/source-verification-panel", () => ({
     <div data-testid="source-viewer">page {request?.pageNumber} · {request?.highlightText}</div>
   ),
 }));
+vi.mock("@/lib/source-view", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/source-view")>()),
+  getSourceView: vi.fn(async () => ({ viewer: "pdf", format: "pdf", verified: true, note: null })),
+}));
 vi.mock("@/lib/staging-workbook", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/staging-workbook")>()),
   getStagingRecord: vi.fn(),
@@ -100,10 +104,12 @@ describe("SmartDataGrid", () => {
   it("hides columns empty for every shown row and brings them back with Show all fields", () => {
     render(<SmartDataGrid tableKey="t1" columns={columns} rows={rows} />);
     expect(headers().join(" ")).not.toContain("Unit Price");
-    fireEvent.click(screen.getByLabelText(/Show all fields/));
+    fireEvent.click(screen.getByRole("button", { name: /Show all fields \(\+1\)/ }));
     expect(headers().join(" ")).toContain("Unit Price");
     // An empty cell is shown as missing, never as data.
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Hide empty columns" }));
+    expect(headers().join(" ")).not.toContain("Unit Price");
   });
 
   it("sorts numerically, paginates, filters with chips and clears them", () => {
@@ -235,7 +241,9 @@ describe("SmartWorkspace", () => {
     expect(signals).toHaveTextContent("Passed");
     expect(signals).toHaveTextContent("Not provided by the extraction");
     expect(signals).toHaveTextContent("Not reviewed");
-    expect(screen.getByTestId("intelligence-panel")).toHaveTextContent("No Verified Oracle Import Destination");
+    expect(screen.getByTestId("details-oracle")).toHaveTextContent(
+      "No Oracle mapping configured. No verified Oracle import destination exists for this record type.",
+    );
   });
 
   it("uses the document's schema form for other document types", async () => {
@@ -251,5 +259,51 @@ describe("SmartWorkspace", () => {
     expect(await screen.findByTestId("generic-smart-view")).toHaveTextContent("Invoice v1.0");
     fireEvent.click(screen.getByRole("button", { name: /INV-1/ }));
     expect(screen.getByTestId("source-viewer")).toHaveTextContent("page 1 · INV-1");
+  });
+});
+
+describe("SmartWorkspace layout modes (6B)", () => {
+  it("switches between Split view, Source only and Data only, remembers it, and resizes the source", async () => {
+    const { unmount } = render(<SmartWorkspace documentId="doc-1" workbook={workbook()} filename="c.pdf" pageCount={288} />);
+    const layout = () => screen.getByTestId("smart-workspace").querySelector("[data-layout]")!.getAttribute("data-layout");
+    const sourceWidth = () => (screen.getByRole("complementary", { name: "Source document" }) as HTMLElement).style.width;
+    expect(layout()).toBe("split");
+    expect(sourceWidth()).toBe("420px");
+    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize source panel" }), { key: "ArrowRight" });
+    expect(sourceWidth()).toBe("444px");
+
+    fireEvent.click(screen.getByRole("radio", { name: "Source only" }));
+    expect(layout()).toBe("source");
+    expect(screen.queryByRole("main", { name: "Extracted data" })).toBeNull();
+    expect(await screen.findByTestId("document-viewer")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("radio", { name: "Data only" }));
+    expect(layout()).toBe("data");
+    expect(screen.queryByRole("complementary", { name: "Source document" })).toBeNull();
+    unmount();
+
+    // Remembered in this browser.
+    render(<SmartWorkspace documentId="doc-1" workbook={workbook()} filename="c.pdf" pageCount={288} />);
+    await act(async () => {});
+    expect(screen.getByRole("radio", { name: "Data only" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("opens the source beside the data when a record's evidence is viewed from Data only", async () => {
+    const { getStagingRecord } = await import("@/lib/staging-workbook");
+    const full = record("cl:1", { section: "FAR Clauses", record_type: "Clause", record_id: "52.246-2", title: "Inspection of Supplies" });
+    full.cells["contract.data.title"] = cell("contract.data.title", "Clause Title", "Inspection of Supplies", 82);
+    vi.mocked(getStagingRecord).mockResolvedValue(full);
+    window.localStorage.setItem("dx-smart-layout", JSON.stringify({ mode: "data" }));
+    render(<SmartWorkspace documentId="doc-1" workbook={workbook()} filename="c.pdf" pageCount={288} />);
+    await act(async () => {});
+    fireEvent.click(within(screen.getByRole("tablist", { name: "Contract categories" })).getByRole("tab", { name: /FAR\/DFARS/ }));
+    fireEvent.click(screen.getAllByTestId("smart-row")[0]);
+    await screen.findByTestId("record-details");
+    await waitFor(() => expect(screen.getByRole("button", { name: "View in source" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "View in source" }));
+    expect(screen.getByRole("radio", { name: "Split view" }).getAttribute("aria-checked")).toBe("true");
+    // The record stays selected.
+    expect(screen.getByTestId("record-details")).toBeInTheDocument();
+    expect(await screen.findByTestId("source-viewer")).toHaveTextContent("page 82");
   });
 });

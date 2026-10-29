@@ -12,6 +12,12 @@ staging workbook, exactly as Export All reads them.
   unambiguous; with none, the file is a single row.
 * Several sources in one column are combined, empty values skipped, joined
   by the column's separator ("Given Names" + "Surname" → "ANNA ERIKSSON").
+* A column may transform its text (trim, upper / lower case, ISO date). A
+  transform never invents a value: an empty value stays empty, and a date
+  that can't be read unambiguously is written as printed.
+* Values are written as extracted — leading zeros, decimals, Unicode and
+  line breaks kept. Any cell or header that a spreadsheet would run as a
+  formula (=, +, -, @, tab, CR) is written as text with a leading apostrophe.
 
 The file is import-ready: headers in the first row (unless turned off), one
 record per row, no title rows, no styling that importers trip over.
@@ -23,6 +29,8 @@ import csv
 import io
 import json
 import re
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from app.staging.export import find_dataset
@@ -44,10 +52,14 @@ class ColumnSource(BaseModel):
     record_id: str | None = Field(default=None, max_length=300)
 
 
+Transform = Literal["as_is", "trim", "upper", "lower", "date_iso"]
+
+
 class CustomColumn(BaseModel):
     label: str = Field(min_length=1, max_length=120)
     sources: list[ColumnSource] = Field(min_length=1, max_length=20)
     separator: str = Field(default=" ", max_length=10)
+    transform: Transform = "as_is"
 
 
 class CustomExportManifest(BaseModel):
@@ -63,6 +75,42 @@ def _value_text(value: object) -> str:
     if isinstance(value, bool):
         return "Yes" if value else "No"
     return str(value)
+
+
+_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+_PLAIN_NUMBER = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
+
+
+def safe_cell(value: object) -> object:
+    """A value a spreadsheet won't execute: text starting like a formula
+    gets a leading apostrophe (signed numbers such as -12.50 stay numbers)."""
+
+    if isinstance(value, str) and value.startswith(_FORMULA_START) and not _PLAIN_NUMBER.fullmatch(value):
+        return "'" + value
+    return value
+
+
+def _transform(value: object, transform: str) -> object:
+    if transform == "as_is" or value is None:
+        return value
+    text = _value_text(value)
+    if not text.strip():
+        return value
+    if transform == "trim":
+        return text.strip()
+    if transform == "upper":
+        return text.upper()
+    if transform == "lower":
+        return text.lower()
+    if transform == "date_iso":
+        from app.key_dates.detector import is_ambiguous, parse_date_text
+
+        cleaned = text.strip()
+        if is_ambiguous(cleaned):
+            return value  # 03/04/2026: written as printed, never guessed
+        parsed, _ = parse_date_text(cleaned, kind="effective")
+        return parsed.isoformat() if parsed else value
+    return value
 
 
 def _dataset(workbook: StagingWorkbook, dataset_id: str) -> StagingDataset:
@@ -125,9 +173,10 @@ def build_rows(workbook: StagingWorkbook, manifest: CustomExportManifest) -> tup
                 else:
                     values.append(fixed[(source.dataset_id, source.record_id, source.field)])
             if len(values) == 1:
-                row.append(values[0])
+                combined = values[0]
             else:
-                row.append(column.separator.join(_value_text(v) for v in values if _value_text(v).strip()))
+                combined = column.separator.join(_value_text(v) for v in values if _value_text(v).strip())
+            row.append(_transform(combined, column.transform))
         rows.append(row)
     return labels, rows
 
@@ -136,9 +185,9 @@ def _csv(headers: list[str], rows: list[list[object]], include_header: bool) -> 
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     if include_header:
-        writer.writerow(headers)
+        writer.writerow([safe_cell(header) for header in headers])
     for row in rows:
-        writer.writerow([_value_text(value) for value in row])
+        writer.writerow([_value_text(safe_cell(_value_text(value) if value is not None else None)) for value in row])
     return buffer.getvalue()
 
 
@@ -158,17 +207,13 @@ def _xlsx(headers: list[str], rows: list[list[object]], include_header: bool) ->
     sheet = workbook.active
     sheet.title = "Data"
     if include_header:
-        sheet.append(headers)
+        sheet.append([safe_cell(header) for header in headers])
         for cell in sheet[1]:
             cell.font = Font(bold=True)
         sheet.freeze_panes = "A2"
     for row in rows:
         # Strings that look like formulas are written as text, never evaluated.
-        sheet.append([
-            ("'" + value) if isinstance(value, str) and value[:1] in "=+-@" and not re.fullmatch(r"[-+]?\d[\d,.]*", value)
-            else value
-            for value in row
-        ])
+        sheet.append([safe_cell(value) for value in row])
     for index, header in enumerate(headers, start=1):
         sample = [len(header)] + [len(_value_text(row[index - 1])) for row in rows[:200]]
         sheet.column_dimensions[get_column_letter(index)].width = min(60, max(10, max(sample) + 2))
@@ -182,6 +227,20 @@ def _filename(workbook: StagingWorkbook, manifest: CustomExportManifest) -> str:
     stem = re.sub(r"[^\w\- .]+", "_", stem).strip(" .") or "export"
     stem = re.sub(r"\.(xlsx|csv|json)$", "", stem, flags=re.IGNORECASE)
     return f"{stem}.{manifest.format}"
+
+
+def preview_custom_export(workbook: StagingWorkbook, manifest: CustomExportManifest, limit: int = 25) -> dict:
+    """The first rows exactly as the file will hold them (same build_rows,
+    same text and formula protection), and how many rows the file has."""
+
+    headers, rows = build_rows(workbook, manifest)
+    row_datasets = {s.dataset_id for c in manifest.columns for s in c.sources if s.record_id is None}
+    return {
+        "headers": headers,
+        "rows": [[_value_text(safe_cell(_value_text(v) if v is not None else None)) for v in row] for row in rows[:limit]],
+        "total_rows": len(rows),
+        "row_dataset": next(iter(row_datasets)) if row_datasets else None,
+    }
 
 
 def build_custom_export(

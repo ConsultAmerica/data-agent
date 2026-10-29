@@ -45,6 +45,9 @@ def test_production_cors_excludes_lan_debug_origins() -> None:
     )
     origins = settings.cors_origins
     assert "https://data-agent-ca.vercel.app" in origins
+    # The production domain, even when FRONTEND_URL doesn't list it.
+    assert "https://dataomatix.com" in origins
+    assert "https://www.dataomatix.com" in origins
     assert "http://192.168.0.193:3000" not in origins
     assert "http://127.0.0.1:3001" not in origins
 

@@ -26,6 +26,7 @@ from app.services.field_classification import (
     is_narrative_or_section_field,
 )
 from app.services.section_detection import find_nearby_section
+from app.services.evidence_text import source_text_of
 
 AUTHORITATIVE_REVIEW_STATUSES = frozenset({"accepted", "edited"})
 NON_AUTHORITATIVE_REVIEW_STATUSES = frozenset(
@@ -565,7 +566,7 @@ def build_export_xlsx(
                 section_for(field, page_text_by_number=page_text_by_number),
                 field.field_group,
                 source_page_for(field),
-                evidence.get("raw_ocr") or evidence.get("source_text") or "",
+                evidence.get("raw_ocr") or source_text_of(evidence),
                 evidence.get("normalized_value") or field.value or "",
                 extracted_value_for(field),
                 field.value,

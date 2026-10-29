@@ -1,10 +1,9 @@
-"""VNext format coverage: JSON, TSV/CSV dialects, XLSM, ODS, ZIP and EML."""
+"""VNext format coverage: JSON, TSV/CSV dialects, XLSM and ODS — and ZIP / EML refused."""
 
 from __future__ import annotations
 
 import json
 import zipfile
-from email.message import EmailMessage
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
@@ -21,33 +20,16 @@ from app.models.document_page import DocumentPage
 from app.parsers.data_file_parsers import (
     DataFileError,
     load_json_bytes,
-    parse_email_file,
     parse_json_file,
     parse_ods_sheets,
 )
 from app.parsers.office_text_parsers import decode_text_bytes, parse_csv_file
-from app.services.containers import (
-    EMAIL_ATTACHMENT_RELATIONSHIP,
-    ContainerError,
-    ContainerLimits,
-    iter_email_attachments,
-    iter_zip_members,
-)
 from app.services.security_validation import (
     SecurityValidationError,
     validate_ods_structure,
 )
-from app.parsers.data_file_parsers import read_email
 
 client = TestClient(app)
-
-LIMITS = ContainerLimits(
-    max_entries=50,
-    max_files=10,
-    max_member_bytes=5 * 1024 * 1024,
-    max_total_bytes=20 * 1024 * 1024,
-    max_ratio=100,
-)
 
 
 # ── builders ─────────────────────────────────────────────────────────
@@ -59,19 +41,6 @@ def make_zip(entries: dict[str, bytes], *, compression=zipfile.ZIP_DEFLATED) -> 
         for name, data in entries.items():
             archive.writestr(name, data)
     return buffer.getvalue()
-
-
-def mark_encrypted(data: bytes, name: bytes) -> bytes:
-    """Set the 'encrypted' flag on an entry (zipfile can't write one)."""
-
-    raw = bytearray(data)
-    for signature, flag_at, name_at in ((b"PK\x03\x04", 6, 30), (b"PK\x01\x02", 8, 46)):
-        start = 0
-        while (start := raw.find(signature, start)) != -1:
-            if raw[start + name_at : start + name_at + len(name)] == name:
-                raw[start + flag_at] |= 0x1
-            start += 4
-    return bytes(raw)
 
 
 _ODS_CONTENT ="""<?xml version="1.0" encoding="UTF-8"?>
@@ -123,22 +92,6 @@ def make_xlsx(marker: str) -> bytes:
     buffer = BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
-
-
-def make_email(*, subject: str, attachments: list[tuple[str, bytes, str]] = (), html: bool = False) -> bytes:
-    message = EmailMessage()
-    message["From"] = "Contracting Officer <co@agency.example>"
-    message["To"] = "vendor@example.com"
-    message["Subject"] = subject
-    message["Date"] = "Tue, 27 Oct 2026 10:00:00 +0000"
-    if html:
-        message.set_content("<html><body><p>Please review the <b>award</b>.</p></body></html>", subtype="html")
-    else:
-        message.set_content("Please review the attached award.\nThanks.")
-    for filename, data, mime in attachments:
-        maintype, subtype = mime.split("/")
-        message.add_attachment(data, maintype=maintype, subtype=subtype, filename=filename)
-    return bytes(message)
 
 
 def upload(filename: str, data: bytes, content_type: str = "application/octet-stream"):
@@ -251,102 +204,6 @@ def test_ods_structure_requires_spreadsheet_mimetype(tmp_path: Path) -> None:
         validate_ods_structure(path)
 
 
-# ── ZIP limits ───────────────────────────────────────────────────────
-
-
-def test_zip_members_skip_system_unsupported_nested_and_encrypted(tmp_path: Path) -> None:
-    buffer = BytesIO()
-    with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr("docs/rates.csv", b"a,b\n1,2\n")
-        archive.writestr("__MACOSX/docs/._rates.csv", b"junk")
-        archive.writestr("docs/.DS_Store", b"junk")
-        archive.writestr("tool.exe", b"MZ")
-        archive.writestr("inner.zip", make_zip({"x.csv": b"a\n"}))
-        archive.writestr("empty.txt", b"")
-        archive.writestr("secret.txt", b"ciphertext")
-    path = tmp_path / "batch.zip"
-    path.write_bytes(mark_encrypted(buffer.getvalue(), b"secret.txt"))
-
-    members = {member.path: member for member in iter_zip_members(path, LIMITS)}
-    assert set(members) == {"docs/rates.csv", "tool.exe", "inner.zip", "empty.txt", "secret.txt"}
-    assert members["docs/rates.csv"].filename == "rates.csv"
-    assert members["docs/rates.csv"].data == b"a,b\n1,2\n"
-    assert "Unsupported" in members["tool.exe"].skipped_reason
-    assert "not unpacked" in members["inner.zip"].skipped_reason
-    assert "empty" in members["empty.txt"].skipped_reason
-    assert "Password" in members["secret.txt"].skipped_reason
-
-
-def test_zip_bomb_ratio_and_size_limits(tmp_path: Path) -> None:
-    path = tmp_path / "bomb.zip"
-    path.write_bytes(make_zip({"zeros.txt": b"0" * (3 * 1024 * 1024), "ok.txt": b"fine"}))
-    members = {member.path: member for member in iter_zip_members(path, LIMITS)}
-    assert "compression ratio" in members["zeros.txt"].skipped_reason
-    assert members["ok.txt"].data == b"fine"
-
-    small = ContainerLimits(**{**LIMITS.__dict__, "max_member_bytes": 10, "max_ratio": 10_000})
-    members = {member.path: member for member in iter_zip_members(path, small)}
-    assert "upload-size limit" in members["zeros.txt"].skipped_reason
-
-
-def test_zip_file_count_entry_count_and_total_limits(tmp_path: Path) -> None:
-    path = tmp_path / "many.zip"
-    path.write_bytes(make_zip({f"f{index}.txt": b"x" for index in range(12)}))
-    members = list(iter_zip_members(path, LIMITS))
-    assert sum(1 for m in members if m.data) == 10
-    assert sum(1 for m in members if m.skipped_reason and "first 10" in m.skipped_reason) == 2
-
-    with pytest.raises(ContainerError, match="entries"):
-        list(iter_zip_members(path, ContainerLimits(**{**LIMITS.__dict__, "max_entries": 5})))
-    with pytest.raises(ContainerError, match="expands"):
-        list(iter_zip_members(path, ContainerLimits(**{**LIMITS.__dict__, "max_total_bytes": 5})))
-
-    bad = tmp_path / "bad.zip"
-    bad.write_bytes(b"PK\x03\x04 not really a zip")
-    with pytest.raises(ContainerError):
-        list(iter_zip_members(bad, LIMITS))
-
-
-# ── Email ────────────────────────────────────────────────────────────
-
-
-def test_email_text_and_attachments(tmp_path: Path) -> None:
-    raw = make_email(
-        subject="Award FA3002",
-        attachments=[("award.csv", b"a,b\n1,2\n", "text/csv"), ("macro.exe", b"MZ", "application/octet-stream")],
-    )
-    message = read_email(raw)
-    # An inline logo and an attached email are not unpacked as documents.
-    logo = EmailMessage()
-    logo.set_content(b"\x89PNG\r\n\x1a\n", maintype="image", subtype="png", disposition="inline", filename="logo.png")
-    message.attach(logo)
-    forwarded = EmailMessage()
-    forwarded["Subject"] = "Earlier"
-    forwarded.set_content("old")
-    message.add_attachment(forwarded)
-
-    members = list(iter_email_attachments(message, LIMITS))
-    by_name = {member.filename: member for member in members}
-    assert by_name["award.csv"].data == b"a,b\n1,2\n"
-    assert "Unsupported" in by_name["macro.exe"].skipped_reason
-    assert "logo.png" not in by_name
-    assert any("Emails attached" in (m.skipped_reason or "") for m in members)
-
-    path = tmp_path / "award.eml"
-    path.write_bytes(raw)
-    parsed = parse_email_file(path)
-    assert "Subject: Award FA3002" in parsed["paragraphs"]
-    assert "Attachments: award.csv, macro.exe" in parsed["paragraphs"]
-    assert "Please review the attached award." in parsed["text"]
-
-
-def test_html_email_body_is_read_as_text(tmp_path: Path) -> None:
-    path = tmp_path / "html.eml"
-    path.write_bytes(make_email(subject="HTML", html=True))
-    text = parse_email_file(path)["text"]
-    assert text.endswith("\n\nPlease review the award.")
-
-
 # ── Upload API ───────────────────────────────────────────────────────
 
 
@@ -357,6 +214,19 @@ def test_upload_json_and_reject_invalid_json() -> None:
     assert f"invoice.number: {marker}" in pages_of(response.json()["document_id"])[0]["final_text"]
 
     assert upload("broken.json", b'{"a": ', "application/json").status_code == 400
+
+
+def test_source_json_returns_the_parsed_file_for_json_documents_only() -> None:
+    marker = uuid4().hex[:8]
+    payload = {"invoice": {"number": marker, "lines": [{"sku": "A1"}]}}
+    document_id = upload("tree.json", json.dumps(payload).encode(), "application/json").json()["document_id"]
+    response = client.get(f"/api/documents/{document_id}/source-json")
+    assert response.status_code == 200, response.text
+    assert response.json() == {"data": payload}
+
+    csv_id = upload("plain.csv", f"a,{marker}\n".encode(), "text/csv").json()["document_id"]
+    assert client.get(f"/api/documents/{csv_id}/source-json").status_code == 422
+    assert client.get(f"/api/documents/{uuid4()}/source-json").status_code == 404
 
 
 def test_upload_tsv_and_semicolon_csv_record_dialect() -> None:
@@ -372,6 +242,9 @@ def test_upload_tsv_and_semicolon_csv_record_dialect() -> None:
     provenance = response.json()["ingestion_provenance"]
     assert provenance["delimiter"] == "semicolon"
     assert provenance["encoding"] != "utf-8"
+    # Not UTF-8 and no byte-order mark: flagged for the reviewer.
+    assert provenance["encoding_guessed"] is True
+    assert body["ingestion_provenance"]["encoding_guessed"] is False
     assert "Zürich" in pages_of(response.json()["document_id"])[0]["final_text"]
 
 
@@ -393,95 +266,134 @@ def test_upload_xlsm_and_ods() -> None:
     assert upload("fake.ods", make_zip({"content.xml": b"<x/>"}), "application/zip").status_code == 400
 
 
-def test_upload_zip_creates_one_document_per_supported_file() -> None:
+
+
+# ── ZIP and EML are not accepted (Increment 6B.0) ────────────────────
+
+
+def make_eml(subject: str = "Award") -> bytes:
+    return (
+        "From: Contracting Officer <co@agency.example>\r\n"
+        "To: vendor@example.com\r\n"
+        f"Subject: {subject}\r\n"
+        "Message-ID: <1@agency.example>\r\n"
+        "MIME-Version: 1.0\r\n"
+        "Content-Type: text/plain\r\n\r\n"
+        "Please review the attached award.\r\n"
+    ).encode()
+
+
+@pytest.mark.parametrize(
+    "filename, data, mime, says",
+    [
+        ("batch.zip", make_zip({"a.csv": b"a,b\n"}), "application/zip", "ZIP archives aren't supported"),
+        ("award.eml", make_eml(), "message/rfc822", "Email (.eml) files aren't supported"),
+        ("award.msg", b"\xd0\xcf\x11\xe0msg", "application/vnd.ms-outlook", "Email (.msg) files aren't supported"),
+    ],
+)
+def test_zip_and_email_uploads_are_refused(filename, data, mime, says) -> None:
+    response = upload(filename, data, mime)
+    assert response.status_code == 400
+    assert says in response.json()["detail"]
+    assert "individually" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "filename, mime",
+    [
+        ("renamed.txt", "text/plain"),
+        ("renamed.csv", "text/csv"),
+        ("renamed.json", "application/json"),
+        ("renamed.xml", "application/xml"),
+        ("renamed.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        ("renamed.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        ("renamed.ods", "application/vnd.oasis.opendocument.spreadsheet"),
+        ("renamed.pdf", "application/pdf"),
+    ],
+)
+def test_a_renamed_zip_is_refused_by_its_content(filename, mime) -> None:
+    archive = make_zip({f"{uuid4().hex}.csv": b"a,b\n1,2\n"})
+    assert upload(filename, archive, mime).status_code == 400
+
+
+@pytest.mark.parametrize("filename, mime", [("renamed.txt", "text/plain"), ("renamed.csv", "text/csv"), ("renamed.html", "text/html")])
+def test_a_renamed_email_is_refused_by_its_content(filename, mime) -> None:
+    response = upload(filename, make_eml(uuid4().hex), mime)
+    assert response.status_code == 400
+    assert "The file content is an email message" in response.json()["detail"]
+
+
+def test_a_note_that_merely_starts_with_from_is_still_text() -> None:
+    note = f"From: the field office\nRe: site visit {uuid4().hex}\n\nAll good.\n".encode()
+    assert upload("note.txt", note, "text/plain").status_code == 201
+    headers_only = f"Name: CLIN 0001\nAmount: 5\nRef: {uuid4().hex}\n".encode()
+    assert upload("fields.txt", headers_only, "text/plain").status_code == 201
+
+
+def test_every_supported_format_still_uploads() -> None:
+    import fitz
+    from docx import Document as DocxDocument
+    from PIL import Image
+
     marker = uuid4().hex[:8]
-    existing = upload("existing.csv", f"dup,{marker}\n".encode(), "text/csv")
-    assert existing.status_code == 201
-    archive = make_zip(
-        {
-            "batch/rates.csv": f"Item,Amount\n{marker},1\n".encode(),
-            "batch/invoice.json": json.dumps({"number": marker}).encode(),
-            "batch/copy.csv": f"dup,{marker}\n".encode(),
-            "batch/tool.exe": b"MZ",
-            "__MACOSX/batch/._rates.csv": b"junk",
-            "batch/fake.pdf": b"not a pdf",
-        }
-    )
-    response = upload("batch.zip", archive, "application/zip")
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["status"] == "container_expanded"
-    members = {member["path"]: member for member in body["container_members"]}
-    assert set(members) == {"batch/rates.csv", "batch/invoice.json", "batch/copy.csv", "batch/tool.exe", "batch/fake.pdf"}
-    assert members["batch/rates.csv"]["status"] == "created"
-    assert members["batch/rates.csv"]["processing_job_id"] is not None
-    assert members["batch/invoice.json"]["status"] == "created"
-    assert members["batch/copy.csv"]["status"] == "duplicate"
-    assert members["batch/copy.csv"]["document_id"] == existing.json()["document_id"]
-    assert members["batch/tool.exe"]["status"] == "skipped"
-    assert members["batch/fake.pdf"]["status"] == "failed"
-
-    # The background job has read each new document; the archive itself is
-    # not a document.
-    created = members["batch/rates.csv"]["document_id"]
-    assert marker in pages_of(created)[0]["final_text"]
-    document = stored_document(created)
-    assert document.original_filename == "rates.csv"
-    assert document.ingestion_provenance["container_source"] == "batch.zip › batch/rates.csv"
-    assert client.get(f"/api/documents/{body['document_id']}").status_code == 404
+    pdf = fitz.open()
+    pdf.new_page().insert_text((72, 72), f"Contract {marker}")
+    docx = DocxDocument()
+    docx.add_paragraph(f"Statement {marker}")
+    docx_bytes = BytesIO()
+    docx.save(docx_bytes)
+    png = BytesIO()
+    Image.new("RGB", (40, 20), "white").save(png, format="PNG")
+    uploads = [
+        ("c.pdf", pdf.tobytes(), "application/pdf"),
+        ("s.docx", docx_bytes.getvalue(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        ("b.xlsx", make_xlsx(f"x{marker}"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        ("b.ods", make_ods(f"o{marker}"), "application/vnd.oasis.opendocument.spreadsheet"),
+        ("r.csv", f"a,b\n1,c{marker}\n".encode(), "text/csv"),
+        ("r.tsv", f"a\tb\n1\tt{marker}\n".encode(), "text/tab-separated-values"),
+        ("d.json", json.dumps({"j": marker}).encode(), "application/json"),
+        ("d.xml", f"<a><b>{marker}</b></a>".encode(), "application/xml"),
+        ("i.png", png.getvalue() + marker.encode(), "image/png"),
+    ]
+    for name, data, mime in uploads:
+        response = upload(name, data, mime)
+        assert response.status_code == 201, (name, response.text)
 
 
-def test_upload_zip_refuses_broken_or_empty_archives() -> None:
-    assert upload("broken.zip", b"PK\x03\x04garbage", "application/zip").status_code == 400
-    assert upload("empty.zip", make_zip({"folder/": b""}), "application/zip").status_code == 400
-    assert upload("renamed.zip", b"%PDF-1.4 hello", "application/zip").status_code == 400
+def test_previously_imported_email_documents_stay_readable_but_cannot_be_reprocessed() -> None:
+    """Emails imported before 6B.0 keep their record, pages and links; a
+    queued or requested re-read of the .eml is refused, not processed."""
 
+    from datetime import datetime, timezone
 
-def test_upload_email_links_attachments_to_the_email() -> None:
-    marker = uuid4().hex[:8]
-    raw = make_email(
-        subject=f"Award {marker}",
-        attachments=[
-            ("award.xlsx", make_xlsx(marker), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
-            ("notes.txt", f"Notes {marker}".encode(), "text/plain"),
-        ],
-    )
-    response = upload("award.eml", raw, "message/rfc822")
-    assert response.status_code == 201, response.text
-    body = response.json()
-    assert body["status"] == "ready"
-    email_text = pages_of(body["document_id"])[0]["final_text"]
-    assert f"Subject: Award {marker}" in email_text
-    assert "Attachments: award.xlsx, notes.txt" in email_text
+    from app.core.config import get_settings
+    from app.services.document_extraction import DocumentExtractionError
+    from app.services.file_processors import get_processor
 
-    members = {member["filename"]: member for member in body["container_members"]}
-    assert {member["status"] for member in members.values()} == {"created"}
-    for member in members.values():
-        assert member["parent_document_id"] == body["document_id"]
-        child = stored_document(member["document_id"])
-        assert child.parent_document_id == body["document_id"]
-        assert child.parent_relationship_type == EMAIL_ATTACHMENT_RELATIONSHIP
-        assert child.parent_relationship_status == "confirmed"
-    assert marker in pages_of(members["award.xlsx"]["document_id"])[0]["final_text"]
+    document_id = str(uuid4())
+    stored = f"{document_id}.eml"
+    (get_settings().upload_path / stored).write_bytes(make_eml("Historical"))
+    database = SessionLocal()
+    try:
+        database.add(Document(
+            id=document_id, original_filename="historical.eml", stored_filename=stored, content_type="message/rfc822",
+            size_bytes=200, checksum_sha256=uuid4().hex, page_count=1, encrypted=False, status="ready",
+            uploaded_at=datetime.now(timezone.utc),
+        ))
+        database.flush()
+        database.add(DocumentPage(
+            document_id=document_id, page_number=1, native_text="Subject: Historical", final_text="Subject: Historical",
+            text_length=19, extraction_method="native", requires_ocr=False, ocr_attempted=False, ocr_succeeded=False,
+            character_count=19, word_count=2, text_block_count=1, image_count=0, text_coverage_ratio=1.0,
+            image_coverage_ratio=0.0, page_width=0.0, page_height=0.0, extraction_status="completed",
+            has_tables=False, has_form_fields=False, is_scanned=False,
+        ))
+        database.commit()
+    finally:
+        database.close()
 
-
-def test_email_inside_zip_unpacks_its_attachments_one_level() -> None:
-    marker = uuid4().hex[:8]
-    raw = make_email(
-        subject=f"Mod {marker}",
-        attachments=[
-            ("mod.txt", f"Modification {marker}".encode(), "text/plain"),
-            ("nested.zip", make_zip({"x.txt": b"x"}), "application/zip"),
-        ],
-    )
-    response = upload("mail.zip", make_zip({"mod.eml": raw}), "application/zip")
-    assert response.status_code == 200, response.text
-    members = {member["filename"]: member for member in response.json()["container_members"]}
-    assert members["mod.eml"]["status"] == "created"
-    assert members["mod.txt"]["status"] == "created"
-    assert members["mod.txt"]["parent_document_id"] == members["mod.eml"]["document_id"]
-    assert members["nested.zip"]["status"] == "skipped"
-
-
-def test_upload_rejects_non_email_eml() -> None:
-    assert upload("note.eml", b"just some text\nwith no headers", "message/rfc822").status_code == 400
+    assert client.get(f"/api/documents/{document_id}").status_code == 200
+    assert pages_of(document_id)[0]["final_text"] == "Subject: Historical"
+    assert client.get(f"/api/documents/{document_id}/source-view").json()["viewer"] == "unsupported"
+    with pytest.raises(DocumentExtractionError):
+        get_processor(Path(stored))

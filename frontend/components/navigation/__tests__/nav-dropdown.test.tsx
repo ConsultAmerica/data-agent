@@ -30,7 +30,8 @@ describe("NavDropdown", () => {
     expect(within(menu).getByText("Intelligence")).toBeInTheDocument();
     const items = within(menu).getAllByRole("menuitem").map((item) => item.textContent);
     expect(items.some((text) => text?.startsWith("Documents"))).toBe(true);
-    expect(items.some((text) => text?.startsWith("FAR / DFARS"))).toBe(true);
+    // FAR / DFARS is contract-only: not in the general menu.
+    expect(items.some((text) => text?.startsWith("FAR / DFARS"))).toBe(false);
     // Relationships lives under Intelligence, not Platform.
     expect(items.some((text) => text?.includes("Relationships"))).toBe(false);
   });

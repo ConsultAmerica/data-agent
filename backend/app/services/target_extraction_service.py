@@ -59,6 +59,7 @@ from app.services.scanned_accuracy import (
     maybe_targeted_second_pass,
 )
 from app.services.source_validator import validate_source_value
+from app.services.table_shapes import page_tables
 
 settings = get_settings()
 
@@ -283,7 +284,9 @@ def _needs_review_null_result(
         validation=validation,
         evidence={
             "page_number": page_number,
-            "source_text": reason,
+            # No value was resolved, so there is no source text; the reason
+            # is kept in field_evidence and validation.warnings.
+            "source_text": "",
             "source_reference": f"page {page_number}",
             "raw_ocr": None,
             "normalized_value": None,
@@ -690,7 +693,7 @@ def _resolve_table_target(
     ]
 
     for page in candidate_pages:
-        for table in page.tables_json or []:
+        for table in page_tables(page.tables_json):
             headers = [str(header) for header in (table.get("headers") or [])]
 
             if target.columns:

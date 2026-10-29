@@ -18,24 +18,29 @@ interface ExtractionTabBarProps {
   active: ExtractionTab;
   onChange: (tab: ExtractionTab) => void;
   showUniversal?: boolean;
+  /** Tabs that don't apply to this document (e.g. Clauses for an invoice). */
+  hidden?: readonly ExtractionTab[];
 }
 
 export default function ExtractionTabBar({
   active,
   onChange,
   showUniversal = false,
+  hidden = [],
 }: ExtractionTabBarProps) {
   const tabs = EXTRACTION_TABS.filter(
-    (tab) => tab !== "Universal" || showUniversal,
+    (tab) => (tab !== "Universal" || showUniversal) && !hidden.includes(tab),
   );
 
   return (
     <div className="extraction-tab-bar">
-      <div className="extraction-bar-inner flex gap-1 overflow-x-auto">
+      <div className="extraction-bar-inner flex gap-1 overflow-x-auto" role="tablist">
         {tabs.map((tab) => (
           <button
             key={tab}
             type="button"
+            role="tab"
+            aria-selected={active === tab}
             onClick={() => onChange(tab)}
             className={[
               "shrink-0 rounded-lg px-4 py-2.5 text-sm font-medium transition duration-200",

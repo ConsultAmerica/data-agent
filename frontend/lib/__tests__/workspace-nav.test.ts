@@ -10,6 +10,10 @@ import {
 } from "@/lib/workspace-nav";
 
 describe("workspace shell routing", () => {
+  it("keeps FAR / DFARS out of the sidebar (clauses exist only in contract documents)", () => {
+    expect(WORKSPACE_NAV.some((item) => item.href === "/clauses" || item.label === "FAR / DFARS")).toBe(false);
+  });
+
   it("treats the homepage and public sample as marketing", () => {
     expect(isMarketingPath("/")).toBe(true);
     expect(isMarketingPath("/sample")).toBe(true);
@@ -57,7 +61,7 @@ describe("sidebar grouping", () => {
       return null;
     };
     expect(["documents", "extraction", "review"].map(groupOf)).toEqual(Array(3).fill("Document Processing"));
-    expect(["ask", "search", "clauses", "explorer", "compare"].map(groupOf)).toEqual(Array(5).fill("Intelligence & AI"));
+    expect(["ask", "search", "explorer", "compare"].map(groupOf)).toEqual(Array(4).fill("Intelligence & AI"));
     expect(["obligations", "playbook", "integrations"].map(groupOf)).toEqual(Array(3).fill("Compliance & Controls"));
     // Exactly one item is active on any page.
     for (const path of ["/analytics", "/search", "/playbook", "/explorer", "/documents/x/review"]) {

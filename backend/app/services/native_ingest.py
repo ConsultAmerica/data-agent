@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 from app.models.document_page import DocumentPage
 from app.models.page_text_block import PageTextBlock
 from app.parsers.data_file_parsers import (
-    parse_email_file,
     parse_json_file,
     parse_ods_sheets,
 )
@@ -136,8 +135,6 @@ def ingest_native_document(
         parsed = parse_plain_text(file_path)
     elif kind == "json":
         parsed = parse_json_file(file_path)
-    elif kind == "email":
-        parsed = parse_email_file(file_path)
     else:
         raise ValueError(f"No native ingest for kind={kind}")
 
@@ -155,11 +152,17 @@ def ingest_native_document(
     return 1
 
 
+# Provenance keys a text parser reports about how it read the file.
+TEXT_DIALECT_KEYS = ("encoding", "encoding_guessed", "delimiter")
+
+
 def _stamp_text_dialect(database: Session, document_id: str, parsed: dict) -> None:
     """Record the detected encoding/delimiter, so a misread file shows why."""
 
     detected = {
-        key: parsed[key] for key in ("encoding", "delimiter") if parsed.get(key)
+        key: parsed[key]
+        for key in TEXT_DIALECT_KEYS
+        if parsed.get(key) is not None
     }
     if not detected:
         return

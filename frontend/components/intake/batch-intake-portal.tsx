@@ -16,6 +16,14 @@ interface BatchIntakePortalProps {
   onFiles: (files: File[]) => void;
 }
 
+/** Files that hold other files. Not accepted: the documents inside are
+ * uploaded individually instead. */
+const CONTAINER_REASONS: Record<string, string> = {
+  ".zip": "ZIP archives aren't supported. Upload the documents they contain individually",
+  ".eml": "Email files aren't supported. Upload the attachments individually",
+  ".msg": "Email files aren't supported. Upload the attachments individually",
+};
+
 function extensionOf(name: string): string {
   const dot = name.lastIndexOf(".");
   return dot === -1 ? "" : name.slice(dot).toLowerCase();
@@ -39,12 +47,12 @@ export default function BatchIntakePortal({
         name: rejection.file.name,
         reason: rejection.errors.some((error) => error.code === "file-too-large")
           ? `Larger than the ${config?.max_upload_mb ?? "?"} MB per-file limit`
-          : "Unsupported file type",
+          : (CONTAINER_REASONS[extensionOf(rejection.file.name)] ?? "Unsupported file type"),
       }));
       const queued: File[] = [];
       for (const file of accepted) {
         if (!ACCEPTED_EXTENSIONS.includes(extensionOf(file.name))) {
-          problems.push({ name: file.name, reason: "Unsupported file type" });
+          problems.push({ name: file.name, reason: CONTAINER_REASONS[extensionOf(file.name)] ?? "Unsupported file type" });
         } else if (file.size === 0) {
           problems.push({ name: file.name, reason: "The file is empty" });
         } else {

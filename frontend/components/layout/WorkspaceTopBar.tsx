@@ -4,7 +4,6 @@ import Link from "next/link";
 import { Menu, Plus, Sparkles } from "lucide-react";
 
 import DataomatixLogo from "@/components/navigation/dataomatix-logo";
-import BackendStatusPill from "@/components/navigation/BackendStatusPill";
 import CommandTrigger from "@/components/navigation/command-trigger";
 import UserChip from "@/components/navigation/user-chip";
 
@@ -49,7 +48,6 @@ export default function WorkspaceTopBar({ onOpenSearch, onOpenMobileNav }: Works
           <CommandTrigger onOpen={onOpenSearch} compact />
         </span>
         <div className="hidden shrink-0 items-center gap-2 border-l border-white/10 pl-2 sm:flex">
-          <BackendStatusPill labelClassName="hidden lg:inline" />
           <UserChip />
         </div>
       </div>
