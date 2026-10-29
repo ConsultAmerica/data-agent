@@ -231,6 +231,9 @@ class Settings(BaseSettings):
             "https://www.dataomatix.com",
             "https://data-agent-ca.vercel.app",
             "https://frontend-ivory-nine-22.vercel.app",
+            "https://dataomatix.com",
+            "https://www.dataomatix.com",
+            "https://dataomatix.vercel.app",
         ):
             if origin not in origins:
                 origins.append(origin)
