@@ -1,11 +1,14 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import DocumentWorkspace from "@/components/documents/document-workspace";
 import StagingDatasetTable from "@/components/staging/staging-dataset-table";
 import { columnWidth, frozenColumnCount, headerWordWidth, MAX_COLUMN_WIDTH } from "@/lib/data-grid";
 import { humanizeExample, humanizeMethod } from "@/lib/method-labels";
 import type { StagingCell, StagingColumn, StagingDataset, StagingRecord, StagingWorkbook } from "@/lib/staging-workbook";
+
+// These tests cover the full data workspace (Advanced Grid); Smart View has its own.
+beforeEach(() => window.localStorage.setItem("dx-workspace-mode", "advanced"));
 
 let search = new URLSearchParams();
 vi.mock("next/navigation", () => ({

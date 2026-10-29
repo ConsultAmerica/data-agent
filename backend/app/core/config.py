@@ -104,6 +104,13 @@ class Settings(BaseSettings):
     # Stop calling paid engines for a document once its estimated spend
     # reaches this (unset = no cap).
     recognition_budget_usd_per_document: float | None = None
+    # Document classification (app/classification/): at or above "high" a
+    # prediction stands on its own; between "low" and "high" it is used but
+    # flagged "review recommended"; below "low" (or when nothing specific is
+    # recognized) a person must confirm the type. Scores are evidence
+    # strength, not calibrated probabilities.
+    classification_high_confidence: float = 0.85
+    classification_low_confidence: float = 0.60
 
     # Invoice PO number formats (regular expressions, full match),
     # separated by ";;". Unset = the format check is not configured.

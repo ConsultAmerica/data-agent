@@ -19,6 +19,8 @@ import type { EvidenceTarget } from "@/components/staging/evidence-drawer";
 import DocumentActionsMenu from "@/components/actions/document-actions-menu";
 import DocumentObligationsPanel from "@/components/obligations/document-obligations-panel";
 import ExpiryTag from "@/components/documents/expiry-tag";
+import ClassificationTag from "@/components/classification/classification-tag";
+import SmartWorkspace from "@/components/smart-view/smart-workspace";
 import InvoiceRecognitionPanel from "@/components/documents/invoice-recognition-panel";
 import DocumentPlaybookPanel from "@/components/playbook/document-playbook-panel";
 import DocumentValidationPanel from "@/components/validation/document-validation-panel";
@@ -148,6 +150,9 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
   // Split view: the original document stays open on the left while the
   // structured data is read on the right; a value's source jumps it there.
   const [splitPref, setSplitPref] = useBrowserPreference<"on" | "off">("dx-workspace-split", ["on", "off"], "off");
+  // Smart View (default) organises the document by type; Advanced Grid is
+  // the full data workspace with every column.
+  const [viewMode, setViewMode] = useBrowserPreference<"smart" | "advanced">("dx-workspace-mode", ["smart", "advanced"], "smart");
   const split = splitPref === "on";
   const [historyOpen, setHistoryOpen] = useState(false);
   const selectionStore = useSelectionStore();
@@ -484,6 +489,12 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
                 </dd>
               </div>
               <ExpiryTag documentId={documentId} className={TAG} />
+              <ClassificationTag
+                documentId={documentId}
+                className={TAG}
+                // A decision re-stages the document: show its new schema.
+                onChanged={() => setReloadKey((key) => key + 1)}
+              />
             </dl>
             <RelatedDocumentsSwitcher documentId={documentId} returnQs={returnQs} />
           </div>
@@ -507,6 +518,14 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
             data-testid="open-metadata-review"
           >
             Metadata review
+          </Link>
+          <Link
+            href={`/documents/${documentId}/form`}
+            className="btn-secondary px-3 py-2 text-sm"
+            data-testid="open-review-form"
+            title="The review form generated from this document's schema"
+          >
+            Review form
           </Link>
           <button
             type="button"
@@ -745,6 +764,30 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
         </div>
       )}
 
+      <div className="mt-4 flex flex-wrap items-center gap-2" data-testid="workspace-mode">
+        <div className="inline-flex rounded-lg border border-border bg-surface p-0.5" role="radiogroup" aria-label="Workspace view">
+          {([["smart", "Smart View"], ["advanced", "Advanced Grid"]] as const).map(([id, label]) => (
+            <button key={id} type="button" role="radio" aria-checked={viewMode === id} onClick={() => setViewMode(id)}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium ${viewMode === id ? "bg-primary text-white" : "text-text-secondary hover:text-foreground"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <span className="text-xs text-text-muted">
+          {viewMode === "smart"
+            ? "Organised for this document type, with only the relevant fields."
+            : "Every dataset and column, for analysts and Oracle consultants."}
+        </span>
+      </div>
+
+      {viewMode === "smart" ? (
+        <SmartWorkspace
+          documentId={documentId}
+          workbook={workbook}
+          filename={filename || workbook.document_filename}
+          pageCount={Math.max(1, documentMeta?.page_count ?? 1)}
+        />
+      ) : (
       <div
         className={split ? "mt-4 grid gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]" : ""}
         data-split={split ? "on" : "off"}
@@ -940,6 +983,7 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
         </div>
         </div>
       </div>
+      )}
 
       <details
         className="mt-6 rounded-xl border border-border bg-surface"

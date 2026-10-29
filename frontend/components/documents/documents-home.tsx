@@ -833,6 +833,11 @@ function TypeLine({ document }: { document: DocumentSummary }) {
       {row.staged
         ? `${row.typeLabel}${row.profileLabel && row.profileLabel !== row.typeLabel ? ` · ${row.profileLabel}` : ""}`
         : row.profileLabel}
+      {document.classification_status === "review_required" && (
+        <span className="ml-1.5 rounded bg-danger/10 px-1 text-[10px] font-medium text-danger" title="The document type needs to be confirmed">
+          Confirm type
+        </span>
+      )}
     </span>
   );
 }

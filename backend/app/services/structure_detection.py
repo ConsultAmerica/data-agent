@@ -1399,6 +1399,19 @@ def _map_contract_type_to_family(
     return "unknown", "Unknown / General Document"
 
 
+def family_keyword_hits(text: str) -> dict[str, tuple[int, list[str]]]:
+    """Per family: (keyword score, the keywords found) — the evidence
+    behind classify_document_family, for families with any hit."""
+
+    lowered = text.lower()
+    hits: dict[str, tuple[int, list[str]]] = {}
+    for key, (_label, keywords) in DOCUMENT_FAMILIES.items():
+        found = [keyword for keyword in keywords if keyword in lowered]
+        if found:
+            hits[key] = (_keyword_score(lowered, keywords), found)
+    return hits
+
+
 def classify_document_family(text: str) -> tuple[str, str, float]:
     """Public, deterministic (keyword-only, no AI) document-family
     classification — (family_key, family_label, confidence)."""

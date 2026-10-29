@@ -8,7 +8,9 @@ from app.api import (
     actors,
     ask,
     assignments,
+    classification,
     contract_analysis,
+    doc_schemas,
     dashboard,
     document_actions,
     document_compare,
@@ -20,6 +22,7 @@ from app.api import (
     jobs,
     key_dates,
     obligations,
+    oracle_templates,
     page_extraction,
     playbook,
     provider_approvals,
@@ -83,6 +86,9 @@ from app.models import document_far_record as document_far_record_model  # noqa:
 from app.models import document_contract_structure as document_contract_structure_model  # noqa: F401
 from app.models import staged_upload as staged_upload_model  # noqa: F401
 from app.models import provider_approval as provider_approval_model  # noqa: F401
+from app.models import oracle_template as oracle_template_model  # noqa: F401
+from app.models import document_classification as document_classification_model  # noqa: F401
+from app.models import document_schema as document_schema_model  # noqa: F401
 from app.models import recognition_run as recognition_run_model  # noqa: F401
 from app.models import reference_data as reference_data_model  # noqa: F401
 from app.models import document_key_date as document_key_date_model  # noqa: F401
@@ -174,7 +180,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
     # Content-Disposition carries the export's file name to the browser app.
-    expose_headers=["X-Request-ID", "Content-Disposition"],
+    expose_headers=["X-Request-ID", "Content-Disposition", "X-Import-Ready"],
 )
 
 app.include_router(
@@ -291,6 +297,48 @@ app.include_router(
     actors.router,
     prefix="/api/actors",
     tags=["Actors"],
+)
+
+app.include_router(
+    doc_schemas.router,
+    prefix="/api/schemas",
+    tags=["Schema & Label Designer"],
+)
+
+app.include_router(
+    doc_schemas.documents_router,
+    prefix="/api/documents",
+    # Document isolation for every /{document_id} route (core/document_access.py).
+    dependencies=[Depends(enforce_document_access)],
+    tags=["Schema & Label Designer"],
+)
+
+app.include_router(
+    classification.router,
+    prefix="/api/classification",
+    tags=["Classification"],
+)
+
+app.include_router(
+    classification.documents_router,
+    prefix="/api/documents",
+    # Document isolation for every /{document_id} route (core/document_access.py).
+    dependencies=[Depends(enforce_document_access)],
+    tags=["Classification"],
+)
+
+app.include_router(
+    oracle_templates.router,
+    prefix="/api/oracle",
+    tags=["Oracle templates"],
+)
+
+app.include_router(
+    oracle_templates.documents_router,
+    prefix="/api/documents",
+    # Document isolation for every /{document_id} route (core/document_access.py).
+    dependencies=[Depends(enforce_document_access)],
+    tags=["Oracle mapping"],
 )
 
 app.include_router(

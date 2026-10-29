@@ -77,6 +77,15 @@ def prepare_staging(database: Session, document: Document) -> StagingPreparation
                 record = persist_resolution(database, document, refined)
                 reason += f"; structure recognized {refined.profile.key}"
 
+    # Classification is re-read now that a source structure may exist (its
+    # layout recognizers add evidence); an unchanged result adds no row.
+    try:
+        from app.classification.service import record_prediction
+
+        record_prediction(database, document)
+    except Exception:  # noqa: BLE001 - review metadata must never block staging
+        database.rollback()
+
     timings_ms = {"profile_resolution_ms": resolve_ms, "source_structure_ms": structure_ms}
     profile = registry.get_profile(record.profile_id, record.profile_version)
     if profile is not None and profile.materializer is not None:

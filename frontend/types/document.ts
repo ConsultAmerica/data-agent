@@ -80,6 +80,8 @@ export interface DocumentSummary {
    * "unclassified" until staged. */
   category?: string;
   category_label?: string;
+  /** classified | review_recommended | review_required | confirmed. */
+  classification_status?: string | null;
   /** Intake tags given at upload (null when none were given). */
   agency?: string | null;
   contracting_officer?: string | null;

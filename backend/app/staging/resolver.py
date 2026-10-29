@@ -157,6 +157,33 @@ def recognize_document_profile(database: Session, document: Document) -> Profile
 
 
 def resolve_profile(database: Session, document: Document) -> ProfileResolution:
+    """The document's profile: a person's classification decision when one
+    was made (app/classification/), else the prediction below."""
+
+    from app.classification.service import current_decision
+
+    decision = current_decision(database, document.id)
+    if decision is not None:
+        profile = registry.get_profile(decision.profile_id) or registry.generic_profile()
+        verb = "confirmed" if decision.kind == "confirmation" else "set"
+        when = decision.created_at.date().isoformat() if decision.created_at else ""
+        return ProfileResolution(
+            profile=profile,
+            family=decision.family,
+            family_label=decision.family_label,
+            reasons=[
+                f"Document type {verb} by {decision.actor_name or 'a reviewer'} {when}: "
+                f"{decision.family_label}{f' — {decision.subtype}' if decision.subtype else ''}.",
+                f"{profile.display_name} profile.",
+            ],
+            confident=True,
+        )
+    return predict_profile(database, document)
+
+
+def predict_profile(database: Session, document: Document) -> ProfileResolution:
+    """What the document's own content says it is (no decisions applied)."""
+
     recognized = recognize_document_profile(database, document)
     if recognized is not None:
         return recognized

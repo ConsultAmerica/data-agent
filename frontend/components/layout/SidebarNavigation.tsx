@@ -22,6 +22,9 @@ import {
   ScrollText,
   Settings,
   Sparkles,
+  LayoutTemplate,
+  ShieldQuestion,
+  Shuffle,
   Workflow,
   type LucideIcon,
 } from "lucide-react";
@@ -38,6 +41,8 @@ const ICONS: Record<WorkspaceNavId, LucideIcon> = {
   documents: Archive,
   extraction: FileSearch,
   review: ListChecks,
+  classification: ShieldQuestion,
+  schemas: LayoutTemplate,
   explorer: Compass,
   ask: Sparkles,
   search: Search,
@@ -49,6 +54,7 @@ const ICONS: Record<WorkspaceNavId, LucideIcon> = {
   actions: Bot,
   playbook: BookCheck,
   integrations: Workflow,
+  mapping: Shuffle,
   governance: ClipboardList,
   settings: Settings,
 };

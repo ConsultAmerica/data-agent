@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import DocumentWorkspace from "@/components/documents/document-workspace";
 import type { StagingCell, StagingDataset, StagingWorkbook } from "@/lib/staging-workbook";
 
+// These tests cover the full data workspace (Advanced Grid); Smart View has its own.
+beforeEach(() => window.localStorage.setItem("dx-workspace-mode", "advanced"));
+
 let search = new URLSearchParams();
 const replace = vi.fn();
 

@@ -97,6 +97,9 @@ class DocumentSummaryResponse(BaseModel):
     # (app/staging/document_categories.py); "unclassified" until staged.
     category: str = "unclassified"
     category_label: str = "Not yet classified"
+    # classified | review_recommended | review_required | confirmed; None
+    # for documents processed before classification was recorded.
+    classification_status: str | None = None
     # Intake tagging from the upload (models/document_intake.py); all None
     # for a document uploaded without intake fields.
     agency: str | None = None

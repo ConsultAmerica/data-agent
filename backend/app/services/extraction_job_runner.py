@@ -365,6 +365,17 @@ async def run_processing_job(job_id: int) -> None:
         payload["discovery_reused"] = reused_discovery
         job.result_json = payload
 
+        # Classify now, from the pages just read, so the type (and anything
+        # needing review) is known before extraction. Never fails the job.
+        try:
+            from app.classification.service import record_prediction
+
+            await run_in_threadpool(record_prediction, database, document)
+        except Exception as exc:  # noqa: BLE001 - classification is redone at staging
+            database.rollback()
+            log_event("classification_failed", stage="discovering_fields", status="error",
+                      error_category=type(exc).__name__)
+
         job.status = "complete"
         _append_stage(job, "complete")
         job.progress = 100

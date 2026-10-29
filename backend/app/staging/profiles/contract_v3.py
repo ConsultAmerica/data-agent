@@ -34,7 +34,6 @@ from app.staging.profiles.contract_presentation import (
     column_labels,
     contract_data_records,
     contract_overview_records,
-    contract_subtype,
 )
 from app.source_structure.ocr_geometry import PageGeometry
 from app.staging.provenance import make_provenance
@@ -982,7 +981,9 @@ def adapt_contract_v3(database: Session, document: Document) -> AdapterResult:
     }
     # The business presentation over the records above (never re-extracted).
     filename = document.original_filename or "contract.pdf"
-    subtype = contract_subtype(_opening_text(database, document))
+    from app.classification.service import presentation_subtype
+
+    subtype = presentation_subtype(database, document.id, _opening_text(database, document))
     records["contract_data"] = contract_data_records(records, filename)
     records["contract_overview"] = contract_overview_records(document, records, records["contract_data"], subtype)
     return AdapterResult(

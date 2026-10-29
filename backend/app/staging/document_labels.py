@@ -47,7 +47,15 @@ def _opening_text(database: Session, document_id: str, pages: int = 4) -> str:
 
 
 def type_label(database: Session, document: Document, pin: DocumentStagingWorkbook) -> str:
+    from app.classification.service import decided_subtype
+
+    chosen = decided_subtype(database, document.id)
+    if chosen:
+        # A person's subtype ("SF 33 Solicitation / Award") is the type shown.
+        return chosen
     profile_id = pin.profile_id
+    if pin.document_family and pin.document_family.startswith("custom:"):
+        return pin.document_family_label or "Custom Document"
     if profile_id == "contract_v3":
         from app.staging.profiles.contract_presentation import SF1442, contract_subtype
 
@@ -78,6 +86,10 @@ def document_labels(database: Session, document: Document) -> dict:
     pin = database.scalars(
         select(DocumentStagingWorkbook).where(DocumentStagingWorkbook.document_id == document.id)
     ).first()
+    from app.classification.service import current
+
+    classification = current(database, document.id)
+    status = {"classification_status": classification.status if classification else None}
     if pin is None:
         return {
             "profile_id": None,
@@ -85,8 +97,10 @@ def document_labels(database: Session, document: Document) -> dict:
             "type_label": None,
             "staging_status": "not_staged",
             **category_fields(None, classified=False),
+            **status,
         }
     return {
+        **status,
         "profile_id": pin.profile_id,
         "profile_label": profile_label(pin.profile_id),
         "type_label": type_label(database, document, pin),

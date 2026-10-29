@@ -8,8 +8,10 @@ export type WorkspaceNavId =
   | "documents"
   | "extraction"
   | "review"
+  | "classification"
   | "explorer"
   | "ask"
+  | "schemas"
   | "search"
   | "analytics"
   | "clauses"
@@ -19,6 +21,7 @@ export type WorkspaceNavId =
   | "actions"
   | "playbook"
   | "integrations"
+  | "mapping"
   | "governance"
   | "settings";
 
@@ -55,8 +58,10 @@ export const WORKSPACE_NAV: WorkspaceNavItem[] = [
   },
   { id: "extraction", label: "Extraction", href: "/extraction/new", match: ["/extraction"] },
   { id: "review", label: "Review queue", href: "/review-queue", match: ["/review-queue", "/review"] },
+  { id: "classification", label: "Classification review", href: "/classification", match: ["/classification"] },
   // Intelligence & AI: asking, finding and comparing what the documents say.
   { id: "ask", label: "DataoAI", href: "/ask", group: "Intelligence & AI" },
+  { id: "schemas", label: "Schema & Label Designer", href: "/schemas", match: ["/schemas"] },
   { id: "search", label: "Search", href: "/search" },
   { id: "clauses", label: "FAR / DFARS", href: "/clauses", match: ["/clauses"] },
   { id: "explorer", label: "Field Explorer", href: "/explorer" },
@@ -74,6 +79,7 @@ export const WORKSPACE_NAV: WorkspaceNavItem[] = [
   { id: "expirations", label: "Expirations", href: "/expirations" },
   { id: "playbook", label: "Clause playbook", href: "/playbook" },
   { id: "integrations", label: "Exports & Oracle", href: "/integrations" },
+  { id: "mapping", label: "Mapping Studio", href: "/mapping", match: ["/mapping"] },
   // Administration: audit, access and configuration.
   {
     id: "governance",
@@ -158,7 +164,7 @@ export function breadcrumbsForPath(
     return crumbs;
   }
 
-  const documentMatch = path.match(/^\/documents\/([^/]+)(?:\/(review))?$/);
+  const documentMatch = path.match(/^\/documents\/([^/]+)(?:\/(review|form))?$/);
   if (documentMatch) {
     // Back to the list the person came from (filters, sort and page kept).
     const returnQs = params.get("return");
@@ -168,7 +174,9 @@ export function breadcrumbsForPath(
     const subview =
       documentMatch[2] === "review"
         ? "Review"
-        : params.get("panel") === "oracle"
+        : documentMatch[2] === "form"
+          ? "Review form"
+          : params.get("panel") === "oracle"
           ? "Oracle"
           : DOCUMENT_VIEW_CRUMBS[params.get("view") ?? ""];
     if (subview) {
@@ -178,6 +186,10 @@ export function breadcrumbsForPath(
       crumbs.push({ label: title });
     }
     return crumbs;
+  }
+
+  if (/^\/schemas\/[^/]+$/.test(path)) {
+    return [...crumbs, { label: "Schema & Label Designer", href: "/schemas" }, { label: "Designer" }];
   }
 
   if (path === "/integrations" && params.get("documentId")) {
@@ -213,6 +225,10 @@ export function breadcrumbsForPath(
       { label: "Compare" },
     ],
     "/integrations": [...crumbs, { label: "Exports & Oracle" }],
+    "/mapping": [...crumbs, { label: "Mapping Studio" }],
+    "/classification": [...crumbs, { label: "Classification review" }],
+    "/schemas": [...crumbs, { label: "Schema & Label Designer" }],
+    "/mapping/designer": [...crumbs, { label: "Mapping Studio", href: "/mapping" }, { label: "Mapping Designer" }],
     "/governance": [...crumbs, { label: "Governance" }],
     "/architecture": [
       ...crumbs,
