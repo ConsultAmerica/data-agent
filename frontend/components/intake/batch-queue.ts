@@ -21,6 +21,7 @@ import {
 } from "@/lib/intake";
 import { uploadFileWithProgress } from "@/lib/upload";
 import type {
+  ContainerMemberSummary,
   DiscoverSchemaResult,
   EmbeddedFileSummary,
   ExistingDocumentSummary,
@@ -315,6 +316,15 @@ export class BatchQueue {
   }
 
   private async afterUpload(id: string, result: UploadedDocument, needsTag: boolean) {
+    if (result.status === "container_expanded") {
+      // The archive isn't a document: its row gives way to one row per
+      // file found in it, each already uploaded by the server.
+      const members = result.container_members ?? [];
+      this.insertContainerMembers(id, members, `From ${result.original_filename}`, needsTag);
+      this.items = this.items.filter((entry) => entry.id !== id);
+      this.emit();
+      return;
+    }
     if (result.status === "portfolio_pending" && result.embedded_files) {
       this.patch(id, {
         status: "portfolio",
@@ -358,17 +368,79 @@ export class BatchQueue {
       }
     }
 
+    // An email's attachments: documents of their own, linked to it.
+    if (result.container_members?.length) {
+      this.insertContainerMembers(id, result.container_members, `Attached to ${result.original_filename}`, needsTag);
+    }
+
     if (result.reused_existing) {
-      try {
-        await this.deps.targets(documentId);
-        this.patch(id, { status: "processed", pipelineStage: null });
-        void this.runFullExtraction();
-        return;
-      } catch {
-        // No discovered schema yet — process it like a new upload.
-      }
+      await this.reuseExisting(id, documentId);
+      return;
     }
     await this.process(id, documentId, result.processing_job_id ?? null);
+  }
+
+  /** Rows for the files the server unpacked from a ZIP or email, placed
+   * after the row they came from. New files follow their processing job;
+   * files already uploaded reuse the existing document; skipped ones say
+   * why. */
+  private insertContainerMembers(afterId: string, members: ContainerMemberSummary[], origin: string, needsTag: boolean) {
+    const rows = members.map((member): QueueItem => {
+      const base = { ...newItem(null, member.filename, member.size_bytes ?? 0), uploadFraction: 1 };
+      if (member.status === "created" || member.status === "duplicate") {
+        return {
+          ...base,
+          status: "processing",
+          documentId: member.document_id,
+          pipelineStage: "uploaded",
+          note: member.status === "duplicate" ? `${origin} · already uploaded, reusing the existing document` : origin,
+        };
+      }
+      return {
+        ...base,
+        status: "failed",
+        failedPhase: "upload",
+        error: `${member.status === "skipped" ? "Skipped" : "Not imported"}: ${member.message ?? "unknown reason"}`,
+        note: origin,
+      };
+    });
+    if (rows.length === 0) return;
+    const at = this.items.findIndex((entry) => entry.id === afterId);
+    this.items = [...this.items.slice(0, at + 1), ...rows, ...this.items.slice(at + 1)];
+    this.emit();
+
+    const followUps: (() => Promise<void>)[] = [];
+    members.forEach((member, index) => {
+      const row = rows[index];
+      const documentId = member.document_id;
+      if (!documentId || row.status !== "processing") return;
+      if (needsTag) {
+        void this.deps.tagDocument(documentId, this.getFields()).catch(() => undefined);
+      }
+      followUps.push(() =>
+        member.status === "duplicate"
+          ? this.reuseExisting(row.id, documentId)
+          : this.process(row.id, documentId, member.processing_job_id),
+      );
+    });
+    // The server works through the jobs in turn; follow a few at a time
+    // rather than poll every job of a 200-file archive at once.
+    const next = async () => {
+      for (let followUp = followUps.shift(); followUp; followUp = followUps.shift()) await followUp();
+    };
+    for (let worker = 0; worker < MAX_CONCURRENT; worker += 1) void next();
+  }
+
+  /** An already-uploaded document: extract it if it was read before,
+   * otherwise process it like a new one. */
+  private async reuseExisting(id: string, documentId: string) {
+    try {
+      await this.deps.targets(documentId);
+      this.patch(id, { status: "processed", pipelineStage: null });
+      void this.runFullExtraction();
+    } catch {
+      await this.process(id, documentId, null);
+    }
   }
 
   private async process(id: string, documentId: string, jobId: number | null) {

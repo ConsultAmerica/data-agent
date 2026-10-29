@@ -20,6 +20,9 @@ export interface UploadedDocument {
   duplicate?: boolean;
   existing_document?: ExistingDocumentSummary | null;
   embedded_files?: EmbeddedFileSummary[] | null;
+  /** ZIP upload (status "container_expanded"): every file found in it.
+   * Email upload: its attachments. */
+  container_members?: ContainerMemberSummary[] | null;
   pipeline_log?: string[];
   approved_by?: string | null;
   approved_at?: string | null;
@@ -491,6 +494,21 @@ export interface EmbeddedFileSummary {
   filename: string;
   size_bytes: number;
   page_count?: number | null;
+}
+
+/** A file found in an uploaded ZIP, or attached to an uploaded email. */
+export interface ContainerMemberSummary {
+  filename: string;
+  /** Where it was inside the container. */
+  path: string;
+  status: "created" | "duplicate" | "skipped" | "failed";
+  /** The new document ("created") or the existing one ("duplicate"). */
+  document_id: string | null;
+  /** The email it was attached to. */
+  parent_document_id: string | null;
+  processing_job_id: number | null;
+  size_bytes: number | null;
+  message: string | null;
 }
 
 export interface StructureDetectionResult {

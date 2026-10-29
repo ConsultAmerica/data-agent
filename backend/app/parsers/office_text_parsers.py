@@ -8,26 +8,89 @@ from io import StringIO
 from pathlib import Path
 
 
-def parse_plain_text(file_path: str | Path) -> dict:
-    path = Path(file_path)
-    raw = path.read_bytes()
-    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
-        try:
-            text = raw.decode(encoding)
-            break
-        except UnicodeDecodeError:
-            continue
-    else:
-        text = raw.decode("utf-8", errors="replace")
+_BOMS = (
+    (b"\xef\xbb\xbf", "utf-8-sig"),
+    (b"\xff\xfe\x00\x00", "utf-32"),
+    (b"\x00\x00\xfe\xff", "utf-32"),
+    (b"\xff\xfe", "utf-16"),
+    (b"\xfe\xff", "utf-16"),
+)
 
+
+def decode_text_bytes(raw: bytes) -> tuple[str, str]:
+    """Decode a text file of unknown encoding → (text, encoding used).
+
+    A byte-order mark wins; then strict UTF-8; then charset-normalizer's
+    guess (UTF-16 without a BOM, Shift-JIS, …); Windows-1252 last, which
+    decodes any byte string."""
+
+    for bom, encoding in _BOMS:
+        if raw.startswith(bom):
+            return raw.decode(encoding, errors="replace"), encoding
+    try:
+        return raw.decode("utf-8"), "utf-8"
+    except UnicodeDecodeError:
+        pass
+    try:
+        from charset_normalizer import from_bytes
+
+        best = from_bytes(raw[:200_000]).best()
+        if best is not None and best.encoding:
+            return raw.decode(best.encoding, errors="replace"), best.encoding
+    except (ImportError, LookupError):
+        pass
+    try:
+        return raw.decode("cp1252"), "cp1252"
+    except UnicodeDecodeError:
+        return raw.decode("latin-1"), "latin-1"
+
+
+def parse_plain_text(file_path: str | Path) -> dict:
+    text, encoding = decode_text_bytes(Path(file_path).read_bytes())
     paragraphs = [line for line in text.splitlines() if line.strip()]
-    return {"paragraphs": paragraphs, "tables": [], "text": text}
+    return {
+        "paragraphs": paragraphs,
+        "tables": [],
+        "text": text,
+        "encoding": encoding,
+    }
+
+
+_DELIMITERS = ",;\t|"
+_DELIMITER_NAMES = {",": "comma", ";": "semicolon", "\t": "tab", "|": "pipe"}
+
+
+def sniff_delimiter(sample: str, default: str = ",") -> str:
+    """The delimiter that splits the sample's lines most consistently."""
+
+    try:
+        return csv.Sniffer().sniff(sample, delimiters=_DELIMITERS).delimiter
+    except csv.Error:
+        pass
+    # The sniffer gives up on quoted multi-line samples; fall back to the
+    # candidate that appears the same (non-zero) number of times per line.
+    lines = [line for line in sample.splitlines()[:50] if line.strip()]
+    best, best_score = default, 0
+    for candidate in _DELIMITERS:
+        counts = [line.count(candidate) for line in lines]
+        if not counts or min(counts) == 0:
+            continue
+        score = sum(1 for count in counts if count == counts[0])
+        if score > best_score:
+            best, best_score = candidate, score
+    return best
 
 
 def parse_csv_file(file_path: str | Path) -> dict:
+    """CSV/TSV with the encoding and delimiter detected, not assumed.
+
+    A .tsv file is tab-separated unless its content clearly isn't."""
+
     path = Path(file_path)
-    raw = path.read_text(encoding="utf-8-sig", errors="replace")
-    reader = csv.reader(StringIO(raw))
+    text, encoding = decode_text_bytes(path.read_bytes())
+    default = "\t" if path.suffix.lower() == ".tsv" else ","
+    delimiter = sniff_delimiter(text[:64_000], default=default)
+    reader = csv.reader(StringIO(text), delimiter=delimiter)
     rows = [list(row) for row in reader]
     paragraphs = [" | ".join(cell.strip() for cell in row) for row in rows]
     tables = [rows] if rows else []
@@ -35,6 +98,8 @@ def parse_csv_file(file_path: str | Path) -> dict:
         "paragraphs": paragraphs,
         "tables": tables,
         "text": "\n".join(paragraphs),
+        "encoding": encoding,
+        "delimiter": _DELIMITER_NAMES.get(delimiter, delimiter),
     }
 
 

@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     max_pdf_pages: int = 1000
     allow_encrypted_pdf: bool = False
 
+    # ZIP archives and email attachments (app/services/containers.py).
+    # Each file inside is also held to max_upload_mb.
+    container_max_entries: int = 2000
+    container_max_files: int = 200
+    container_max_total_mb: int = 500
+    container_max_ratio: int = 100
+
     # Backs up uploaded files to Supabase Storage so they survive Render's
     # free-tier ephemeral disk being wiped on every redeploy/idle restart.
     # Local disk is still used as a working cache; when unset, storage

@@ -35,15 +35,21 @@ export const ACCEPTED_EXTENSIONS = [
   ".docx",
   ".doc",
   ".xlsx",
+  ".xlsm",
   ".xls",
+  ".ods",
   ".pptx",
   ".ppt",
   ".txt",
   ".csv",
+  ".tsv",
+  ".json",
   ".rtf",
   ".html",
   ".htm",
   ".xml",
+  ".eml",
+  ".zip",
   ".png",
   ".jpg",
   ".jpeg",
@@ -62,6 +68,13 @@ export const ACCEPTED_FILE_TYPES: Record<string, string[]> = {
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
     [".xlsx"],
   "application/vnd.ms-excel": [".xls"],
+  "application/vnd.ms-excel.sheet.macroEnabled.12": [".xlsm"],
+  "application/vnd.oasis.opendocument.spreadsheet": [".ods"],
+  "text/tab-separated-values": [".tsv"],
+  "application/json": [".json"],
+  "message/rfc822": [".eml"],
+  "application/zip": [".zip"],
+  "application/x-zip-compressed": [".zip"],
   "application/vnd.openxmlformats-officedocument.presentationml.presentation":
     [".pptx"],
   "application/vnd.ms-powerpoint": [".ppt"],
@@ -162,6 +175,14 @@ export default function DocumentUploader({
             files: result.embedded_files,
           });
           setStage("file_selected");
+          return;
+        }
+
+        if (result.status === "container_expanded") {
+          // An archive is not one document; its files were imported as
+          // documents of their own (shown in the batch queue).
+          setStage("failed");
+          setError(`${result.message} Open them from Documents, or upload archives on the batch page.`);
           return;
         }
 

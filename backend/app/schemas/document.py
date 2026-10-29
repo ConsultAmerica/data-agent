@@ -20,6 +20,22 @@ class EmbeddedFileSummary(BaseModel):
     page_count: int | None = None
 
 
+class ContainerMemberSummary(BaseModel):
+    """One file found in an uploaded ZIP or attached to an uploaded email."""
+
+    filename: str
+    # Where it was inside the container (archive path or attachment name).
+    path: str
+    status: Literal["created", "duplicate", "skipped", "failed"]
+    # The new document ("created"), or the existing one ("duplicate").
+    document_id: UUID | None = None
+    # The email this file was attached to, when it was.
+    parent_document_id: UUID | None = None
+    processing_job_id: int | None = None
+    size_bytes: int | None = None
+    message: str | None = None
+
+
 class UploadedDocumentResponse(BaseModel):
     document_id: UUID
     original_filename: str
@@ -34,6 +50,9 @@ class UploadedDocumentResponse(BaseModel):
     duplicate: bool = False
     existing_document: ExistingDocumentSummary | None = None
     embedded_files: list[EmbeddedFileSummary] | None = None
+    # ZIP upload (status "container_expanded"): every file found in it.
+    # Email upload: its attachments. Null for any other upload.
+    container_members: list[ContainerMemberSummary] | None = None
     pipeline_log: list[str] = Field(default_factory=list)
     approved_by: str | None = None
     approved_at: datetime | None = None

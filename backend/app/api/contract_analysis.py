@@ -49,6 +49,7 @@ from app.schemas.structured_tables import StructuredTablesResponse
 from app.services.ai_provider import AIProviderError
 from app.services.ai_enrichment import start_session
 from app.services.ai_provider_factory import create_ai_provider
+from app.services.containers import EMAIL_ATTACHMENT_RELATIONSHIP
 from app.services.contract_classifier import classify_contract
 from app.services.contract_field_schema import FieldSpec
 from app.services.contract_clause_extractor import (
@@ -296,7 +297,12 @@ async def analyze_contract(
         pages=pages,
     )
 
-    if match is not None:
+    # A file attached to an email stays linked to that email (a known
+    # fact), not to a guessed parent contract.
+    if (
+        match is not None
+        and document.parent_relationship_type != EMAIL_ATTACHMENT_RELATIONSHIP
+    ):
         document.parent_document_id = match.parent_document_id
         document.parent_relationship_type = match.relationship_type
         document.parent_relationship_confidence = match.confidence

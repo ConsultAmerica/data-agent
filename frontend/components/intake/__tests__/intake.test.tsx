@@ -7,7 +7,7 @@ import { BatchQueue, type BatchQueueDeps, type QueueItem } from "@/components/in
 import ProcessingQueue from "@/components/intake/processing-queue";
 import UcfFieldReview from "@/components/intake/ucf-field-review";
 import type { IntakeConfig, IntakeFields } from "@/lib/intake";
-import type { ExtractTargetsResult, UploadedDocument } from "@/types/document";
+import type { ContainerMemberSummary, ExtractTargetsResult, UploadedDocument } from "@/types/document";
 
 const { envMock, setStatusMock } = vi.hoisted(() => ({
   envMock: vi.fn(() => "Local" as string | null),
@@ -163,6 +163,82 @@ describe("BatchQueue", () => {
     expect(d.process).not.toHaveBeenCalled();
     await settle(queue, (items) => items[0].status === "extracted");
     expect(d.extract).toHaveBeenCalledWith("existing-1", ["t1"], expect.any(Function));
+  });
+
+  it("replaces a ZIP with a row per file the server unpacked", async () => {
+    const member = (
+      filename: string,
+      status: ContainerMemberSummary["status"],
+      extra: Partial<ContainerMemberSummary> = {},
+    ): ContainerMemberSummary => ({
+      filename,
+      path: `batch/${filename}`,
+      status,
+      document_id: null,
+      parent_document_id: null,
+      processing_job_id: null,
+      size_bytes: 5,
+      message: null,
+      ...extra,
+    });
+    const d = deps({
+      upload: vi.fn().mockResolvedValue(
+        uploaded("zip-staged", {
+          original_filename: "batch.zip",
+          status: "container_expanded",
+          container_members: [
+            member("rates.csv", "created", { document_id: "doc-rates", processing_job_id: 7 }),
+            member("old.pdf", "duplicate", { document_id: "existing-1" }),
+            member("tool.exe", "skipped", { message: "Unsupported file type (.exe)." }),
+          ],
+        }),
+      ),
+    });
+    const queue = new BatchQueue(() => fields, d);
+    queue.addFiles([new File(["zip"], "batch.zip")]);
+    await settle(
+      queue,
+      (items) => items.length === 3 && items.filter((item) => item.status === "extracted").length === 2,
+    );
+
+    const [rates, old, tool] = queue.getSnapshot();
+    expect(rates).toMatchObject({ name: "rates.csv", documentId: "doc-rates", note: "From batch.zip" });
+    expect(d.process).toHaveBeenCalledWith("doc-rates", 7, expect.any(Function));
+    // The duplicate reuses the existing document without reprocessing it.
+    expect(d.process).not.toHaveBeenCalledWith("existing-1", expect.anything(), expect.anything());
+    expect(old.note).toContain("already uploaded");
+    expect(tool).toMatchObject({ status: "failed", error: "Skipped: Unsupported file type (.exe).", file: null });
+    // No row is left for the archive itself.
+    expect(queue.getSnapshot().some((item) => item.name === "batch.zip")).toBe(false);
+  });
+
+  it("adds an email's attachments after the email", async () => {
+    const d = deps({
+      upload: vi.fn().mockResolvedValue(
+        uploaded("doc-mail", {
+          original_filename: "award.eml",
+          container_members: [
+            {
+              filename: "award.pdf",
+              path: "award.pdf",
+              status: "created",
+              document_id: "doc-award",
+              parent_document_id: "doc-mail",
+              processing_job_id: 9,
+              size_bytes: 10,
+              message: null,
+            },
+          ],
+        }),
+      ),
+    });
+    const queue = new BatchQueue(() => fields, d);
+    queue.addFiles([new File(["mail"], "award.eml")]);
+    await settle(queue, (items) => items.length === 2 && items.every((item) => item.status === "extracted"));
+    const [mail, attachment] = queue.getSnapshot();
+    expect(mail.documentId).toBe("doc-mail");
+    expect(attachment).toMatchObject({ documentId: "doc-award", note: "Attached to award.eml" });
+    expect(d.process).toHaveBeenCalledWith("doc-award", 9, expect.any(Function));
   });
 
   it("reports a failed upload per file and can retry it", async () => {

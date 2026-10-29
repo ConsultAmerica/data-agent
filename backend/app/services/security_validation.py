@@ -98,6 +98,37 @@ UPLOAD_TYPES: dict[str, UploadTypeSpec] = {
             }
         ),
     ),
+    # Macro-enabled workbook: read like XLSX; the VBA project is never
+    # loaded or run (openpyxl keep_vba=False).
+    ".xlsm": _ooxml(
+        kind="xlsx",
+        extension=".xlsm",
+        content_type="application/vnd.ms-excel.sheet.macroEnabled.12",
+        member="xl/workbook.xml",
+        extra_types=frozenset(
+            {
+                # Supplied types are compared lowercased.
+                "application/vnd.ms-excel.sheet.macroenabled.12",
+                "application/vnd.ms-excel",
+                "application/vnd.openxmlformats-officedocument"
+                ".spreadsheetml.sheet",
+            }
+        ),
+    ),
+    ".ods": UploadTypeSpec(
+        kind="ods",
+        extension=".ods",
+        content_type="application/vnd.oasis.opendocument.spreadsheet",
+        allowed_content_types=frozenset(
+            {
+                "application/vnd.oasis.opendocument.spreadsheet",
+                "application/zip",
+                "application/octet-stream",
+            }
+        ),
+        signature=b"PK\x03\x04",
+        ooxml_member="content.xml",
+    ),
     ".pptx": _ooxml(
         kind="pptx",
         extension=".pptx",
@@ -165,6 +196,65 @@ UPLOAD_TYPES: dict[str, UploadTypeSpec] = {
             }
         ),
         signature=None,
+    ),
+    ".tsv": UploadTypeSpec(
+        kind="csv",
+        extension=".tsv",
+        content_type="text/tab-separated-values",
+        allowed_content_types=frozenset(
+            {
+                "text/tab-separated-values",
+                "text/tsv",
+                "text/csv",
+                "text/plain",
+                "application/octet-stream",
+            }
+        ),
+        signature=None,
+    ),
+    ".json": UploadTypeSpec(
+        kind="json",
+        extension=".json",
+        content_type="application/json",
+        allowed_content_types=frozenset(
+            {
+                "application/json",
+                "text/json",
+                "text/plain",
+                "application/octet-stream",
+            }
+        ),
+        signature=None,
+    ),
+    ".eml": UploadTypeSpec(
+        kind="email",
+        extension=".eml",
+        content_type="message/rfc822",
+        allowed_content_types=frozenset(
+            {
+                "message/rfc822",
+                "text/plain",
+                "application/octet-stream",
+            }
+        ),
+        signature=None,
+    ),
+    # A container: never stored as a document; its files are unpacked
+    # (with limits, app/services/containers.py) into documents of their own.
+    ".zip": UploadTypeSpec(
+        kind="archive",
+        extension=".zip",
+        content_type="application/zip",
+        allowed_content_types=frozenset(
+            {
+                "application/zip",
+                "application/x-zip-compressed",
+                "application/x-zip",
+                "multipart/x-zip",
+                "application/octet-stream",
+            }
+        ),
+        signature=b"PK\x03\x04",
     ),
     ".html": UploadTypeSpec(
         kind="html",
@@ -295,14 +385,20 @@ UPLOAD_TYPES: dict[str, UploadTypeSpec] = {
 }
 
 SUPPORTED_TYPE_LABEL = (
-    "PDF, DOCX, DOC, XLSX, XLS, PPTX, PPT, TXT, CSV, RTF, HTML, XML, "
-    "PNG, JPG, TIFF, BMP, WEBP"
+    "PDF, DOCX, DOC, XLSX, XLSM, XLS, ODS, PPTX, PPT, TXT, CSV, TSV, JSON, "
+    "RTF, HTML, XML, EML, ZIP, PNG, JPG, TIFF, BMP, WEBP"
 )
 
 # Kinds whose text/tables are ingested at upload into DocumentPage rows.
 NATIVE_PAGE_KINDS = frozenset(
-    {"docx", "xlsx", "pptx", "text", "csv", "html", "xml", "rtf"}
+    {
+        "docx", "xlsx", "ods", "pptx", "text", "csv", "json", "html", "xml",
+        "rtf", "email",
+    }
 )
+
+# Kinds that hold other files rather than content of their own.
+CONTAINER_KINDS = frozenset({"archive"})
 
 RASTER_EXTENSIONS = frozenset(
     {
@@ -438,6 +534,22 @@ def validate_docx_structure(file_path: Path) -> None:
 
 def validate_xlsx_structure(file_path: Path) -> None:
     validate_ooxml_structure(file_path, "xl/workbook.xml", "XLSX")
+
+
+def validate_ods_structure(file_path: Path) -> None:
+    """An ODF spreadsheet: content.xml plus an uncompressed 'mimetype'
+    member naming the spreadsheet type (a renamed .odt is refused)."""
+
+    validate_ooxml_structure(file_path, "content.xml", "ODS")
+    with zipfile.ZipFile(file_path) as archive:
+        try:
+            mimetype = archive.read("mimetype")[:100].strip()
+        except KeyError:
+            mimetype = b""
+    if mimetype != b"application/vnd.oasis.opendocument.spreadsheet":
+        raise SecurityValidationError(
+            "The file is a zip archive but not a valid ODS spreadsheet."
+        )
 
 
 def validate_pptx_structure(file_path: Path) -> None:

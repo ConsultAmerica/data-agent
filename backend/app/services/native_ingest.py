@@ -11,6 +11,11 @@ from sqlalchemy.orm import Session
 
 from app.models.document_page import DocumentPage
 from app.models.page_text_block import PageTextBlock
+from app.parsers.data_file_parsers import (
+    parse_email_file,
+    parse_json_file,
+    parse_ods_sheets,
+)
 from app.parsers.docx_parser import parse_docx
 from app.parsers.office_text_parsers import (
     parse_csv_file,
@@ -58,8 +63,12 @@ def ingest_native_document(
         _stamp_document_ocr(database, doc_id, ocr_used=ocr_used, page_count=1)
         return 1
 
-    if kind == "xlsx":
-        sheets = parse_xlsx_sheets(file_path)
+    if kind in {"xlsx", "ods"}:
+        sheets = (
+            parse_ods_sheets(file_path)
+            if kind == "ods"
+            else parse_xlsx_sheets(file_path)
+        )
         if not sheets:
             sheets = [
                 {
@@ -125,6 +134,10 @@ def ingest_native_document(
         parsed = parse_rtf_file(file_path)
     elif kind == "text":
         parsed = parse_plain_text(file_path)
+    elif kind == "json":
+        parsed = parse_json_file(file_path)
+    elif kind == "email":
+        parsed = parse_email_file(file_path)
     else:
         raise ValueError(f"No native ingest for kind={kind}")
 
@@ -138,7 +151,26 @@ def ingest_native_document(
         final_text=parsed["text"],
     )
     _stamp_document_ocr(database, doc_id, ocr_used=False, page_count=1)
+    _stamp_text_dialect(database, doc_id, parsed)
     return 1
+
+
+def _stamp_text_dialect(database: Session, document_id: str, parsed: dict) -> None:
+    """Record the detected encoding/delimiter, so a misread file shows why."""
+
+    detected = {
+        key: parsed[key] for key in ("encoding", "delimiter") if parsed.get(key)
+    }
+    if not detected:
+        return
+    from app.models.document import Document
+
+    document = database.get(Document, document_id)
+    if document is not None:
+        document.ingestion_provenance = {
+            **(document.ingestion_provenance or {}),
+            **detected,
+        }
 
 
 def _stamp_document_ocr(
