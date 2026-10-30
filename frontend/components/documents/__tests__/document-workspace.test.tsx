@@ -174,9 +174,9 @@ describe("DocumentWorkspace with a profile-declared presentation", () => {
     const menu = screen.getByTestId("export-menu");
     const types = within(menu).getByRole("tablist", { name: "Export type" });
     expect(within(types).getByRole("tab", { name: "Default" }).getAttribute("aria-selected")).toBe("true");
-    expect(within(menu).getByText(/Staging — Export All/i)).toBeTruthy();
+    expect(within(menu).getByText(/Advanced Grid data — Export All/i)).toBeTruthy();
     fireEvent.click(within(types).getByRole("tab", { name: "Custom" }));
-    expect(within(menu).queryByText(/Staging — Export All/i)).toBeNull();
+    expect(within(menu).queryByText(/Advanced Grid data — Export All/i)).toBeNull();
     fireEvent.click(within(menu).getByRole("menuitem", { name: /Open custom export/ }));
     expect(screen.getByRole("dialog", { name: "Custom export" })).toBeTruthy();
   });
@@ -217,7 +217,7 @@ describe("DocumentWorkspace with a profile-declared presentation", () => {
     await screen.findAllByRole("tab");
     fireEvent.click(screen.getByTestId("export-menu-trigger"));
     const menu = screen.getByTestId("export-menu");
-    expect(within(menu).getByText(/Staging — Export All/i)).toBeTruthy();
+    expect(within(menu).getByText(/Advanced Grid data — Export All/i)).toBeTruthy();
     expect(within(menu).getByText(/No staging cells selected/i)).toBeTruthy();
     expect(within(menu).getByText(/Metadata export/i)).toBeTruthy();
     for (const label of ["Excel", "CSV", "JSON"]) {

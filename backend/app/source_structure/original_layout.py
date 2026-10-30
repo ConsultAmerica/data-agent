@@ -510,7 +510,9 @@ def _field_quality(payload: dict[str, Any], candidate: FieldCandidate | None) ->
         return CONFLICTING
     if candidate is None:
         return MISSING_EXTRACTION if not extracted.strip() else EXTRACTED
-    if MISSED_VALUE in codes:
+    # Missing only when nothing was read: an empty duplicate candidate beside
+    # one that read the value still needs review, but the value isn't missing.
+    if MISSED_VALUE in codes and not extracted.strip():
         return MISSING_EXTRACTION
     if not (printed or "").strip() and not extracted.strip():
         return BLANK

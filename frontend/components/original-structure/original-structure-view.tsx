@@ -69,7 +69,6 @@ export const FIELD_COLUMNS = [
   "Section / Field Name",
   "Extracted Value",
   "Field Details / Sub-Attributes",
-  "Data Quality",
   "Evidence",
   "Review Status",
   "Type",
@@ -539,7 +538,6 @@ function FieldGrid({ fields, section, selectedId, onSelect, density = "comfortab
                 )}
               </td>
               <td className="px-2 py-1.5 font-medium text-foreground" data-testid="sub-attribute">{place.detail}</td>
-              <td className="px-2 py-1.5"><QualityChip quality={field.quality} label={field.quality_label} confidence={field.ocr_confidence} /></td>
               <td className="max-w-[240px] px-2 py-1.5 text-text-secondary"><span className="line-clamp-2 break-words">{field.evidence || "—"}</span></td>
               <td className="px-2 py-1.5">
                 <StatusBadge status={field.review_status} />
