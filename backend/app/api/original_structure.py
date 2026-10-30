@@ -21,7 +21,7 @@ from app.core.auth import ActorContext, get_current_actor, require_permission
 from app.database.dependencies import get_database
 from app.models.document import Document
 from app.services.document_storage import DocumentStorageError
-from app.source_structure.original_export import build_original_structure_xlsx
+from app.source_structure.original_export import build_original_structure_xlsx, original_rows
 from app.source_structure.original_layout import original_layout_for
 from app.source_structure.structure_review import StructureAction, review_records
 
@@ -64,7 +64,7 @@ async def export_original_structure(
     except DocumentStorageError as exc:
         raise HTTPException(status_code=409, detail=f"The source file isn't available: {exc}") from exc
     name = document.original_filename or "document"
-    content = await run_in_threadpool(build_original_structure_xlsx, layout, name)
+    content = await run_in_threadpool(build_original_structure_xlsx, layout)
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -145,9 +145,8 @@ def export_original_structure_selection(
     database: Session = Depends(get_database),
     actor: ActorContext = Depends(require_permission("export.read")),
 ) -> Response:
-    """Only the selected records, in the original layout: Excel as the
-    Original Structure export, CSV with the All Extracted Fields columns
-    (table rows as Row n with their cells), or JSON."""
+    """Only the selected records, in the original layout: Excel or CSV with
+    the Original Structure export's rows, or JSON."""
 
     import csv
     import io
@@ -164,7 +163,7 @@ def export_original_structure_selection(
     name = PurePath(document.original_filename or "document").stem
     if payload.format == "xlsx":
         return Response(
-            content=build_original_structure_xlsx(chosen, document.original_filename or "document"),
+            content=build_original_structure_xlsx(chosen),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": attachment_header(f"{name} - selected records.xlsx")},
         )
@@ -173,35 +172,11 @@ def export_original_structure_selection(
             content=json.dumps(chosen, indent=2, default=str), media_type="application/json",
             headers={"Content-Disposition": attachment_header(f"{name} - selected records.json")},
         )
-    from app.api.document_workspace import ALL_FIELDS_COLUMNS
-    from app.source_structure.original_export import FOUND_BY_LABEL, field_placement
-
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(ALL_FIELDS_COLUMNS)
-
-    def safe(value: Any) -> Any:
-        return ("'" + value) if isinstance(value, str) and value[:1] in ("=", "+", "@") else value
-
-    for section in chosen["sections"] + [{"title": None, "items": chosen["unplaced"]}]:
-        for item in section["items"]:
-            if item["kind"] == "field":
-                category, label = field_placement(item.get("group"), item["label"])
-                writer.writerow([safe(v) for v in [
-                    category or section["title"] or "", label,
-                    item.get("effective_value") or item.get("extracted_value") or "",
-                    item.get("value_type") or "text",
-                    FOUND_BY_LABEL.get(item.get("found_by") or "", item.get("found_by") or ""),
-                    item.get("page") or "", item.get("evidence") or "", item.get("review_status") or "",
-                ]])
-                continue
-            for row in item["rows"]:
-                cells = row.get("reviewed_cells") or row["cells"]
-                value = " | ".join(f"{h}: {c}" for h, c in zip(item["headers"], cells))
-                writer.writerow([safe(v) for v in [
-                    item.get("title") or section["title"] or "Table", f"Row {row['record_key'].rsplit(':', 1)[-1]}",
-                    value, "table row", "Table", row.get("page") or "", "", row.get("review_status") or "",
-                ]])
+    for row in original_rows(chosen):
+        # Spreadsheet-safe: text starting like a formula is never executed.
+        writer.writerow([("'" + v) if isinstance(v, str) and v[:1] in ("=", "+", "@") else v for v in row])
     return Response(
         content=excel_csv(buffer.getvalue()), media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": attachment_header(f"{name} - selected records.csv")},

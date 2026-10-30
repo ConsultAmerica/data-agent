@@ -217,18 +217,19 @@ def test_original_structure_export_keeps_the_printed_layout_and_values(brief_id:
     values = [[c.value for c in row] for row in rows]
     # Every value is text exactly as printed: no dates or numbers made by Excel.
     assert {c.data_type for row in rows for c in row if c.value is not None} == {"s"}
-    # The item number has its own column; the item name is written once and
-    # merged down its rows.
+    # One sheet, the document's own columns, nothing added or styled.
+    assert len(sheet.parent.sheetnames) == 1
+    assert values[0][:4] == ["Item #", "Section", "Fields Extracted", "Value / Details"]
+    assert not sheet.merged_cells.ranges
+    assert {c.fill.fill_type for row in rows for c in row} == {None}
+    assert not any(c.font.bold for row in rows for c in row)
+    # The item number and name are written on the item's first row only.
     first = next(i for i, r in enumerate(values) if r[2] == "Contract Number")
-    assert values[first][:2] == ["2.", "Contract Information"] and values[first][7] == "Form line"
+    assert values[first][:2] == ["2.", "Contract Information"]
     assert values[first + 1][2] == "Contract Name" and values[first + 1][:2] == [None, None]
-    merged = {str(r) for r in sheet.merged_cells.ranges}
-    assert f"B{first + 1}:B{first + 6}" in merged
-    headings = [r[0] for r in values if r[0] and str(r[0]).startswith(("A. ", "C. "))]
-    assert any(h.startswith("C. Summary of Contract Modifications") for h in headings)
+    # A printed table sits in place under its printed headers, no extra columns.
     header_row = next(i for i, r in enumerate(values) if r[0] == MOD_HEADERS[0])
-    assert values[header_row][: len(MOD_HEADERS)] == MOD_HEADERS
-    assert values[header_row][len(MOD_HEADERS):len(MOD_HEADERS) + 2] == ["Source Page", "Review Status"]
+    assert [v for v in values[header_row] if v is not None] == MOD_HEADERS
 
 
 def test_export_placement_puts_numbered_items_under_category() -> None:
@@ -338,7 +339,7 @@ def test_selected_records_export_in_every_format(brief_id: str) -> None:
     csv_text = client.post(
         f"/api/documents/{brief_id}/original-structure/export-selected", json={"records": [field["record_key"]], "format": "csv"},
     ).content.decode("utf-8-sig").splitlines()
-    assert csv_text[0] == "Category,Field,Value,Type,Found By,Source Page,Evidence,Review Status" and len(csv_text) == 2
+    assert csv_text[0] == "Item #,Section,Fields Extracted,Value / Details" and len(csv_text) == 2
 
 
 def test_a_missing_row_is_added_marked_and_still_needs_approval(brief_id: str) -> None:

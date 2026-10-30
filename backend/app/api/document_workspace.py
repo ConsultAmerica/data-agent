@@ -6,7 +6,8 @@ joined to extraction and review — so the UI tabs and every export agree:
 - Validation: everything that needs attention, grouped by kind.
 - Dates: dates by meaning and the expiration status.
 - Find: targeted extraction of one named value.
-- All Extracted Fields (CSV) and Structured JSON exports.
+- All Extracted Fields (CSV, the Original Structure export's rows) and
+  Structured JSON exports.
 
 Workspace isolation is enforced by the router dependency
 (enforce_document_access, mounted in app/main.py).
@@ -39,15 +40,11 @@ from app.skills.definitions import SKILLS
 from app.skills.find import find_in_document
 from app.skills.registry import get_skill, record_skill_versions
 from app.skills.validation import validation_summary
-from app.source_structure.original_export import FOUND_BY_LABEL
+from app.source_structure.original_export import original_rows
 from app.source_structure.original_layout import original_layout_for
 
 router = APIRouter()
 skills_router = APIRouter()
-
-# The All Extracted Fields CSV, in this exact column order.
-ALL_FIELDS_COLUMNS = ["Category", "Field", "Value", "Type", "Found By", "Source Page", "Evidence", "Review Status"]
-
 
 def _document(database: Session, document_id: str) -> Document:
     document = database.get(Document, document_id)
@@ -150,35 +147,6 @@ def find_value(
     )
 
 
-def all_fields_rows(business: dict[str, Any], layout: dict[str, Any]) -> list[list[Any]]:
-    """Every field value in document order, under its business category
-    (or, unclaimed, its source section), with the printed label."""
-
-    category_of: dict[str, str] = {}
-    for section in business["sections"]:
-        for field in section["fields"]:
-            for candidate in field["candidates"]:
-                category_of[candidate["record_key"]] = section["label"]
-        for value in section.get("values", []):
-            category_of[value["record_key"]] = section["label"]
-    rows = []
-    items = [(s["title"], i) for s in layout["sections"] for i in s["items"] if i["kind"] == "field"]
-    items += [(None, i) for i in layout.get("unplaced") or []]
-    for source, item in items:
-        value = item.get("effective_value") or item.get("extracted_value") or item.get("document_value") or ""
-        rows.append([
-            category_of.get(item["record_key"]) or source or "Other Extracted Data",
-            item["label"],
-            value,
-            item.get("value_type") or "text",
-            FOUND_BY_LABEL.get(item.get("found_by") or "", item.get("found_by") or ""),
-            item.get("page") or "",
-            item.get("evidence") or "",
-            item.get("review_status") or "",
-        ])
-    return rows
-
-
 @router.get("/{document_id}/all-fields.csv")
 def export_all_fields_csv(
     document_id: str,
@@ -189,8 +157,7 @@ def export_all_fields_csv(
     context = workspace_context(database, document)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(ALL_FIELDS_COLUMNS)
-    for row in all_fields_rows(context["business"], context["layout"]):
+    for row in original_rows(context["layout"]):
         # Spreadsheet-safe: text starting like a formula is never executed.
         writer.writerow([("'" + v) if isinstance(v, str) and v[:1] in ("=", "+", "@") else v for v in row])
     name = PurePath(document.original_filename or "document").stem
