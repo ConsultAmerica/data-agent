@@ -26,24 +26,24 @@ export default function IntakeProgressTracker({
   return (
     <div
       className={[
-        "flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between",
+        "flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between",
         embedded
-          ? "rounded-xl border border-primary/10 bg-surface/80 px-4 py-3 shadow-sm"
-          : "border-b border-border bg-surface px-4 py-4 sm:px-6",
+          ? "rounded-lg border border-border bg-surface-soft/60 px-3 py-2.5 sm:px-4"
+          : "border-b border-border bg-surface px-4 py-3 sm:px-6",
       ].join(" ")}
       data-testid="intake-progress-tracker"
     >
       <nav aria-label="Batch progress" className="min-w-0">
-        <ol className="flex flex-wrap items-center gap-x-2 gap-y-2">
+        <ol className="grid grid-cols-2 gap-x-3 gap-y-2 sm:flex sm:flex-wrap sm:items-center sm:gap-x-2">
           {INTAKE_STEPS.map((step, index) => {
             const done = index < activeIndex || (index === activeIndex && complete);
             const active = index === activeIndex && !complete;
             return (
-              <li key={step.id} className="flex items-center gap-2" title={step.detail}>
+              <li key={step.id} className="flex min-w-0 items-center gap-2" title={step.detail}>
                 {index > 0 && (
                   <span
                     aria-hidden="true"
-                    className={`hidden h-px w-6 sm:block ${index <= activeIndex ? "bg-primary/50" : "bg-border"}`}
+                    className={`hidden h-px w-6 sm:block ${index <= activeIndex ? "bg-primary/50" : "bg-border"} lg:w-8`}
                   />
                 )}
                 <span
@@ -53,15 +53,15 @@ export default function IntakeProgressTracker({
                     done
                       ? "bg-primary text-white"
                       : active
-                        ? "border-2 border-primary bg-primary-soft text-primary"
-                        : "border border-border bg-surface-soft text-text-muted",
+                        ? "bg-primary text-white ring-4 ring-primary/15"
+                        : "border border-border bg-surface text-text-muted",
                   ].join(" ")}
                 >
                   {done ? <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> : index + 1}
                 </span>
                 <span
                   aria-current={active ? "step" : undefined}
-                  className={`text-xs font-medium sm:text-sm ${
+                  className={`truncate text-xs font-medium sm:text-[13px] ${
                     active ? "text-foreground" : done ? "text-text-secondary" : "text-text-muted"
                   }`}
                 >

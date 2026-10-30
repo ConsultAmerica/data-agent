@@ -221,18 +221,30 @@ export default function ProcessingQueue({
 
   if (items.length === 0) {
     return (
-      <section className="editorial-card p-5 sm:p-6" aria-labelledby="queue-title">
-        <h2 id="queue-title" className="text-lg font-medium tracking-tight text-foreground">
+      <section className="data-panel p-4 sm:p-5" aria-labelledby="queue-title">
+        <h2 id="queue-title" className="text-[15px] font-semibold tracking-tight text-foreground">
           Processing queue
         </h2>
-        <div className="mt-6 flex flex-col items-center rounded-2xl border border-dashed border-border px-6 py-12 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-surface-soft text-text-muted">
-            <FileText className="h-6 w-6" aria-hidden="true" />
+        <p className="mt-0.5 text-[13px] text-text-secondary">Live status for every file in this batch.</p>
+        <div className="mt-4 flex flex-col items-center rounded-xl border border-dashed border-border px-6 py-10 text-center">
+          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-surface-soft text-text-muted ring-1 ring-inset ring-border">
+            <FileText className="h-5 w-5" aria-hidden="true" />
           </div>
-          <p className="mt-3 text-sm font-medium text-foreground">No files yet</p>
+          <p className="mt-3 text-sm font-semibold text-foreground">No files yet</p>
           <p className="mt-1 max-w-xs text-xs leading-5 text-text-muted">
             Files you add appear here and move through upload, OCR, layout and extraction.
           </p>
+          {/* What each file will go through, so the empty panel still explains the pipeline. */}
+          <ol className="mt-5 flex flex-wrap items-center justify-center gap-1" aria-label="Stages each file goes through">
+            {FILE_STAGES.map((stage, index) => (
+              <li key={stage.id}>
+                <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-text-secondary">
+                  <span className="tabular-nums text-text-muted">{index + 1}</span>
+                  {stage.label}
+                </span>
+              </li>
+            ))}
+          </ol>
         </div>
       </section>
     );
@@ -392,9 +404,9 @@ export default function ProcessingQueue({
   const groups = groupByCategory(items);
 
   return (
-    <section className="editorial-card p-5 sm:p-6" aria-labelledby="queue-title">
+    <section className="data-panel p-4 sm:p-5" aria-labelledby="queue-title">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 id="queue-title" className="text-lg font-medium tracking-tight text-foreground">
+        <h2 id="queue-title" className="text-[15px] font-semibold tracking-tight text-foreground">
           Processing queue
         </h2>
         <p className="text-xs text-text-muted">

@@ -3909,7 +3909,66 @@ h3 {
   box-shadow: inset 2px 0 0 var(--field-tone);
 }
 
-/* Cloud-console product band (components/layout/ConsoleHeader.tsx). */
+/* Product band (components/layout/ConsoleHeader.tsx): a flat surface, so
+   the page's data — not the header — carries the color. */
 .console-header {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--primary-soft) 55%, #ffffff) 0%, var(--primary-soft) 100%);
+  background: var(--surface);
+}
+
+/* Toolbar controls: one 36px height for search boxes, selects and buttons
+   that sit in the same row. In the components layer, so utilities
+   (pl-9, h-7, w-44…) on a control still win. */
+@layer components {
+.control {
+  height: 2.25rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background-color: var(--surface);
+  padding: 0 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--foreground);
+  outline: none;
+  box-shadow: 0 1px 1px rgb(15 23 42 / 0.03);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+.control::placeholder {
+  color: var(--text-muted);
+}
+.control:hover {
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+}
+.control:focus {
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 14%, transparent);
+}
+select.control {
+  appearance: none;
+  padding-right: 2rem;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.55rem center;
+  background-size: 14px;
+}
+/* A select set away from its "All …" default reads as an applied filter. */
+select.control[data-active="true"] {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+  background-color: var(--primary-soft);
+  font-weight: 500;
+}
+}
+/* Outside the layer: the unlayered dark-theme input rule would otherwise
+   repaint an applied filter's tint. */
+:root[data-theme="dark"] select.control[data-active="true"] {
+  background-color: var(--primary-soft);
+}
+
+/* One bordered panel for a toolbar and the table or list under it. */
+.data-panel {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
 }

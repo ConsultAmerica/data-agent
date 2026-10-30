@@ -1219,7 +1219,7 @@ function NewExtractionPageContent() {
             type="button"
             onClick={() => void handleRunFullExtraction()}
             disabled={runFullExtractionDisabled}
-            className={`${runFullExtractionDisabled && !fullExtractionRunning ? "btn-secondary" : "btn-primary"} text-sm disabled:cursor-not-allowed disabled:opacity-60`}
+            className={`${runFullExtractionDisabled && !fullExtractionRunning ? "btn-secondary" : "btn-primary"} h-9 px-3.5 text-[13px] disabled:cursor-not-allowed disabled:opacity-60`}
             title={
               document
                 ? "Extract every field discovered in this document"
@@ -1298,7 +1298,7 @@ function NewExtractionPageContent() {
         <div className="extraction-workspace">
           <div className="extraction-bar-inner">
             {!document ? (
-              <div className="grid gap-6 xl:grid-cols-2">
+              <div className="grid items-start gap-4 lg:gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
                 <section className="space-y-4">
                   <BatchIntakePortal
                     config={intakeConfig}

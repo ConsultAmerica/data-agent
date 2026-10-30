@@ -258,7 +258,7 @@ export default function FieldReviewList({
   const cell = compact ? "px-3 py-1.5" : "px-3 py-2.5";
 
   return (
-    <div className="editorial-card mb-6 overflow-clip">
+    <div className="data-panel mb-6 overflow-clip">
       {/* Sticks under the breadcrumb bar while the list scrolls with the page. */}
       <div style={{ top: stickyTop }} className="sticky z-10 border-b border-border bg-surface px-5 py-3">
         <div className="flex flex-wrap items-center justify-between gap-3">

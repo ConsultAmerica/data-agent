@@ -13,7 +13,9 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  FilePlus2,
   FileText,
+  FilterX,
   FolderOpen,
   Loader2,
   LayoutGrid,
@@ -29,6 +31,7 @@ import DocumentPreviewDrawer from "@/components/documents/document-preview-drawe
 import ConsoleHeader from "@/components/layout/ConsoleHeader";
 import { ErrorState } from "@/components/layout/StatusState";
 import DensityToggle from "@/components/ui/density-toggle";
+import SharedEmptyState from "@/components/ui/empty-state";
 import { HIGH_BAND_MIN } from "@/lib/confidence-policy";
 import {
   acceptReviewQueueFields,
@@ -460,7 +463,7 @@ export default function DocumentsHome() {
         title="Documents"
         description="Every uploaded document with its detected type, extraction status and review state."
         actions={
-          <Link href="/extraction/new" className="btn-primary h-9 px-4 text-sm">
+          <Link href="/extraction/new" className="btn-primary h-9 px-3.5 text-[13px] shadow-sm">
             <Plus className="h-4 w-4" aria-hidden="true" />
             Upload document
           </Link>
@@ -478,14 +481,38 @@ export default function DocumentsHome() {
         }))}
       />
 
-      <div className="px-4 py-5 sm:px-6">
+      <div className="px-4 py-4 sm:px-6 sm:py-5">
+      {notice && (
+        <div
+          className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2 text-[13px] text-text-secondary shadow-sm"
+          role="status"
+        >
+          {notice}
+          <button
+            type="button"
+            onClick={() => setNotice("")}
+            aria-label="Dismiss"
+            className="rounded-md p-1 text-text-muted hover:bg-surface-soft hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {error && (
+        <div className="mb-3">
+          <ErrorState error={error} onRetry={() => setReloadKey((key) => key + 1)} />
+        </div>
+      )}
+
+      <div className="data-panel overflow-hidden">
       <div
-        className="flex flex-wrap items-end gap-2 rounded-xl border border-border bg-surface p-3 shadow-sm"
+        className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2.5"
         role="search"
         aria-label="Document filters"
         data-testid="documents-toolbar"
       >
-        <label className="relative min-w-[18rem] flex-[2]">
+        <label className="relative min-w-0 basis-full sm:min-w-[14rem] sm:flex-1 sm:basis-auto">
           <span className="sr-only">Search documents</span>
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
           <input
@@ -494,7 +521,7 @@ export default function DocumentsHome() {
             onChange={(event) => setQuery(event.target.value)}
             placeholder={DOCUMENT_SEARCH_PLACEHOLDER}
             title="Matches file names, contract numbers and titles, supplier / customer names, and extracted page text"
-            className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm outline-none focus:border-primary/40"
+            className="control w-full pl-9"
           />
         </label>
 
@@ -536,6 +563,8 @@ export default function DocumentsHome() {
 
         <FilterSelect
           label="Sort"
+          defaultValue="uploaded_at:desc"
+          widthClass="sm:w-[10.5rem]"
           value={`${sortBy}:${sortDir}`}
           onChange={(value) => {
             const [by, dir] = value.split(":") as [DocumentSortBy, DocumentSortDir];
@@ -550,18 +579,24 @@ export default function DocumentsHome() {
         />
 
         {filtersActive && (
-          <button type="button" onClick={clearFilters} className="btn-secondary px-3 py-2 text-xs">
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-[13px] font-medium text-text-secondary hover:bg-surface-soft hover:text-foreground"
+          >
+            <FilterX className="h-3.5 w-3.5" aria-hidden="true" />
             Clear Filters
           </button>
         )}
 
-        <div className="ml-auto flex items-center gap-2 self-end">
+        <div className="ml-auto flex items-center gap-2">
           {view === "table" && <DensityToggle value={density} onChange={setDensity} />}
           <ViewToggle value={view} onChange={setView} />
         </div>
       </div>
 
       {categories.length > 0 && (
+        <div className="border-b border-border px-3 py-2">
         <CategoryTabs
           categories={categories}
           value={category}
@@ -570,31 +605,23 @@ export default function DocumentsHome() {
             setOffset(0);
           }}
         />
-      )}
-
-      {notice && (
-        <div
-          className="mt-4 flex items-center justify-between rounded-lg border border-border bg-surface-soft px-3 py-2 text-sm text-text-secondary"
-          role="status"
-        >
-          {notice}
-          <button type="button" onClick={() => setNotice("")} aria-label="Dismiss" className="text-text-muted hover:text-foreground">
-            <X className="h-4 w-4" />
-          </button>
         </div>
       )}
 
       {selected.size > 0 && (
         <div
-          className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+          className="flex flex-wrap items-center gap-2 border-b border-primary/15 bg-primary-soft/60 px-3 py-2 text-sm"
           role="region"
           aria-label="Selection"
         >
-          <span className="font-medium text-foreground">{selected.size} selected</span>
+          <span className="inline-flex h-6 items-center rounded-md bg-primary px-2 text-xs font-semibold tabular-nums text-white">
+            {selected.size} selected
+          </span>
+          <span className="mx-1 hidden h-4 w-px bg-primary/20 sm:block" aria-hidden="true" />
           <button
             type="button"
             onClick={selectVisible}
-            className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-surface-soft"
+            className="h-7 rounded-md border border-border bg-surface px-2.5 text-xs font-medium text-foreground hover:bg-surface-soft"
           >
             Select visible
           </button>
@@ -603,7 +630,7 @@ export default function DocumentsHome() {
             disabled={!reviewEnabled || acceptingLowRisk}
             onClick={() => void acceptLowRiskSelected()}
             title={reviewEnabled ? `Accept every unflagged pending value scoring ${Math.round(HIGH_BAND_MIN * 100)}% or higher in the selected documents` : REVIEW_READ_ONLY_MESSAGE}
-            className="rounded-md border border-success/40 bg-success/10 px-2.5 py-1 text-xs font-semibold text-success hover:border-success disabled:opacity-50"
+            className="h-7 rounded-md border border-success/40 bg-surface px-2.5 text-xs font-semibold text-success hover:border-success hover:bg-success/5 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {acceptingLowRisk ? "Accepting…" : "Accept low-risk values"}
           </button>
@@ -611,31 +638,25 @@ export default function DocumentsHome() {
             type="button"
             disabled={reprocessing}
             onClick={() => void reprocessSelected()}
-            className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-surface-soft disabled:opacity-50"
+            className="h-7 rounded-md border border-border bg-surface px-2.5 text-xs font-medium text-foreground hover:bg-surface-soft disabled:opacity-50"
           >
             {reprocessing ? "Reprocessing…" : "Reprocess selected"}
           </button>
           <button
             type="button"
             onClick={() => setConfirm(selectedList)}
-            className="rounded-md border border-danger/40 px-2.5 py-1 text-xs font-medium text-danger hover:bg-danger/5"
+            className="h-7 rounded-md border border-danger/40 bg-surface px-2.5 text-xs font-medium text-danger hover:bg-danger/5"
           >
             Delete selected
           </button>
-          <button type="button" onClick={() => setSelected(new Map())} className="text-xs text-text-secondary hover:text-foreground">
+          <button type="button" onClick={() => setSelected(new Map())} className="ml-auto text-xs font-medium text-text-secondary hover:text-foreground">
             Clear selection
           </button>
         </div>
       )}
 
-      {error && (
-        <div className="mt-6">
-          <ErrorState error={error} onRetry={() => setReloadKey((key) => key + 1)} />
-        </div>
-      )}
-
       {/* Its own scroller, capped to the screen, so the header stays visible while rows scroll. */}
-      <div className="relative mt-4 max-h-[calc(100vh-14rem)] min-h-[12rem] overflow-auto rounded-xl border border-border bg-surface">
+      <div className="relative max-h-[calc(100vh-15rem)] min-h-[12rem] overflow-auto">
         {loading ? (
           <TableSkeleton />
         ) : documents.length === 0 ? (
@@ -672,7 +693,7 @@ export default function DocumentsHome() {
             data-density={density}
           >
             <thead className="sticky top-0 z-10 bg-surface-soft">
-              <tr className="border-b border-border text-left text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+              <tr className="border-b border-border text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-text-muted">
                 <th className="w-10 px-3 py-2.5">
                   <input
                     type="checkbox"
@@ -817,16 +838,16 @@ export default function DocumentsHome() {
       </div>
 
       {total > 0 && (
-        <div className="mt-4 flex items-center justify-between text-sm text-text-secondary">
-          <p>
+        <div className="flex items-center justify-between gap-3 border-t border-border px-3 py-2 text-[13px] text-text-secondary">
+          <p className="tabular-nums">
             {from}–{to} of {total.toLocaleString()}
           </p>
-          <div className="flex gap-2">
+          <div className="flex gap-1.5">
             <button
               type="button"
               disabled={offset === 0}
               onClick={() => setOffset((value) => Math.max(0, value - PAGE_SIZE))}
-              className="btn-secondary px-3 py-1.5 text-xs disabled:opacity-40"
+              className="inline-flex h-8 items-center gap-1 rounded-lg border border-border bg-surface px-2.5 text-xs font-medium text-foreground hover:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
               Previous
@@ -835,7 +856,7 @@ export default function DocumentsHome() {
               type="button"
               disabled={offset + PAGE_SIZE >= total}
               onClick={() => setOffset((value) => value + PAGE_SIZE)}
-              className="btn-secondary px-3 py-1.5 text-xs disabled:opacity-40"
+              className="inline-flex h-8 items-center gap-1 rounded-lg border border-border bg-surface px-2.5 text-xs font-medium text-foreground hover:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-40"
             >
               Next
               <ChevronRight className="h-3.5 w-3.5" />
@@ -843,6 +864,7 @@ export default function DocumentsHome() {
           </div>
         </div>
       )}
+      </div>
 
       {confirm && <DeleteDialog documents={confirm} onCancel={() => setConfirm(null)} onConfirm={confirmDelete} />}
 
@@ -996,25 +1018,33 @@ function DocumentCard({
   );
 }
 
+/** A toolbar select. Its options name themselves ("All types"), so the
+ * label is for screen readers; a non-default value is tinted as applied. */
 function FilterSelect({
   label,
   value,
+  defaultValue = "",
+  widthClass = "sm:w-[9.25rem]",
   onChange,
   options,
 }: {
   label: string;
   value: string;
+  defaultValue?: string;
+  widthClass?: string;
   onChange: (value: string) => void;
   options: { id: string; label: string }[];
 }) {
   return (
-    <label className="flex min-w-[9rem] flex-col gap-1 text-[11px] font-medium text-text-muted">
-      {label}
+    <label className="min-w-0 basis-[calc(50%-0.25rem)] sm:basis-auto">
+      <span className="sr-only">{label}</span>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
         aria-label={label}
-        className="rounded-lg border border-border bg-background px-2.5 py-2 text-sm text-foreground outline-none focus:border-primary/40"
+        title={label}
+        data-active={value !== defaultValue}
+        className={`control w-full ${widthClass}`}
       >
         {options.map((option) => (
           <option key={option.id || "all"} value={option.id}>
@@ -1072,26 +1102,30 @@ function TableSkeleton() {
 
 function EmptyState({ hasFilters, onClear }: { hasFilters: boolean; onClear: () => void }) {
   return (
-    <div className="px-6 py-14 text-center" data-testid="documents-empty">
-      <FileText className="mx-auto h-8 w-8 text-text-muted" aria-hidden="true" />
-      <p className="mt-3 text-sm font-medium text-foreground">
-        {hasFilters ? "No documents match these filters" : "No documents yet"}
-      </p>
-      <p className="mt-1 text-sm text-text-secondary">
-        {hasFilters
-          ? "Clear filters or try a different search."
-          : "Upload a document to begin extraction and review."}
-      </p>
-      <div className="mt-4 flex justify-center gap-2">
-        {hasFilters && (
-          <button type="button" onClick={onClear} className="btn-secondary px-3 py-1.5 text-xs">
-            Clear Filters
-          </button>
-        )}
-        <Link href="/extraction/new" className="btn-hero-primary !w-auto px-4 py-1.5 text-xs">
-          Upload Document
-        </Link>
-      </div>
+    <div data-testid="documents-empty">
+      <SharedEmptyState
+        icon={hasFilters ? Search : FilePlus2}
+        title={hasFilters ? "No documents match these filters" : "No documents yet"}
+        description={
+          hasFilters
+            ? "Clear the filters or try a different search."
+            : "Upload invoices, contracts, IDs or any other document. Dataomatix detects the type, extracts its fields and queues them for review."
+        }
+        className="py-16"
+        action={
+          <>
+            {hasFilters && (
+              <button type="button" onClick={onClear} className="btn-secondary h-9 px-3.5 text-[13px]">
+                Clear Filters
+              </button>
+            )}
+            <Link href="/extraction/new" className="btn-primary h-9 px-3.5 text-[13px]">
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Upload Document
+            </Link>
+          </>
+        }
+      />
     </div>
   );
 }
@@ -1130,9 +1164,14 @@ function RowMenu({
       document.removeEventListener("keydown", onKey);
     };
   }, [onClose]);
-  const item = "block w-full px-3 py-1.5 text-left text-sm hover:bg-surface-soft disabled:text-text-muted";
+  const item =
+    "block w-full rounded-md px-2.5 py-1.5 text-left text-[13px] hover:bg-surface-soft disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent";
   return (
-    <div ref={ref} role="menu" className="absolute right-3 top-9 z-30 w-44 rounded-lg border border-border bg-surface py-1 shadow-md">
+    <div
+      ref={ref}
+      role="menu"
+      className="animate-fade-in absolute right-3 top-9 z-30 w-44 rounded-lg border border-border bg-surface p-1 shadow-[var(--shadow-elevated)]"
+    >
       <button type="button" role="menuitem" className={item} onClick={onOpen}>
         Open
       </button>
@@ -1145,7 +1184,7 @@ function RowMenu({
       <button type="button" role="menuitem" className={item} onClick={onReprocess} disabled={processing}>
         Reprocess
       </button>
-      <div className="my-1 border-t border-border" />
+      <div className="-mx-1 my-1 border-t border-border" />
       <button type="button" role="menuitem" className={`${item} text-danger`} onClick={onDelete}>
         Delete
       </button>
@@ -1282,7 +1321,7 @@ function CategoryTabs({
   const total = categories.reduce((sum, item) => sum + item.count, 0);
   const options = [{ category: "", label: "All types", count: total }, ...categories];
   return (
-    <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Document categories" data-testid="category-tabs">
+    <div className="flex flex-wrap gap-1" role="group" aria-label="Document categories" data-testid="category-tabs">
       {options.map((item) => {
         const active = value === item.category;
         return (
@@ -1292,8 +1331,10 @@ function CategoryTabs({
             aria-pressed={active}
             onClick={() => onChange(item.category)}
             className={[
-              "h-8 rounded-full px-3 text-xs font-medium",
-              active ? "bg-primary text-white" : "border border-border bg-surface text-text-secondary hover:bg-surface-soft",
+              "h-7 rounded-md px-2.5 text-xs font-medium transition-colors",
+              active
+                ? "bg-primary text-white shadow-sm"
+                : "text-text-secondary hover:bg-surface-soft hover:text-foreground",
             ].join(" ")}
           >
             {item.label} <span className="tabular-nums opacity-70">{item.count.toLocaleString()}</span>

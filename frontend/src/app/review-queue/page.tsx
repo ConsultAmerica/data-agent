@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { CheckCheck, FileStack, Flag, Inbox, ListChecks, RefreshCw, ShieldAlert } from "lucide-react";
+import { CheckCheck, FileStack, Flag, ListChecks, RefreshCw, SearchX, ShieldAlert } from "lucide-react";
 
 import ContentSection from "@/components/layout/ContentSection";
 import ConsoleHeader from "@/components/layout/ConsoleHeader";
+import EmptyState from "@/components/ui/empty-state";
 import FieldReviewList from "@/components/review-queue/field-review-list";
 import QueueFilterBar from "@/components/review-queue/queue-filter-bar";
 import {
@@ -284,7 +285,7 @@ export default function ReviewQueuePage() {
             type="button"
             onClick={() => void load()}
             disabled={loading}
-            className="btn-secondary h-9 px-3 text-sm disabled:opacity-50"
+            className="btn-secondary h-9 px-3 text-[13px] disabled:opacity-50"
           >
             <RefreshCw
               className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
@@ -304,25 +305,32 @@ export default function ReviewQueuePage() {
 
       <ContentSection>
         <ReviewReadOnlyNotice className="mb-3" />
-        <dl className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="review-summary">
+        {/* One strip, four cells: the summary reads as a single line of facts. */}
+        <dl
+          className="data-panel mb-4 grid grid-cols-2 gap-px overflow-hidden !bg-border lg:grid-cols-4"
+          data-testid="review-summary"
+        >
           {(
             [
-              ["Flagged values", attentionItems.length, Flag, "bg-warning/10 text-warning"],
-              ["Documents", attentionDocuments, FileStack, "bg-primary-soft text-primary"],
-              ["Critical", (issueCounts.validation ?? 0) + (issueCounts.conflicts ?? 0), ShieldAlert, "bg-danger/10 text-danger"],
-              ["Ready to accept", readyCount, CheckCheck, "bg-success/10 text-success"],
+              ["Flagged values", attentionItems.length, Flag, "text-warning", "Need a reviewer's decision"],
+              ["Documents", attentionDocuments, FileStack, "text-primary", "With at least one flag"],
+              ["Critical", (issueCounts.validation ?? 0) + (issueCounts.conflicts ?? 0), ShieldAlert, "text-danger", "Validation failures and conflicts"],
+              ["Ready to accept", readyCount, CheckCheck, "text-success", "Waiting with nothing flagged"],
             ] as const
-          ).map(([label, value, Icon, tone]) => (
-            <div key={label} className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-surface px-4 py-3.5 shadow-sm">
-              <div>
-                <dt className="text-xs text-text-muted">{label}</dt>
-                <dd className="mt-0.5 text-2xl font-semibold tabular-nums tracking-tight text-foreground">
-                  {loading && entries.length === 0 ? <span className="text-text-muted">—</span> : value.toLocaleString()}
-                </dd>
-              </div>
-              <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${tone}`}>
-                <Icon className="h-5 w-5" aria-hidden="true" />
-              </span>
+          ).map(([label, value, Icon, tone, hint]) => (
+            <div key={label} className="min-w-0 bg-surface px-4 py-3">
+              <dt className="flex items-center gap-1.5 text-xs font-medium text-text-secondary">
+                <Icon className={`h-3.5 w-3.5 shrink-0 ${tone}`} aria-hidden="true" />
+                {label}
+              </dt>
+              <dd className="mt-1 text-2xl font-semibold leading-8 tabular-nums tracking-tight text-foreground">
+                {loading && entries.length === 0 ? (
+                  <span className="inline-block h-6 w-10 animate-pulse rounded bg-surface-soft align-middle" />
+                ) : (
+                  value.toLocaleString()
+                )}
+              </dd>
+              <p className="truncate text-[11px] text-text-muted">{hint}</p>
             </div>
           ))}
         </dl>
@@ -334,7 +342,7 @@ export default function ReviewQueuePage() {
         </p>
         {lowRiskItems.length > 0 && (
           <div
-            className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-[var(--success)]/30 bg-[var(--success)]/[0.06] px-4 py-3 text-sm"
+            className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--success)]/25 bg-[var(--success)]/[0.05] px-3.5 py-2.5 text-[13px]"
             data-testid="low-risk-batch"
           >
             <CheckCheck className="h-4 w-4 shrink-0 text-[var(--success)]" aria-hidden="true" />
@@ -354,7 +362,7 @@ export default function ReviewQueuePage() {
                   type="button"
                   onClick={() => void acceptLowRisk()}
                   disabled={!reviewEnabled || acceptingLowRisk}
-                  className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50"
+                  className="btn-primary h-8 px-3 text-xs disabled:opacity-50"
                 >
                   {acceptingLowRisk ? "Accepting…" : `Confirm: accept ${lowRiskItems.length}`}
                 </button>
@@ -373,7 +381,7 @@ export default function ReviewQueuePage() {
                 onClick={() => setConfirmLowRisk(true)}
                 disabled={!reviewEnabled}
                 title={reviewEnabled ? undefined : REVIEW_READ_ONLY_MESSAGE}
-                className="btn-secondary px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                className="btn-secondary h-8 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Accept low-risk values
               </button>
@@ -401,7 +409,7 @@ export default function ReviewQueuePage() {
         />
 
       {error && (
-        <div className="mb-6 rounded-xl border border-danger/20 bg-danger/5 p-3 text-sm text-danger">
+        <div className="mb-4 rounded-lg border border-danger/20 bg-danger/5 px-3.5 py-2.5 text-[13px] text-danger" role="alert">
           {error}
         </div>
       )}
@@ -409,8 +417,8 @@ export default function ReviewQueuePage() {
       {!loading && flaggedItems.length > 0 && (
         <>
           {tableItems.length !== flaggedItems.length && (
-            <p className="mb-2 text-xs text-text-secondary">
-              {tableItems.length} of {flaggedItems.length} flagged values match these filters.
+            <p className="mb-2 text-xs tabular-nums text-text-secondary">
+              <span className="font-medium text-foreground">{tableItems.length}</span> of {flaggedItems.length} flagged values match these filters.
             </p>
           )}
           <FieldReviewList
@@ -426,25 +434,32 @@ export default function ReviewQueuePage() {
       )}
 
       {loading && entries.length === 0 && (
-        <div className="space-y-3">
-          {[0, 1, 2].map((index) => (
-            <div
-              key={index}
-              className="h-16 animate-pulse rounded-2xl border border-border bg-surface-soft"
-            />
+        <div className="data-panel divide-y divide-border overflow-hidden" aria-busy="true" aria-label="Loading the review queue">
+          {[0, 1, 2, 3, 4].map((index) => (
+            <div key={index} className="flex h-14 items-center gap-4 px-4">
+              <div className="h-4 w-4 animate-pulse rounded bg-surface-soft" />
+              <div className="h-3 w-40 animate-pulse rounded bg-surface-soft" />
+              <div className="h-3 flex-1 animate-pulse rounded bg-surface-soft" />
+              <div className="hidden h-3 w-24 animate-pulse rounded bg-surface-soft sm:block" />
+            </div>
           ))}
         </div>
       )}
 
       {!loading && entries.length === 0 && !error && (
-        <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border py-16 text-center">
-          <Inbox className="h-8 w-8 text-text-muted" />
-          <p className="text-sm font-medium text-foreground">
-            The review queue is empty.
-          </p>
-          <p className="text-xs text-text-secondary">
-            Every uploaded document has been fully reviewed.
-          </p>
+        <div className="data-panel">
+          <EmptyState
+            icon={CheckCheck}
+            tone="success"
+            title="The review queue is empty."
+            description="Every uploaded document has been fully reviewed. New flags appear here as soon as an extraction finishes."
+            className="py-16"
+            action={
+              <Link href="/extraction/new" className="btn-secondary h-9 px-3.5 text-[13px]">
+                Upload documents
+              </Link>
+            }
+          />
         </div>
       )}
 
@@ -452,15 +467,15 @@ export default function ReviewQueuePage() {
         entries.length > 0 &&
         filteredEntries.length === 0 &&
         !error && (
-          <p className="rounded-2xl border border-dashed border-border py-10 text-center text-sm text-text-secondary">
-            No documents match your filters.
-          </p>
+          <div className="data-panel">
+            <EmptyState icon={SearchX} title="No documents match your filters." description="Clear a filter or try a different search." />
+          </div>
         )}
 
       <div className="space-y-6">
         {entries.length > 0 && filteredEntries.length > 0 && (
-            <div className="editorial-card overflow-hidden">
-              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-6 py-4">
+            <div className="data-panel overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
                 <div>
                   <p className="text-sm font-semibold text-foreground">
                     Documents
@@ -477,7 +492,8 @@ export default function ReviewQueuePage() {
                     value={documentType}
                     onChange={(event) => setDocumentType(event.target.value)}
                     aria-label="Document type"
-                    className="rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-foreground outline-none focus:border-primary/30"
+                    data-active={documentType !== ""}
+                    className="control"
                   >
                     <option value="">All types</option>
                     {documentTypesInQueue.map((option) => (
@@ -493,7 +509,7 @@ export default function ReviewQueuePage() {
                 {filteredEntries.map((entry) => (
                   <div
                     key={entry.document_id}
-                    className="flex flex-wrap items-center justify-between gap-3 px-6 py-3"
+                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-[var(--color-row-hover)]"
                   >
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-foreground">
@@ -521,7 +537,7 @@ export default function ReviewQueuePage() {
                         type="button"
                         onClick={() => handleAcceptAll(entry)}
                         disabled={!reviewEnabled || acceptingId === entry.document_id}
-                        className="btn-secondary py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                        className="btn-secondary h-8 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <CheckCheck className="h-3.5 w-3.5" />
                         {acceptingId === entry.document_id
@@ -531,7 +547,7 @@ export default function ReviewQueuePage() {
 
                       <Link
                         href={`/documents/${entry.document_id}?view=qa`}
-                        className="text-xs font-semibold text-text-teal hover:text-primary"
+                        className="inline-flex h-8 items-center rounded-lg bg-primary px-3 text-xs font-semibold text-white hover:bg-primary-deep"
                       >
                         Review
                       </Link>
