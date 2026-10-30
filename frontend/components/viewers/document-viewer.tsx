@@ -43,11 +43,14 @@ export default function DocumentViewer({
   documentName,
   pageCount,
   request,
+  onPageClick,
 }: {
   documentId: string;
   documentName: string;
   pageCount: number;
   request: SourceViewRequest | null;
+  /** A click on a page image, in PDF points (reverse selection). */
+  onPageClick?: (page: number, x: number, y: number) => void;
 }) {
   const [view, setView] = useState<SourceView | null>(null);
   const [failed, setFailed] = useState(false);
@@ -80,7 +83,7 @@ export default function DocumentViewer({
   if (!view && !failed) return <Loading label="Opening the document…" />;
 
   const pageViewer = (
-    <SourceVerificationPanel documentId={documentId} documentName={documentName} pageCount={pageCount} request={request ?? { pageNumber: 1 }} />
+    <SourceVerificationPanel documentId={documentId} documentName={documentName} pageCount={pageCount} request={request ?? { pageNumber: 1 }} onPageClick={onPageClick} />
   );
 
   if (!view || failed || kind === "pdf" || kind === "image" || kind === "text") {

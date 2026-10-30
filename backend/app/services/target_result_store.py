@@ -228,6 +228,11 @@ def persist_target_extraction_results(
             prior_status = existing.review_status
             human_locked = prior_status in {"edited", "accepted", "rejected"}
             reviewed_value = existing.value
+            # What the machine read last time (a correction never equals it).
+            prior_evidence = existing.evidence_json if isinstance(existing.evidence_json, dict) else {}
+            prior_machine_value = prior_evidence.get("machine_value")
+            if prior_machine_value in (None, ""):
+                prior_machine_value = existing.original_value
 
             # Always refresh intelligence metadata + latest machine value.
             existing.label = label[:255]
@@ -256,7 +261,9 @@ def persist_target_extraction_results(
                 # Preserve reviewed/authoritative value; keep machine_value.
                 evidence["reviewed_value"] = reviewed_value
                 evidence["prior_review_status"] = prior_status
-                if _stringify_value(reviewed_value) != value:
+                # Reopen only when the extraction itself changed since the
+                # review; an unchanged reading keeps the human decision.
+                if _stringify_value(prior_machine_value) != value:
                     reasons = list(decision["reasons"])
                     if REASON_EXTRACTION_DIFFERS not in reasons:
                         reasons.append(REASON_EXTRACTION_DIFFERS)

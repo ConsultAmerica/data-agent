@@ -54,6 +54,7 @@ StructuralRelation = Literal[
     "left_right_whitespace",  # "Roll No.   516522" — no separator, shape-gated
     "same_line_filler",  # "Group ____ HUMANITIES" — underline/leader fill
     "form_fill_in",  # printed wording + value written into its blank
+    "ruled_form_row",  # captions on the left, the value on a drawn underline at the right
     "table_key_value_grid",  # ruled grid of caption | value cells
     "label_above_value",  # "Label:" with the value directly below
     "form_widget",  # PDF AcroForm field
@@ -107,6 +108,9 @@ class FieldCandidate(BaseModel):
     reasons: list[str] = Field(default_factory=list)
     validation_hints: list[str] = Field(default_factory=list)
     group_id: str | None = None  # KEY_VALUE_GROUP membership
+    # The caption a form row sits under ("2. Contract Information" for
+    # "Contract Number"); None when the row has no parent caption.
+    section_label: str | None = None
     # Non-blocking trust signals for accepted candidates (text_shapes.
     # candidate_quality); profiles may require a minimum score.
     quality_score: float = 1.0

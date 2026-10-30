@@ -131,6 +131,57 @@ class PageTableExtractor:
 # the page loop (pdfplumber is pure Python, so threads wouldn't help).
 PARALLEL_MIN_PAGES = 24
 MAX_TABLE_WORKERS = 6
+# Measured on a 288-page contract: each worker adds ~70 MB; the main
+# process and web server need the rest. Six workers peaked at 532 MB —
+# over a 512 MB instance on their own.
+WORKER_MEMORY_MB = 80
+RESERVED_MEMORY_MB = 400
+
+
+def _read_text(path: str) -> str | None:
+    try:
+        with open(path, encoding="ascii") as handle:
+            return handle.read().strip()
+    except OSError:
+        return None
+
+
+def container_memory_limit_mb() -> int | None:
+    """The cgroup memory limit (v2, then v1); None when unlimited/unknown."""
+
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        value = _read_text(path)
+        if value and value.isdigit() and int(value) < 1 << 60:
+            return int(value) // (1024 * 1024)
+    return None
+
+
+def available_cpus() -> int:
+    """CPUs this process may actually use: the cgroup quota when set, else
+    its affinity mask, else os.cpu_count() (which reports the host's)."""
+
+    quota = _read_text("/sys/fs/cgroup/cpu.max")
+    if quota and not quota.startswith("max"):
+        limit, period = (int(part) for part in quota.split()[:2])
+        if period > 0:
+            return max(1, -(-limit // period))
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:  # not on Linux
+        return os.cpu_count() or 1
+
+
+def prefetch_worker_count() -> int:
+    from app.core.config import get_settings
+
+    configured = get_settings().table_prefetch_workers
+    if configured is not None:
+        return max(0, min(configured, MAX_TABLE_WORKERS))
+    workers = min(MAX_TABLE_WORKERS, available_cpus() - 1)
+    memory = container_memory_limit_mb()
+    if memory is not None:
+        workers = min(workers, (memory - RESERVED_MEMORY_MB) // WORKER_MEMORY_MB)
+    return max(0, workers)
 
 
 def _tables_for_pages(pdf_path, page_numbers: list[int]) -> dict[int, list[dict]]:
@@ -163,8 +214,9 @@ class TablePrefetch:
         self._futures: dict = {}
         self._started = time.perf_counter()
         self._pages = len(page_numbers)
-        workers = min(MAX_TABLE_WORKERS, (os.cpu_count() or 1) - 1)
+        workers = prefetch_worker_count()
         if len(page_numbers) < PARALLEL_MIN_PAGES or workers < 2:
+            log_event("table_prefetch", stage="table_detection", status="skipped", pages=len(page_numbers), workers=workers)
             return
         try:
             self._pool = ProcessPoolExecutor(max_workers=workers)

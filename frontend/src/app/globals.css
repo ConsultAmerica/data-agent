@@ -83,6 +83,45 @@
   --font-outfit: var(--font-geist-sans);
 }
 
+/* Optional dark theme (header toggle; light stays the default). Only the
+   tokens change, so every token-styled view follows. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-main: #0b1220;
+  --bg-soft: #0f172a;
+  --surface: #111a2b;
+  --surface-soft: #172236;
+  --text-dark: #e5ecf5;
+  --text-secondary: #a8b6c8;
+  --text-muted: #8a99ad;
+  --border: #253349;
+  --primary: #3d70b0;
+  --primary-hover: #4c80c2;
+  --primary-soft: #1a2b45;
+  --accent-cyan: #6fa3e0;
+  --text-teal: #8db8ec;
+  --selection-tint: rgba(111, 163, 224, 0.16);
+  --selection-edge: rgba(111, 163, 224, 0.6);
+  --success: #5cc777;
+  --warning: #e0a84a;
+  --danger: #f07167;
+  --row-hover: #18243a;
+  --field-selected: #1a2b45;
+  --progress-track: #253349;
+  --menu-background: #0f172a;
+  --menu-tile: #111a2b;
+  --menu-tile-hover: #18243a;
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-elevated: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+:root[data-theme="dark"] .bg-white {
+  background-color: var(--surface);
+}
+:root[data-theme="dark"] :where(input, select, textarea) {
+  background-color: var(--surface);
+  color: var(--text-dark);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

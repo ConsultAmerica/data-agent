@@ -1,3 +1,5 @@
+import asyncio
+import time
 from datetime import datetime, timezone
 
 from app.core.config import get_settings
@@ -25,6 +27,7 @@ from app.services.entity_classifier import classify_target_type
 from app.services.generic_kv_scanner import is_internal_form_name
 from app.services.semantic_schema_enrichment import enrich_targets_semantically
 from app.services.structure_detection import (
+    ai_document_family,
     DETECTION_PAGE_LIMIT,
     KNOWN_TEMPLATE_KEYS,
     LITERAL_PHRASE_TEMPLATE_KEYS,
@@ -244,11 +247,18 @@ async def discover_document_schema(
     dedupe → scored schema.
     """
 
+    timings: dict[str, int] = {}
+    started = time.perf_counter()
+    # The AI's reading of the document family only names the type (targets
+    # are re-sorted below either way), so it runs beside enrichment rather
+    # than before it.
     detection = await detect_document_structures(
         document=document,
         pages=pages,
         ai_provider=ai_provider,
+        ai_family=False,
     )
+    timings["structure_detection_ms"] = int((time.perf_counter() - started) * 1000)
 
     primary_targets = _filter_evidence_backed(detection.detected_targets)
 
@@ -301,13 +311,39 @@ async def discover_document_schema(
 
     enrichment_warnings: list[str] = []
     settings = get_settings()
-    if settings.ai_schema_enrichment_enabled:
-        targets, enrichment_warnings = await enrich_targets_semantically(
-            targets=targets,
-            pages=pages,
-            ai_provider=ai_provider,
-        )
-        targets.sort(key=lambda item: (-item.confidence, item.key))
+    budget = settings.ai_schema_enrichment_budget_seconds
+    scan_pages = pages[:DETECTION_PAGE_LIMIT]
+
+    async def family() -> tuple[str, str, float] | None:
+        if detection.document_family not in {"unknown", "generic_business"} or not any(
+            (page.final_text or "").strip() for page in scan_pages
+        ):
+            return None
+        began = time.perf_counter()
+        try:
+            # Bounded like enrichment: a slow or rate-limited provider
+            # leaves the heuristic family in place.
+            return await asyncio.wait_for(ai_document_family(pages=scan_pages, ai_provider=ai_provider), timeout=budget)
+        except (TimeoutError, asyncio.TimeoutError):
+            return None
+        finally:
+            timings["ai_family_ms"] = int((time.perf_counter() - began) * 1000)
+
+    async def enrich() -> tuple[list, list[str]]:
+        if not settings.ai_schema_enrichment_enabled:
+            return targets, []
+        began = time.perf_counter()
+        try:
+            return await enrich_targets_semantically(targets=targets, pages=pages, ai_provider=ai_provider)
+        finally:
+            timings["ai_enrichment_ms"] = int((time.perf_counter() - began) * 1000)
+
+    ai_started = time.perf_counter()
+    refined, (targets, enrichment_warnings) = await asyncio.gather(family(), enrich())
+    timings["ai_wall_ms"] = int((time.perf_counter() - ai_started) * 1000)
+    targets.sort(key=lambda item: (-item.confidence, item.key))
+    if refined is not None:
+        detection.document_family, detection.document_family_label, detection.document_family_confidence = refined
 
     page_text_chars = sum(len(page.final_text or "") for page in pages)
     empty_warning = None
@@ -324,6 +360,7 @@ async def discover_document_schema(
             "page_text_chars": page_text_chars,
             "targets_discovered": len(targets),
             "empty_extraction_warning": empty_warning,
+            "discovery_timings_ms": timings,
         },
     )
 

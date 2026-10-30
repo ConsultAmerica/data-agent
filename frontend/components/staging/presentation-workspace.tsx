@@ -1,5 +1,7 @@
 "use client";
 
+import OriginalStructureView from "@/components/original-structure/original-structure-view";
+import { itemId, linkAnchors, linkByEvidence, useRecordSelection } from "@/lib/record-selection";
 import { FileSearch, MoreHorizontal, Search, WrapText } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -53,6 +55,8 @@ interface WorkspaceProps {
 }
 
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+/** The first tab: every field and table as the document prints them. */
+const ORIGINAL_STRUCTURE_TAB = "original_structure";
 
 /** Business display only: "2026-09-23" reads "Sep 23, 2026". The stored
  * and exported value stays ISO. */
@@ -77,7 +81,23 @@ export default function PresentationWorkspace({
   showTechnical: offerTechnical = true,
 }: WorkspaceProps) {
   const manifest = useMemo(() => composePresentation(workbook), [workbook]);
-  const [active, setActive] = useState(manifest.groups[0]?.id ?? "");
+  const tabKey = `dx-presentation-tab:${documentId}`;
+  const [active, setActiveState] = useState<string>(() => {
+    try {
+      return window.sessionStorage.getItem(tabKey) ?? ORIGINAL_STRUCTURE_TAB;
+    } catch {
+      return ORIGINAL_STRUCTURE_TAB;
+    }
+  });
+  const setActive = (id: string) => {
+    setActiveState(id);
+    try {
+      window.sessionStorage.setItem(tabKey, id);
+    } catch {
+      // Storage unavailable: the tab just isn't remembered.
+    }
+  };
+  const originalActive = active === ORIGINAL_STRUCTURE_TAB;
   const [target, setTarget] = useState<EvidenceTarget | null>(null);
   const [showTechnical, setShowTechnical] = useState(false);
   const technicalRef = useRef<HTMLDivElement>(null);
@@ -85,17 +105,53 @@ export default function PresentationWorkspace({
 
   // Values picked in label / value lists (Supplier, Charges & Totals …),
   // across tabs, by item id; exported together as Section | Field | Value.
-  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
-  const pick = (items: FieldItem[], on: boolean) =>
-    setPicked((previous) => {
+  // Inside a RecordSelectionProvider the picks are the shared selection
+  // (Source Verification sees them too); otherwise this view keeps its own.
+  const shared = useRecordSelection();
+  const [localPicked, setLocalPicked] = useState<ReadonlySet<string>>(new Set());
+  const picked = useMemo<ReadonlySet<string>>(() => {
+    if (!shared) return localPicked;
+    const ids = new Set<string>();
+    for (const id of shared.selected) if (id.startsWith("item:")) ids.add(id.slice("item:".length));
+    return ids;
+  }, [shared, localPicked]);
+  const pick = (items: FieldItem[], on: boolean) => {
+    const selectable = items.filter((item) => item.source);
+    if (shared) {
+      shared.toggle(selectable.map((item) => itemId(item.id)), on);
+      return;
+    }
+    setLocalPicked((previous) => {
       const next = new Set(previous);
-      for (const item of items) {
-        if (!item.source) continue;
+      for (const item of selectable) {
         if (on) next.add(item.id);
         else next.delete(item.id);
       }
       return next;
     });
+  };
+  const setPicked = (next: ReadonlySet<string>) => {
+    if (shared) shared.toggle([...picked].map(itemId), false);
+    else setLocalPicked(next);
+  };
+
+  // Link workbook values to the extracted fields they are (same page and
+  // value, uniquely) so selecting either selects both.
+  const linkScalars = shared?.scalars;
+  const linkLayout = shared?.anchors;
+  const linkTo = shared?.setLinks;
+  useEffect(() => {
+    if (!linkScalars || !linkTo) return;
+    const items = manifest.groups
+      .flatMap((group) => group.sections)
+      .filter((section) => section.pattern !== "grid")
+      .flatMap((section) => section.items)
+      .filter((item) => item.source)
+      .map((item) => ({ id: item.id, page: item.cell.provenance?.source_page ?? null, value: item.cell.value }));
+    linkTo("workbook", linkByEvidence(linkScalars, items));
+    // The original layout's records (Original Structure, Business Data).
+    linkTo("workbook-layout", linkAnchors(linkLayout ?? [], items));
+  }, [manifest, linkScalars, linkLayout, linkTo]);
   // Display order, each stored value once.
   const pickedItems = useMemo(() => {
     const seen = new Set<string>();
@@ -156,10 +212,10 @@ export default function PresentationWorkspace({
 
       <FieldToneLegend />
 
-      {manifest.groups.length > 0 && (
+      {(
         <div role="tablist" aria-label="Document sections" className="flex flex-wrap gap-1.5">
-          {manifest.groups.map((group) => {
-            const selected = current?.id === group.id;
+          {[{ id: ORIGINAL_STRUCTURE_TAB, label: "Original Structure" }, ...manifest.groups].map((group) => {
+            const selected = group.id === ORIGINAL_STRUCTURE_TAB ? originalActive : !originalActive && current?.id === group.id;
             return (
               <button
                 key={group.id}
@@ -202,7 +258,15 @@ export default function PresentationWorkspace({
         />
       )}
 
-      {current ? (
+      {originalActive ? (
+        <OriginalStructureView
+          documentId={documentId}
+          documentName={workbook.document_filename}
+          pageCount={Math.max(1, workbook.processing_metadata.page_count ?? 1)}
+          stagingProfileId={workbook.profile.profile_id}
+          onViewSource={onOpenSource}
+        />
+      ) : current ? (
         <GroupBody
           group={current}
           documentId={documentId}

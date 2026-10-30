@@ -20,6 +20,8 @@ import DocumentActionsMenu from "@/components/actions/document-actions-menu";
 import DocumentObligationsPanel from "@/components/obligations/document-obligations-panel";
 import ExpiryTag from "@/components/documents/expiry-tag";
 import ClassificationTag from "@/components/classification/classification-tag";
+import VerificationWorkspace, { type WorkspaceView } from "@/components/verification/verification-workspace";
+import { downloadWorkspaceExport } from "@/lib/verification";
 import SmartWorkspace from "@/components/smart-view/smart-workspace";
 import InvoiceRecognitionPanel from "@/components/documents/invoice-recognition-panel";
 import DocumentPlaybookPanel from "@/components/playbook/document-playbook-panel";
@@ -150,9 +152,13 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
   // Split view: the original document stays open on the left while the
   // structured data is read on the right; a value's source jumps it there.
   const [splitPref, setSplitPref] = useBrowserPreference<"on" | "off">("dx-workspace-split", ["on", "off"], "off");
-  // Smart View (default) organises the document by type; Advanced Grid is
-  // the full data workspace with every column.
-  const [viewMode, setViewMode] = useBrowserPreference<"smart" | "advanced">("dx-workspace-mode", ["smart", "advanced"], "smart");
+  // The verification tabs (Original Structure first, Summary last), and
+  // two more views on the same records: Smart View and Advanced Grid.
+  const [viewMode, setViewMode] = useBrowserPreference<WorkspaceView>(
+    "dx-workspace-mode",
+    ["original", "business", "advanced", "tables", "validation", "oracle", "history", "summary", "smart"],
+    "original",
+  );
   const split = splitPref === "on";
   const [historyOpen, setHistoryOpen] = useState(false);
   const selectionStore = useSelectionStore();
@@ -347,6 +353,14 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
     await runExport(
       () => downloadExport(capability, base),
       `${capability.label} download started.`,
+    );
+  }
+
+  async function exportDocumentStructure(kind: "original" | "all_fields" | "json") {
+    const labels = { original: "Original Structure Excel", all_fields: "All Extracted Fields CSV", json: "Structured JSON" };
+    await runExport(
+      () => downloadWorkspaceExport(documentId, kind, filename || workbook?.document_filename || "export"),
+      `${labels[kind]} download started.`,
     );
   }
 
@@ -632,6 +646,27 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
                   )}
                 </div>
                 <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
+                  Document structure
+                </p>
+                {(
+                  [
+                    ["original", "Original Structure (Excel)"],
+                    ["all_fields", "All Extracted Fields (CSV)"],
+                    ["json", "Structured JSON"],
+                  ] as const
+                ).map(([kind, label]) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-1.5 pl-5 text-left text-sm hover:bg-surface-soft"
+                    onClick={() => void exportDocumentStructure(kind)}
+                  >
+                    {label}
+                  </button>
+                ))}
+                <div className="my-1 border-t border-border" />
+                <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
                   Staging — Export All
                 </p>
                 {profile.export_capabilities.length === 0 && (
@@ -765,21 +800,6 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
         </div>
       )}
 
-      <div className="mt-4 flex flex-wrap items-center gap-2" data-testid="workspace-mode">
-        <div className="inline-flex rounded-lg border border-border bg-surface p-0.5" role="radiogroup" aria-label="Workspace view">
-          {([["smart", "Smart View"], ["advanced", "Advanced Grid"]] as const).map(([id, label]) => (
-            <button key={id} type="button" role="radio" aria-checked={viewMode === id} onClick={() => setViewMode(id)}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium ${viewMode === id ? "bg-primary text-white" : "text-text-secondary hover:text-foreground"}`}>
-              {label}
-            </button>
-          ))}
-        </div>
-        <span className="text-xs text-text-muted">
-          {viewMode === "smart"
-            ? "Organised for this document type, with only the relevant fields."
-            : "Every dataset and column, for analysts and Oracle consultants."}
-        </span>
-      </div>
 
       {/* The Export menu opens this in both views (Smart View and Advanced
           Grid), so it lives outside them. */}
@@ -797,6 +817,18 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
         />
       )}
 
+      <VerificationWorkspace
+        documentId={documentId}
+        documentName={filename || workbook.document_filename}
+        pageCount={Math.max(1, documentMeta?.page_count ?? 1)}
+        stagingProfileId={workbook.profile.profile_id}
+        view={viewMode}
+        onViewChange={setViewMode}
+        workbook={workbook}
+        gridSelection={selectionStore}
+        // A classification decision re-stages the document: show its new schema.
+        onClassificationChanged={() => setReloadKey((key) => key + 1)}
+      >
       {viewMode === "smart" ? (
         <SmartWorkspace
           documentId={documentId}
@@ -805,7 +837,7 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
           pageCount={Math.max(1, documentMeta?.page_count ?? 1)}
           document={documentMeta}
         />
-      ) : (
+      ) : viewMode === "advanced" ? (
       <div
         className={split ? "mt-4 grid gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]" : ""}
         data-split={split ? "on" : "off"}
@@ -987,8 +1019,10 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
         </div>
         </div>
       </div>
-      )}
+      ) : null}
+      </VerificationWorkspace>
 
+      {(viewMode === "smart" || viewMode === "advanced") && (
       <details
         className="mt-6 rounded-xl border border-border bg-surface"
         onToggle={(event) => setHistoryOpen((event.currentTarget as HTMLDetailsElement).open)}
@@ -1004,6 +1038,7 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
           </div>
         )}
       </details>
+      )}
 
       <ol className="mt-6 flex flex-wrap gap-6 border-t border-border pt-3 text-xs text-text-secondary">
         <Readiness label="Extracted" ok={outcome.record_count > 0} />

@@ -62,7 +62,8 @@ export default function SourceVerificationPanel({
   documentName,
   pageCount,
   request,
-}: SourceVerificationPanelProps) {
+  onPageClick,
+}: SourceVerificationPanelProps & { onPageClick?: (page: number, x: number, y: number) => void }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [highlight, setHighlight] = useState<HighlightTarget>(NO_HIGHLIGHT);
   const [pageRender, setPageRender] = useState<PageRender | null>(null);
@@ -345,6 +346,7 @@ export default function SourceVerificationPanel({
             zoom={zoom}
             rotation={rotation}
             hideHeader
+            onPageClick={onPageClick}
           />
         )}
       </div>

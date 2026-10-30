@@ -20,6 +20,9 @@ interface PdfPageViewerProps {
   focusKey?: string | number | null;
   /** Clicking the highlighted box (e.g. to bring its field back into view). */
   onHighlightClick?: () => void;
+  /** A click on the page, in PDF points (unrotated pages only): lets a view
+   * select the field printed there. */
+  onPageClick?: (page: number, x: number, y: number) => void;
 }
 
 function prefersReducedMotion() {
@@ -35,6 +38,7 @@ export default function PdfPageViewer({
   hideHeader = false,
   focusKey = null,
   onHighlightClick,
+  onPageClick,
 }: PdfPageViewerProps) {
   const highlightRef = useRef<HTMLDivElement>(null);
   const highlight = render?.highlight ?? null;
@@ -135,7 +139,20 @@ export default function PdfPageViewer({
             <img
               src={render.image_data_url}
               alt={`Page ${render.page_number}`}
-              className="block h-full w-full rounded-lg border border-border shadow-sm"
+              className={`block h-full w-full rounded-lg border border-border shadow-sm ${onPageClick && rotation === 0 ? "cursor-pointer" : ""}`}
+              onClick={
+                onPageClick && rotation === 0
+                  ? (event) => {
+                      const box = event.currentTarget.getBoundingClientRect();
+                      if (!box.width || !box.height) return;
+                      onPageClick(
+                        render.page_number,
+                        ((event.clientX - box.left) / box.width) * render.page_width,
+                        ((event.clientY - box.top) / box.height) * render.page_height,
+                      );
+                    }
+                  : undefined
+              }
             />
 
             {highlight && (

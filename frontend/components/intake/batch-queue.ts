@@ -19,6 +19,7 @@ import {
   type IntakeBatch,
   type IntakeFields,
 } from "@/lib/intake";
+import { ApiError } from "@/lib/api";
 import { uploadFileWithProgress } from "@/lib/upload";
 import type {
   DiscoverSchemaResult,
@@ -78,6 +79,26 @@ export interface QueueItem {
   fieldsExtracted: number | null;
   /** E.g. "reused the existing document". */
   note: string | null;
+  /** When work on this file started (upload) and ended (extracted or
+   * failed), in ms since the epoch — the queue shows the elapsed time. */
+  startedAt?: number | null;
+  finishedAt?: number | null;
+  /** Pages the backend reports as read so far (page_current). */
+  pagesDone?: number | null;
+  /** Extraction batches done / total, when the job reports them. */
+  batchesDone?: number | null;
+  batchesTotal?: number | null;
+  /** When the backend last reported a change (stage, pages, batches). */
+  lastProgressAt?: number | null;
+  /** Job retries reported by the backend plus request retries. */
+  retries?: number;
+  /** The backend job behind the current stage (for diagnostics). */
+  jobId?: number | null;
+  /** The backend's finer job state, when it reports one. */
+  jobState?: string | null;
+  /** The job lookup answered "not found": its status is unknown — not a
+   * confirmed processing failure. */
+  statusUnavailable?: boolean;
 }
 
 export interface BatchQueueDeps {
@@ -100,6 +121,7 @@ export interface BatchQueueDeps {
     documentId: string,
     jobId: number | null,
     onStage: (job: ExtractionJob) => void,
+    onRetry?: () => void,
   ) => Promise<unknown>;
   progress: (documentId: string) => Promise<ExtractionProgress>;
   targets: (documentId: string) => Promise<DiscoverSchemaResult>;
@@ -107,6 +129,7 @@ export interface BatchQueueDeps {
     documentId: string,
     targetIds: string[],
     onStage: (job: ExtractionJob) => void,
+    onRetry?: () => void,
   ) => Promise<ExtractTargetsResult>;
 }
 
@@ -130,16 +153,24 @@ export const defaultBatchQueueDeps: BatchQueueDeps = {
     resolveDuplicate(stagedId, action, originalFilename, undefined, existingId),
   selectPortfolioFile: (stagedId, filename) => selectPortfolioFile(stagedId, filename),
   tagDocument: (documentId, fields) => putDocumentIntake(documentId, fields),
-  process: (documentId, jobId, onStage) => processDocumentViaJob(documentId, jobId, onStage),
+  process: (documentId, jobId, onStage, onRetry) => processDocumentViaJob(documentId, jobId, onStage, onRetry && (() => onRetry())),
   progress: (documentId) => getExtractionProgress(documentId),
   targets: (documentId) => getTargets(documentId),
-  extract: (documentId, targetIds, onStage) => extractTargetsViaJob(documentId, targetIds, onStage),
+  extract: (documentId, targetIds, onStage, onRetry) => extractTargetsViaJob(documentId, targetIds, onStage, onRetry && (() => onRetry())),
 };
 
 const MAX_CONCURRENT = 2;
+/** Extraction jobs are light on the server (~2 s, mostly reading the
+ * layout), so two files extract at once; processing stays at two. */
+const MAX_CONCURRENT_EXTRACTIONS = 2;
 const OCR_STAGES = new Set(["reading_document", "rendering_ocr", "running_ocr", "processing_document"]);
 /** Families that are "no specific type" — not shown as a type badge. */
 const GENERIC_FAMILIES = new Set(["unknown", "generic_business"]);
+
+/** The job lookup answered 404: the job's status is unknown here. */
+function unavailable(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404;
+}
 
 function message(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -187,7 +218,7 @@ export class BatchQueue {
   private items: QueueItem[] = [];
   private listeners = new Set<() => void>();
   private active = 0;
-  private extracting = false;
+  private extracting = 0;
 
   constructor(
     private readonly getFields: () => IntakeFields,
@@ -204,7 +235,7 @@ export class BatchQueue {
   getSnapshot = () => this.items;
 
   get extractionRunning() {
-    return this.extracting;
+    return this.extracting > 0;
   }
 
   private emit() {
@@ -215,6 +246,17 @@ export class BatchQueue {
   private patch(id: string, update: Partial<QueueItem>) {
     this.items = this.items.map((item) => (item.id === id ? { ...item, ...update } : item));
     this.emit();
+  }
+
+  /** A backend progress report: applied, and its time recorded when it
+   * changed something (so the panel can tell a stalled job apart). */
+  private report(id: string, update: Partial<QueueItem>) {
+    const item = this.find(id);
+    if (!item) return;
+    const changed = (Object.keys(update) as (keyof QueueItem)[]).some(
+      (key) => key !== "retries" && update[key] !== undefined && update[key] !== item[key],
+    );
+    this.patch(id, changed ? { ...update, lastProgressAt: Date.now() } : update);
   }
 
   private find(id: string) {
@@ -275,11 +317,11 @@ export class BatchQueue {
       return;
     }
     if (item.failedPhase === "processing") {
-      this.patch(id, { status: "processing", error: null, failedPhase: null, pipelineStage: null });
+      this.patch(id, { status: "processing", error: null, failedPhase: null, pipelineStage: null, finishedAt: null, statusUnavailable: false, jobState: null });
       void this.process(id, item.documentId, null);
       return;
     }
-    this.patch(id, { status: "processed", error: null, failedPhase: null });
+    this.patch(id, { status: "processed", error: null, failedPhase: null, finishedAt: null });
   }
 
   private pump() {
@@ -287,7 +329,7 @@ export class BatchQueue {
       const next = this.items.find((item) => item.status === "waiting");
       if (!next) return;
       this.active += 1;
-      this.patch(next.id, { status: "uploading", uploadFraction: 0 });
+      this.patch(next.id, { status: "uploading", uploadFraction: 0, startedAt: Date.now(), finishedAt: null });
       void this.upload(next.id, false).finally(() => {
         this.active -= 1;
         this.pump();
@@ -310,7 +352,7 @@ export class BatchQueue {
       );
       await this.afterUpload(id, result, false);
     } catch (error) {
-      this.patch(id, { status: "failed", failedPhase: "upload", error: message(error, "Upload failed.") });
+      this.patch(id, { status: "failed", failedPhase: "upload", error: message(error, "Upload failed."), finishedAt: Date.now() });
     }
   }
 
@@ -379,26 +421,50 @@ export class BatchQueue {
 
   private async process(id: string, documentId: string, jobId: number | null) {
     try {
-      await this.deps.process(documentId, jobId, (job) => {
-        const stage = job.stage || job.status;
-        this.patch(id, { pipelineStage: stage });
-        if (stage && OCR_STAGES.has(stage)) {
-          // OCR page counts, best effort (shown only when reported).
-          this.deps
-            .progress(documentId)
-            .then((progress) =>
-              this.patch(id, {
-                ocrRequired: progress.ocr_pages,
-                ocrCompleted: progress.ocr_completed_pages,
-                pageCount: progress.page_total || this.find(id)?.pageCount || null,
-              }),
-            )
-            .catch(() => undefined);
-        }
-      });
+      let networkRetries = 0;
+      let jobRetries = 0;
+      await this.deps.process(
+        documentId,
+        jobId,
+        (job) => {
+          const stage = job.stage || job.status;
+          jobRetries = job.retry_count ?? 0;
+          this.report(id, { pipelineStage: stage, retries: jobRetries + networkRetries, jobId: job.id, jobState: job.state ?? null });
+          if (stage && OCR_STAGES.has(stage)) {
+            // Page counts, best effort (shown only when reported).
+            this.deps
+              .progress(documentId)
+              .then((progress) =>
+                this.report(id, {
+                  ocrRequired: progress.ocr_pages,
+                  ocrCompleted: progress.ocr_completed_pages,
+                  pagesDone: progress.page_current || null,
+                  pageCount: progress.page_total || this.find(id)?.pageCount || null,
+                }),
+              )
+              .catch(() => undefined);
+          }
+        },
+        () => {
+          networkRetries += 1;
+          this.patch(id, { retries: jobRetries + networkRetries });
+        },
+      );
       this.patch(id, { status: "processed", pipelineStage: null });
     } catch (error) {
-      this.patch(id, { status: "failed", failedPhase: "processing", error: message(error, "Processing failed.") });
+      this.patch(id, {
+        status: "failed",
+        failedPhase: "processing",
+        finishedAt: Date.now(),
+        ...(unavailable(error)
+          ? {
+              statusUnavailable: true,
+              error:
+                "Status unavailable: the server no longer reports this job (it may have been started from another browser " +
+                "workspace or removed). This isn't a confirmed processing failure — Retry processing starts it again.",
+            }
+          : { error: message(error, "Processing failed.") }),
+      });
       return;
     }
     // Grouped by category as soon as it's read, not when its turn to
@@ -477,56 +543,81 @@ export class BatchQueue {
     return this.items.find((entry) => entry.status === "processed" && entry.documentId);
   }
 
-  /** Extracts every discovered field of each processed file, one file at
+  /** Extracts every discovered field of each processed file, two files at
    * a time, including files that finish processing while it runs. Called
    * automatically as files are processed; resolves when none are left. */
   async runFullExtraction() {
-    if (this.extracting) return;
-    this.extracting = true;
-    this.emit();
-    try {
-      for (
-        let item = this.nextToExtract();
-        item;
-        item = this.nextToExtract()
-      ) {
-        const documentId = item.documentId!;
-        this.patch(item.id, { status: "extracting", pipelineStage: "extracting_data", error: null });
-        try {
-          const schema = await this.deps.targets(documentId);
-          this.applyClassification(item.id, schema);
-          const ids = extractableTargets(schema.targets ?? []).map((target) => target.id);
-          if (ids.length === 0) {
-            this.patch(item.id, {
-              status: "extracted",
-              pipelineStage: null,
-              fieldsExtracted: 0,
-              note: "No extractable fields were discovered in this file.",
-            });
-            continue;
-          }
-          const result = await this.deps.extract(documentId, ids, (job) =>
-            this.patch(item.id, { pipelineStage: extractionPhaseStage(job.stage || job.status) }),
-          );
+    const workers: Promise<void>[] = [];
+    while (this.extracting < MAX_CONCURRENT_EXTRACTIONS && this.nextToExtract()) {
+      this.extracting += 1;
+      this.emit();
+      workers.push(
+        this.extractionWorker().finally(() => {
+          this.extracting -= 1;
+          this.emit();
+        }),
+      );
+    }
+    await Promise.all(workers);
+  }
+
+  private async extractionWorker() {
+    for (let item = this.nextToExtract(); item; item = this.nextToExtract()) {
+      const documentId = item.documentId!;
+      // Claimed before the first await, so the other worker skips it.
+      this.patch(item.id, { status: "extracting", pipelineStage: "extracting_data", error: null });
+      try {
+        const schema = await this.deps.targets(documentId);
+        this.applyClassification(item.id, schema);
+        const ids = extractableTargets(schema.targets ?? []).map((target) => target.id);
+        if (ids.length === 0) {
           this.patch(item.id, {
             status: "extracted",
             pipelineStage: null,
-            staged: true,
-            fieldsExtracted: result.scalars.length,
+            fieldsExtracted: 0,
+            note: "No extractable fields were discovered in this file.",
+            finishedAt: Date.now(),
           });
-          // Staging may settle a more specific type (e.g. an SF 1442 award).
-          await this.classify(item.id, documentId);
-        } catch (error) {
-          this.patch(item.id, {
-            status: "failed",
-            failedPhase: "extraction",
-            error: message(error, "Extraction failed."),
-          });
+          continue;
         }
+        let requestRetries = 0;
+        let jobRetries = 0;
+        const result = await this.deps.extract(
+          documentId,
+          ids,
+          (job) => {
+            jobRetries = job.retry_count ?? 0;
+            this.report(item!.id, {
+              jobId: job.id,
+              jobState: job.state ?? null,
+              pipelineStage: extractionPhaseStage(job.stage || job.status),
+              batchesDone: job.result?.batches_completed ?? null,
+              batchesTotal: job.result?.batches_total ?? null,
+              retries: jobRetries + requestRetries,
+            });
+          },
+          () => {
+            requestRetries += 1;
+            this.patch(item!.id, { retries: jobRetries + requestRetries });
+          },
+        );
+        this.patch(item.id, {
+          status: "extracted",
+          pipelineStage: null,
+          staged: true,
+          fieldsExtracted: result.scalars.length,
+          finishedAt: Date.now(),
+        });
+        // Staging may settle a more specific type (e.g. an SF 1442 award).
+        await this.classify(item.id, documentId);
+      } catch (error) {
+        this.patch(item.id, {
+          status: "failed",
+          failedPhase: "extraction",
+          error: message(error, "Extraction failed."),
+          finishedAt: Date.now(),
+        });
       }
-    } finally {
-      this.extracting = false;
-      this.emit();
     }
   }
 }

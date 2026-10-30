@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, Download } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { SourceViewRequest } from "@/components/source-verification-panel";
 import OutcomeBanner from "@/components/staging/outcome-banner";
@@ -37,6 +37,9 @@ interface StagingWorkbookProps {
   refreshKey?: string | number;
   /** Reviewer/developer views the host page offers under "More". */
   moreActions?: MoreAction[];
+  /** Source Verification, shown under the Staging Workbook / Source tabs
+   * (Staging Workbook view only — the Source view has its own viewer). */
+  sourceVerification?: ReactNode;
 }
 
 type View = "workbook" | "source" | "qa";
@@ -102,6 +105,7 @@ export default function StagingWorkbook({
   selectedSourceId,
   refreshKey,
   moreActions = [],
+  sourceVerification,
 }: StagingWorkbookProps) {
   const [workbook, setWorkbook] = useState<Workbook | null>(null);
   const [loading, setLoading] = useState(true);
@@ -316,13 +320,16 @@ export default function StagingWorkbook({
           focus={documentFocus}
         />
       ) : (
-        <PresentationWorkspace
-          workbook={workbook}
-          documentId={documentId}
-          onOpenSource={onOpenSource}
-          onViewInDocument={viewInDocument}
-          moreActions={[...moreActions, { label: "Source structure", onSelect: () => setView("source") }]}
-        />
+        <>
+          {sourceVerification}
+          <PresentationWorkspace
+            workbook={workbook}
+            documentId={documentId}
+            onOpenSource={onOpenSource}
+            onViewInDocument={viewInDocument}
+            moreActions={[...moreActions, { label: "Source structure", onSelect: () => setView("source") }]}
+          />
+        </>
       )}
     </div>
   );

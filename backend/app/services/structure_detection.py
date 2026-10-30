@@ -394,6 +394,12 @@ DOCUMENT_FAMILIES: dict[str, tuple[str, list[str]]] = {
         "Budget",
         ["budget vs actual", "fiscal year budget", "budgeted amount"],
     ),
+    "bank_statement": (
+        "Bank Statement",
+        ["bank statement", "checking account", "savings account", "routing number",
+         "deposits and other credits", "withdrawals and other debits", "checks paid",
+         "available balance", "account summary", "daily balance"],
+    ),
     "statement": (
         "Statement",
         ["statement of account", "account statement",
@@ -946,6 +952,7 @@ async def detect_document_structures(
     document: Document,
     pages: list[DocumentPage],
     ai_provider: AIProvider,
+    ai_family: bool = True,
 ) -> StructureDetectionResponse:
     scan_pages = pages[:DETECTION_PAGE_LIMIT]
     combined_text = "\n".join(
@@ -1262,24 +1269,10 @@ async def detect_document_structures(
         combined_text
     )
 
-    if family_key in {"unknown", "generic_business"} and combined_text.strip():
-        try:
-            classification = await classify_contract(
-                pages=scan_pages,
-                ai_provider=ai_provider,
-            )
-            mapped_key, mapped_label = _map_contract_type_to_family(
-                classification.document_type,
-                classification.confidence,
-            )
-            if mapped_key not in {"unknown", "generic_business"}:
-                family_key = mapped_key
-                family_label = mapped_label
-                family_confidence = round(classification.confidence, 2)
-        except AIProviderError:
-            pass
-        except Exception:
-            pass
+    if ai_family and family_key in {"unknown", "generic_business"} and combined_text.strip():
+        refined = await ai_document_family(pages=scan_pages, ai_provider=ai_provider)
+        if refined is not None:
+            family_key, family_label, family_confidence = refined
 
     detected = _merge_targets(detected)
     detected = _sort_targets(detected, family_key)
@@ -1357,6 +1350,24 @@ async def detect_document_structures(
         content_stats=content_stats,
         counts=counts,
     )
+
+
+async def ai_document_family(
+    *, pages: list[DocumentPage], ai_provider: AIProvider
+) -> tuple[str, str, float] | None:
+    """The document family as the AI reads it, for documents the heuristics
+    left generic; None when it adds nothing or the call fails."""
+
+    try:
+        classification = await classify_contract(pages=pages, ai_provider=ai_provider)
+    except AIProviderError:
+        return None
+    except Exception:  # noqa: BLE001 - classification only refines a label
+        return None
+    mapped_key, mapped_label = _map_contract_type_to_family(classification.document_type, classification.confidence)
+    if mapped_key in {"unknown", "generic_business"}:
+        return None
+    return mapped_key, mapped_label, round(classification.confidence, 2)
 
 
 def _map_contract_type_to_family(

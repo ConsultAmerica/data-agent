@@ -95,7 +95,7 @@ export interface ActiveSelection {
 
 type SelectionUpdate = Selection | ((current: Selection) => Selection);
 
-interface SelectionStore {
+export interface SelectionStore {
   get: (key: string) => Selection;
   /** Stable across renders: an update never re-creates the grid's handlers. */
   set: (key: string, next: SelectionUpdate, active: Omit<ActiveSelection, "selection">) => void;
@@ -104,7 +104,7 @@ interface SelectionStore {
 
 const SelectionContext = createContext<SelectionStore | null>(null);
 
-function storeKey(documentId: string, datasetId: string): string {
+export function storeKey(documentId: string, datasetId: string): string {
   return `${documentId}\u0000${datasetId}`;
 }
 

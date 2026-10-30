@@ -17,6 +17,8 @@ import TableResult from "@/components/extraction/table-result";
 import ValidationIssuesPanel from "@/components/extraction/validation-issues-panel";
 import type { SourceViewRequest } from "@/components/source-verification-panel";
 import StagingWorkbook from "@/components/staging/staging-workbook";
+import SourceVerificationSection from "@/components/extraction/source-verification-section";
+import { RecordSelectionProvider } from "@/lib/record-selection";
 import {
   isBusinessFieldRow,
   isKeyContractRow,
@@ -115,6 +117,10 @@ interface TargetResultsProps {
   processingDurationMs?: number | null;
   selectedResultId?: string | null;
   onViewSource?: (request: SourceViewRequest) => void;
+  /** Show Source Verification inside the Staging Workbook (under its tabs),
+   * driven by the page's shared source request — one viewer, no drawer. */
+  embedSourceVerification?: boolean;
+  sourceVerificationRequest?: SourceViewRequest | null;
 }
 
 function tableToUniversalTable(
@@ -261,6 +267,8 @@ export default function TargetResults({
   processingDurationMs,
   selectedResultId = null,
   onViewSource,
+  embedSourceVerification = false,
+  sourceVerificationRequest = null,
 }: TargetResultsProps) {
   const reviewEnabled = useReviewMutationsEnabled();
   const [searchQuery, setSearchQuery] = useState("");
@@ -637,17 +645,39 @@ export default function TargetResults({
       <AIEnrichmentNotice summary={result.ai_enrichment ?? null} />
 
       {documentId && (
+        <RecordSelectionProvider scalars={result.scalars ?? []} tables={result.tables ?? []}>
         <StagingWorkbook
           documentId={documentId}
           documentName={documentName}
-          onOpenSource={(request) => handleOpenSource(request)}
-          selectedSourceId={sourceRequest?.id ?? null}
+          onOpenSource={(request) => {
+            if (embedSourceVerification && onViewSource) {
+              // The inline Source Verification shows it; no second viewer.
+              onViewSource(request);
+              window.document.querySelector('[data-testid="source-verification-section"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+              return;
+            }
+            handleOpenSource(request);
+          }}
+          sourceVerification={
+            embedSourceVerification && onViewSource ? (
+              <SourceVerificationSection
+                documentId={documentId}
+                documentName={documentName ?? "Document"}
+                pageCount={pageCount}
+                result={result}
+                sourceRequest={sourceVerificationRequest}
+                onViewSource={onViewSource}
+              />
+            ) : undefined
+          }
+          selectedSourceId={(embedSourceVerification ? sourceVerificationRequest : sourceRequest)?.id ?? null}
           refreshKey={`${result.scalars.length}-${result.tables.length}-${result.warnings.length}`}
           moreActions={[
             { label: "Extraction details", onSelect: () => openDiagnostics(extractionDetailsRef) },
             { label: "Processing diagnostics", onSelect: () => openDiagnostics(diagnosticsRef) },
           ]}
         />
+        </RecordSelectionProvider>
       )}
 
       {showLegacyAudit && (

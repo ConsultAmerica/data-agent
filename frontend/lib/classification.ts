@@ -37,6 +37,11 @@ export interface ClassificationState {
   family_label: string;
   category: string;
   category_label: string;
+  /** The coarse class: Contract, Invoice, … General Document. */
+  document_class?: string;
+  document_class_label?: string;
+  /** "Confirmed" only after a person confirmed or changed the type. */
+  review_status?: "Confirmed" | "Not reviewed";
   subtype: string | null;
   subtypes: string[];
   profile_id: string;

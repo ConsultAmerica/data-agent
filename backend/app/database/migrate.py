@@ -102,6 +102,11 @@ ACTOR_AUDIT_LOG_COLUMNS: dict[str, str | dict[str, str]] = {
 }
 
 
+EXTRACTION_JOB_COLUMNS: dict[str, str | dict[str, str]] = {
+    "heartbeat_at": {"sqlite": "DATETIME", "postgresql": "TIMESTAMP WITH TIME ZONE"},
+}
+
+
 RECOGNITION_RUN_COLUMNS: dict[str, str | dict[str, str]] = {
     "model_version": "VARCHAR(40)",
     "pages": "INTEGER",
@@ -228,6 +233,11 @@ def ensure_actor_audit_log_columns(engine: Engine) -> None:
     """Add actor_id to the classification and relationship audit logs."""
     _ensure_columns(engine, "classification_audit_log", ACTOR_AUDIT_LOG_COLUMNS)
     _ensure_columns(engine, "relationship_audit_log", ACTOR_AUDIT_LOG_COLUMNS)
+
+
+def ensure_extraction_job_columns(engine: Engine) -> None:
+    """Add the runner heartbeat to extraction_jobs created before it existed."""
+    _ensure_columns(engine, "extraction_jobs", EXTRACTION_JOB_COLUMNS)
 
 
 def ensure_recognition_run_columns(engine: Engine) -> None:

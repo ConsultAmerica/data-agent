@@ -129,6 +129,11 @@ class Settings(BaseSettings):
     # heuristic labels stand (it only polishes names, so it never blocks).
     ai_schema_enrichment_budget_seconds: float = 5.0
 
+    # Worker processes reading a large PDF's tables in parallel. None sizes
+    # the pool from the container's real CPU quota and memory limit (a
+    # 512 MB instance runs sequentially); 0 turns parallel reading off.
+    table_prefetch_workers: int | None = None
+
     # development | local | production
     # "development" shows the Gemini free-tier privacy notice in the UI.
     ai_provider_mode: str = "development"
@@ -172,6 +177,12 @@ class Settings(BaseSettings):
     seed_service_api_key: str | None = None
 
     # SQLAlchemy pool for Postgres (ignored for SQLite).
+    # Serverless functions (Vercel) against Neon's pooled endpoint: no pool
+    # kept between requests — each session opens one connection and closes
+    # it, and PgBouncer does the pooling.
+    db_null_pool: bool = False
+    # Refuse unencrypted Postgres connections (sslmode=require).
+    db_require_tls: bool = False
     db_pool_size: int = 5
     db_max_overflow: int = 5
     db_pool_recycle_seconds: int = 1800

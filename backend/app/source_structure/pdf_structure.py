@@ -655,10 +655,18 @@ def _ruled_tables(page, page_number: int):
         # lines_strict: only real vector rules form cell borders — text
         # background rectangles don't invent columns.
         found = page.find_tables(strategy="lines_strict")
+        tables = found.tables
+        rect_ruled = False
+        if not tables and _rules_drawn_as_rectangles(page):
+            # Spreadsheet exports draw every rule as a thin filled
+            # rectangle, which lines_strict ignores; with no background
+            # boxes on the page, rectangles are safe to read as rules.
+            tables = page.find_tables(strategy="lines").tables
+            rect_ruled = True
     except Exception:  # noqa: BLE001 - table finder is best-effort
         return []
     results = []
-    for tab in found.tables:
+    for tab in tables:
         try:
             data = tab.extract()
         except Exception:  # noqa: BLE001
@@ -666,8 +674,172 @@ def _ruled_tables(page, page_number: int):
         if not data or len(data) < 2 or tab.col_count < 2:
             continue
         cell_boxes = [list(row.cells) for row in tab.rows]
-        results.append((tab.bbox, data, cell_boxes, list(tab.header.names or [])))
+        bbox = tab.bbox
+        if rect_ruled:
+            # Underlined label/value rows above a grid line up with it and
+            # get swept in; the table starts at its first well-filled row.
+            first = next(
+                (i for i, row in enumerate(data) if sum(1 for c in row if str(c or "").strip()) * 2 >= len(row)),
+                None,
+            )
+            if first is None or len(data) - first < 2:
+                continue
+            if first:
+                data, cell_boxes = data[first:], cell_boxes[first:]
+                tops = [box[1] for box in cell_boxes[0] if box]
+                bbox = (bbox[0], min(tops) if tops else bbox[1], bbox[2], bbox[3])
+        results.append((bbox, data, cell_boxes, list(tab.header.names or [])))
     return results
+
+
+def _rules_drawn_as_rectangles(page) -> bool:
+    """True when the page's rectangles are almost all hairline strokes
+    (rules), not filled boxes behind text."""
+
+    thin = boxes = 0
+    try:
+        drawings = page.get_drawings()
+    except Exception:  # noqa: BLE001
+        return False
+    for drawing in drawings:
+        for item in drawing.get("items") or []:
+            if item[0] != "re":
+                continue
+            rect = item[1]
+            if min(rect.width, rect.height) <= 1.5:
+                thin += 1
+            else:
+                boxes += 1
+    return thin >= 8 and boxes <= max(4, thin // 8)
+
+
+def _horizontal_rules(page, claimed: list[BBox]) -> list[BBox]:
+    """Drawn underlines: thin horizontal strokes at least 60pt wide that
+    are not part of a table already claimed on the page."""
+
+    rules: list[BBox] = []
+    try:
+        drawings = page.get_drawings()
+    except Exception:  # noqa: BLE001 - vector data is best-effort
+        return rules
+    horizontals: list[BBox] = []
+    verticals: list[BBox] = []
+    for drawing in drawings:
+        for item in drawing.get("items") or []:
+            if item[0] == "l":
+                p1, p2 = item[1], item[2]
+                box = (min(p1.x, p2.x), min(p1.y, p2.y), max(p1.x, p2.x), max(p1.y, p2.y))
+            elif item[0] == "re":
+                rect = item[1]
+                box = (rect.x0, rect.y0, rect.x1, rect.y1)
+            else:
+                continue
+            if box[3] - box[1] <= 1.5 and box[2] - box[0] >= 60:
+                horizontals.append(box)
+            elif box[2] - box[0] <= 1.5 and box[3] - box[1] >= 4:
+                verticals.append(box)
+            elif item[0] == "re" and box[2] - box[0] > 1.5 and box[3] - box[1] > 4:
+                # A stroked box: its sides are vertical rules too.
+                verticals.extend([(box[0], box[1], box[0], box[3]), (box[2], box[1], box[2], box[3])])
+    for box in horizontals:
+        if any(cx0 - 1 <= box[0] and box[2] <= cx1 + 1 and cy0 - 1 <= box[1] <= cy1 + 1 for cx0, cy0, cx1, cy1 in claimed):
+            continue
+        # A box border (an SF 1442 cell) meets vertical rules; a fill-in
+        # underline stands alone.
+        if any(box[0] - 2 <= vx <= box[2] + 2 and vy0 - 2 <= box[1] <= vy1 + 2 for vx, vy0, _, vy1 in verticals):
+            continue
+        rules.append(box)
+    rules.sort(key=lambda b: (b[1], b[0]))
+    return rules
+
+
+# A lettered or roman section marker: "A.", "B.", "IV.".
+_SECTION_MARKER = re.compile(r"(?:[A-Z]|[IVX]{1,4})\.")
+
+# A form page has at least this many captioned underlines.
+_MIN_RULED_ROWS = 3
+# "18. Brief Statement", "9a. Prime Contractor": a numbered form item.
+_NUMBERED_ITEM = re.compile(r"^\d{1,3}[a-z]?\.\s+\S")
+
+
+def _ruled_form_fields(
+    ids: _Ids, page_number: int, fitz_page, lines: list[Line], extraction_method: str, claimed: list[BBox]
+) -> list[FieldCandidate]:
+    """Form rows printed as captions on the left and the value written on a
+    drawn underline at the right ("2. Contract Information | Contract Number
+    | ____C0142____"). Pure geometry: the underline marks the value's blank
+    (an empty blank is kept as an empty value). The left-most caption of a
+    row opens a group; rows below with only an indented caption belong to
+    it. Runs before alignment tables, which would read these as columns."""
+
+    rules = _horizontal_rules(fitz_page, claimed)
+    rows: list[tuple[Line, list[Segment], list[Segment], BBox]] = []
+    for rule in rules:
+        rx0, ry, rx1, _ = rule
+        # The text written on the rule: its baseline sits just above it.
+        line = next(
+            (ln for ln in lines if -1.5 <= ry - ln.row_y1 <= 8 and any(s.x1 <= rx1 + 2 for s in ln.free_segments)),
+            None,
+        )
+        if line is None:
+            continue
+        free = sorted(line.free_segments, key=lambda s: s.x0)
+        # Several blanks on one line ("until __12:00 PM__ local time
+        # __12 Feb 2024__"): a blank's caption is only the wording after
+        # the blank before it.
+        before = max((r[2] for r in rules if abs(r[1] - ry) <= 1.5 and r[2] <= rx0), default=float("-inf"))
+        captions = [s for s in free if s.x1 <= rx0 + 1 and s.x0 >= before - 1]
+        # A value starts on its blank but may run past its end (a long
+        # name in a spreadsheet cell); text further right is its own run.
+        values = [s for s in free if rx0 - 2 <= s.x0 <= rx1 - 4]
+        if not captions:
+            continue
+        rows.append((line, captions, values, rule))
+    if len(rows) < _MIN_RULED_ROWS:
+        # A page with one or two such rows (a form continued from the page
+        # before) keeps only numbered items that carry a value.
+        rows = [row for row in rows if _NUMBERED_ITEM.match(row[1][0].text) and row[2]]
+        if not rows:
+            return []
+
+    # Two caption columns: items (left) and their sub-labels. Item numbers
+    # are often right-aligned ("9a." starts left of "1."), so the column is
+    # judged by distance, not by an exact left edge.
+    left = min(captions[0].x0 for _, captions, _, _ in rows)
+    sub_column = min((captions[-1].x0 for _, captions, _, _ in rows if len(captions) > 1), default=None)
+    fields: list[FieldCandidate] = []
+    group: Segment | None = None
+    for line, captions, values, rule in rows:
+        if len(captions) > 1:
+            opens_group = True
+        elif sub_column is None:
+            opens_group = captions[0].x0 <= left + 4
+        else:
+            opens_group = captions[0].x0 - left < sub_column - captions[0].x0
+        if opens_group:
+            group = captions[0]
+        caption = captions[-1]
+        value_text = _clean_value(" ".join(s.text for s in values))
+        candidate = _field(
+            ids, page_number, caption.text, value_text, "ruled_form_row",
+            caption.bbox, _union([s.bbox for s in values]) or rule,
+            " ".join(s.text for s in [*captions, *values]), extraction_method,
+        )
+        if group is not None and group is not caption:
+            candidate.section_label = normalize_space(group.text)
+        # The underline makes this a field whatever the caption's wording
+        # ("16. Is ... required?"); an empty blank stays rejected, so it is
+        # shown as blank but never staged as a value.
+        if value_text and all(r.startswith("label_") for r in candidate.reasons):
+            candidate.acceptance = "accepted"
+            candidate.reasons = []
+        elif not value_text:
+            candidate.acceptance = "rejected"
+            candidate.reasons = ["empty_value"]
+        fields.append(candidate)
+        for seg in [*captions, *values]:
+            seg.used = True
+    return fields
 
 
 # --- the extractor --------------------------------------------------------------
@@ -1373,6 +1545,39 @@ def _text_regions(ids: _Ids, page_number: int, lines: list[Line], extraction_met
     body_size = statistics.median(s.size for s in runs)
     line_of = {id(seg): line for line in lines for seg in line.segments}
 
+    # "A.   General Information": a lettered section marker and its title,
+    # alone on a line and set larger than the body, printed as two runs.
+    regions: list[StructuredRegion] = []
+    for line in lines:
+        free = line.free_segments
+        if len(free) != 2 or len(line.segments) != 2:
+            continue
+        marker, title = free
+        title_text = title.text.strip()
+        if (
+            _SECTION_MARKER.fullmatch(marker.text.strip())
+            and 1 <= len(title_text.split()) <= 10
+            and title_text[:1].isupper()
+            and not _ends_like_sentence_or_label(title_text)
+            and max(marker.size, title.size) >= 1.1 * body_size
+        ):
+            text = f"{marker.text.strip()} {title_text}"
+            regions.append(
+                StructuredRegion(
+                    region_id=ids.next("heading"),
+                    region_type="HEADING",
+                    text=text,
+                    normalized_text=normalize_space(text).lower(),
+                    page=page_number,
+                    bbox=_union([marker.bbox, title.bbox]),
+                    extraction_method=extraction_method,
+                )
+            )
+            marker.used = title.used = True
+    runs = [seg for line in lines for seg in line.free_segments]
+    if not runs:
+        return regions
+
     blocks: list[list[Segment]] = []
     for seg in runs:
         line = line_of[id(seg)]
@@ -1395,7 +1600,6 @@ def _text_regions(ids: _Ids, page_number: int, lines: list[Line], extraction_met
         else:
             target.append(seg)
 
-    regions: list[StructuredRegion] = []
     for block in blocks:
         text = "\n".join(s.text for s in block)
         words = len(text.split())
@@ -1690,10 +1894,18 @@ def _extract_structure(
             kept_tables.append(table)
     result.tables = kept_tables
 
+    # 1d. Form rows written on drawn underlines, before anything reads the
+    # caption | sub-caption | value columns as a table.
+    ruled_fields: list[FieldCandidate] = []
+    if fitz_page is not None and extraction_method == "native":
+        claimed = [t.bbox for t in result.tables if t.bbox and t.acceptance == "accepted"]
+        ruled_fields = _ruled_form_fields(ids, page_number, fitz_page, lines, extraction_method, claimed)
+
     # 2. Label/value pairs claim their segments before column alignment,
     # so a stack of "Label: value" lines is never mistaken for a table.
     widget_fields = _form_widget_candidates(ids, fitz_page, page_number) if fitz_page is not None else []
     fields = _label_value_candidates(ids, page_number, lines, extraction_method)
+    fields[:0] = ruled_fields
     fields.extend(widget_fields)
 
     # 3. Column-aligned tables from the remaining runs.

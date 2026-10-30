@@ -5,6 +5,7 @@ import { Menu, Plus, Sparkles } from "lucide-react";
 
 import DataomatixLogo from "@/components/navigation/dataomatix-logo";
 import CommandTrigger from "@/components/navigation/command-trigger";
+import ThemeToggle from "@/components/navigation/theme-toggle";
 import UserChip from "@/components/navigation/user-chip";
 
 interface WorkspaceTopBarProps {
@@ -47,6 +48,7 @@ export default function WorkspaceTopBar({ onOpenSearch, onOpenMobileNav }: Works
         <span className="md:hidden">
           <CommandTrigger onOpen={onOpenSearch} compact />
         </span>
+        <ThemeToggle />
         <div className="hidden shrink-0 items-center gap-2 border-l border-white/10 pl-2 sm:flex">
           <UserChip />
         </div>

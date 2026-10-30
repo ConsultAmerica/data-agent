@@ -69,9 +69,21 @@ def install_log_redaction() -> None:
         except Exception:  # noqa: BLE001 - leave a malformed record as is
             return record
         redacted = redact_text(message)
-        if redacted != message:
-            record.msg = redacted
-            record.args = None
+        if redacted == message:
+            return record
+        # Redact each argument in place where that's enough: formatters that
+        # unpack the arguments (uvicorn's access log) keep working.
+        if isinstance(record.args, tuple):
+            args = tuple(redact_text(a) if isinstance(a, str) else a for a in record.args)
+            try:
+                in_place = record.msg % args if args else str(record.msg)
+            except Exception:  # noqa: BLE001 - fall back to the whole message
+                in_place = None
+            if in_place is not None and redact_text(in_place) == in_place:
+                record.args = args
+                return record
+        record.msg = redacted
+        record.args = None
         return record
 
     logging.setLogRecordFactory(factory)

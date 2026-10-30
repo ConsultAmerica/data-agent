@@ -11,6 +11,8 @@ from app.database.session import SessionLocal
 from app.models.document import Document
 from app.models.document_page import DocumentPage
 from app.models.extraction_job import ExtractionJob
+from app.services.job_recovery import start_heartbeat, stop_heartbeat
+from app.services.job_metrics import job_metrics, queue_wait_ms
 from app.services.ai_provider_factory import create_ai_provider
 from app.services.detected_target_store import (
     load_document_targets,
@@ -132,6 +134,7 @@ async def run_processing_job(job_id: int) -> None:
 
     database = SessionLocal()
     started = time.perf_counter()
+    heartbeat = start_heartbeat(job_id)
 
     try:
         job = database.get(ExtractionJob, job_id)
@@ -150,6 +153,7 @@ async def run_processing_job(job_id: int) -> None:
             job_type="processing",
         )
 
+        queue_ms = queue_wait_ms(job)
         job.status = "processing"
         _append_stage(job, "reading_document")
         job.started_at = datetime.now(timezone.utc)
@@ -167,6 +171,7 @@ async def run_processing_job(job_id: int) -> None:
         database.commit()
 
         stage_timings: dict[str, int] = {}
+        startup_ms = int((time.perf_counter() - started) * 1000)
         retrieval_started = time.perf_counter()
         force_pages = not pages_artifacts_reusable(document)
         reused_pages_without_source = False
@@ -367,6 +372,7 @@ async def run_processing_job(job_id: int) -> None:
 
         # Classify now, from the pages just read, so the type (and anything
         # needing review) is known before extraction. Never fails the job.
+        classification_started = time.perf_counter()
         try:
             from app.classification.service import record_prediction
 
@@ -375,6 +381,20 @@ async def run_processing_job(job_id: int) -> None:
             database.rollback()
             log_event("classification_failed", stage="discovering_fields", status="error",
                       error_category=type(exc).__name__)
+        stage_timings["classification_ms"] = int((time.perf_counter() - classification_started) * 1000)
+        # Discovery's own split: structure detection and the AI calls.
+        for key, value in ((document.ingestion_provenance or {}).get("discovery_timings_ms") or {}).items():
+            if not reused_discovery and key != "ai_wall_ms":
+                stage_timings[f"discovery_{key}"] = value
+        if not reused_discovery:
+            stage_timings.pop("schema_discovery_ms", None)
+        payload["metrics"] = job_metrics(
+            database, job,
+            total_ms=int((time.perf_counter() - started) * 1000),
+            queue_ms=queue_ms, startup_ms=startup_ms, stage_timings=stage_timings,
+            records={"pages": len(pages), "targets": target_count},
+        )
+        job.result_json = {**payload}
 
         job.status = "complete"
         _append_stage(job, "complete")
@@ -395,6 +415,7 @@ async def run_processing_job(job_id: int) -> None:
         )
 
     finally:
+        await stop_heartbeat(heartbeat)
         database.close()
 
 
@@ -408,6 +429,7 @@ async def run_extraction_job(
 
     database = SessionLocal()
     started = time.perf_counter()
+    heartbeat = start_heartbeat(job_id)
 
     try:
         job = database.get(ExtractionJob, job_id)
@@ -418,6 +440,9 @@ async def run_extraction_job(
         if document is None:
             _fail_job(job, database, ValueError("Document not found."))
             return
+
+        queue_ms = queue_wait_ms(job)
+        startup_ms = int((time.perf_counter() - started) * 1000)
 
         bind_job_context(document_id=document.id, job_id=job.id)
 
@@ -650,6 +675,15 @@ async def run_extraction_job(
             "batches_total": len(batches),
             "ai_enrichment": ai_provider.summary(),
         }
+        job.result_json = {
+            **job.result_json,
+            "metrics": job_metrics(
+                database, job,
+                total_ms=int((time.perf_counter() - started) * 1000),
+                queue_ms=queue_ms, startup_ms=startup_ms, stage_timings=stage_timings,
+                records={"scalars": len(scalars), "tables": len(tables), "unresolved": len(unresolved)},
+            ),
+        }
 
         from app.services.processing_versions import processing_versions_payload
 
@@ -683,4 +717,5 @@ async def run_extraction_job(
         )
 
     finally:
+        await stop_heartbeat(heartbeat)
         database.close()

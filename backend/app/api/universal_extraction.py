@@ -4,9 +4,12 @@ from fastapi import (
     HTTPException,
     Query,
 )
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.downloads import attachment_header
+from app.core.auth import ActorContext, require_permission
 from app.core.config import get_settings
 from app.core.errors import STRUCTURE_DETECTION_FAILED, TARGET_NOT_FOUND, http_error
 from app.database.dependencies import (
@@ -43,6 +46,7 @@ from app.services.detected_target_store import (
     rename_custom_target,
 )
 from app.services.ingestion_provenance import merge_provenance
+from app.services.target_selection_export import SelectionError, TargetSelection, build_selection_export
 from app.services.processing_versions import (
     persisted_discovery_is_fresh,
     processing_versions_payload,
@@ -351,6 +355,28 @@ async def delete_custom_target_endpoint(
         )
     except CustomTargetError as exc:
         raise http_error(404, TARGET_NOT_FOUND, str(exc)) from exc
+
+
+@router.post("/{document_id}/extract-results/export-selected")
+async def export_selected_extract_results(
+    document_id: str,
+    selection: TargetSelection,
+    database: Session = Depends(get_database),
+    actor: ActorContext = Depends(require_permission("export.read")),
+) -> Response:
+    """Export Selected from Source Verification: only the named fields and
+    table rows, values read from the persisted results."""
+
+    document = _load_document_or_404(database, document_id)
+    result = load_persisted_extract_results(database=database, document_id=document_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No extraction results for this document.")
+    stem = (document.original_filename or "document").rsplit(".", 1)[0]
+    try:
+        content, media_type, filename = build_selection_export(result, selection, stem)
+    except SelectionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return Response(content, media_type=media_type, headers={"Content-Disposition": attachment_header(filename)})
 
 
 @router.get(

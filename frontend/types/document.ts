@@ -473,6 +473,10 @@ export interface ExtractionJob {
   document_id: string;
   job_type: ExtractionJobType;
   status: ExtractionJobStatus;
+  /** Finer state from durable-processing backends: queued | processing |
+   * interrupted | partially_complete | ready_for_review | completed |
+   * failed | cancelled. Absent on older backends. */
+  state?: string;
   stage: string | null;
   progress: number;
   error_message: string | null;

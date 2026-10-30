@@ -1160,7 +1160,6 @@ export function refineGroups(input: PresentationGroup[], heading: string): Prese
           }
         : section,
     );
-    groups = [summary, ...groups.filter((group) => group !== summary)];
   }
 
   if (other) {
@@ -1172,14 +1171,36 @@ export function refineGroups(input: PresentationGroup[], heading: string): Prese
       const target = summary ?? { id: "summary", label: "Summary", sections: [] };
       target.sections.push({ id: "additional_information", title: "Additional Information", pattern: "card", items });
       groups = groups.filter((group) => group !== other);
-      if (!summary) groups.unshift(target);
+      if (!summary) groups.push(target);
     } else if (other.sections.length === 1 && other.sections[0].title) {
       // One coherent subject (e.g. Shipping & Commercial) names its own tab.
       other.label = other.sections[0].title;
       other.sections = [{ ...other.sections[0], title: null }];
     }
   }
-  return groups.filter((group) => group.sections.length > 0);
+  return orderGroups(groups.filter((group) => group.sections.length > 0));
+}
+
+/** The extraction workspace's tab order (Original Structure, the document's
+ * own layout, is added before these by the workspace). Groups a profile adds
+ * (Parties, Charges & Totals, Academic Record…) keep their relative order
+ * between Contacts and Table Data. Summary is always last. */
+const TAB_RANK: Record<string, number> = {
+  content: 1,
+  contacts: 2,
+  parties: 2.5,
+  student_program: 2.5,
+  lines: 3,
+  tables: 5,
+  other: 6,
+};
+
+export function orderGroups(groups: PresentationGroup[]): PresentationGroup[] {
+  const rank = (group: PresentationGroup) => (SUMMARY_IDS.has(group.id) ? 99 : TAB_RANK[group.id] ?? 4);
+  return groups
+    .map((group, index) => ({ group, index }))
+    .sort((a, b) => rank(a.group) - rank(b.group) || a.index - b.index)
+    .map(({ group }) => group);
 }
 
 /** Detail sections with the same heading become one. */

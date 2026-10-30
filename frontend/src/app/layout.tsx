@@ -67,6 +67,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
       suppressHydrationWarning
     >
+      <head>
+        {/* The saved theme before first paint (no light flash in dark mode). */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{if(localStorage.getItem("dx-theme")==="dark")document.documentElement.dataset.theme="dark"}catch(e){}`,
+          }}
+        />
+      </head>
       <body className="h-full overflow-hidden" suppressHydrationWarning>
         <AppShell>{children}</AppShell>
       </body>

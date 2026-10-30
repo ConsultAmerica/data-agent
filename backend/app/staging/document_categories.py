@@ -39,7 +39,8 @@ CATEGORIES: tuple[tuple[str, str, frozenset[str]], ...] = (
         "financial",
         "Financial",
         frozenset({
-            "invoice", "credit_note", "receipt", "statement", "financial_report", "financial_statement",
+            "invoice", "credit_note", "receipt", "statement", "bank_statement", "financial_report",
+            "financial_statement",
             "budget", "bank_check", "tax_form", "utility_bill", "insurance_policy",
         }),
     ),

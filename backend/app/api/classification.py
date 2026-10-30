@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.classification.document_class import DOCUMENT_CLASS_LABELS, document_class_for_family
 from app.classification.engine import SUBTYPES
 from app.classification.service import (
     ClassificationError,
@@ -80,12 +81,18 @@ class State(BaseModel):
     family_label: str
     category: str
     category_label: str
+    # The coarse class (Contract, Invoice, ... General Document).
+    document_class: str
+    document_class_label: str
     subtype: str | None
     subtypes: list[str]
     profile_id: str
     profile_label: str
     confidence: float | None
     confidence_level: ConfidenceLevel
+    # A person's decision, never the confidence: "Confirmed" only once
+    # someone confirmed or changed the type.
+    review_status: Literal["Confirmed", "Not reviewed"]
     status: str
     method: str
     evidence: list[str]
@@ -188,12 +195,15 @@ def _state(database: Session, document: Document) -> State:
         family_label=row.family_label,
         category=category_for_family(row.family),
         category_label=CATEGORY_LABELS[category_for_family(row.family)],
+        document_class=document_class_for_family(row.family),
+        document_class_label=DOCUMENT_CLASS_LABELS[document_class_for_family(row.family)],
         subtype=row.subtype,
         subtypes=list(SUBTYPES.get(row.family, ())),
         profile_id=row.profile_id,
         profile_label=profile_label(row.profile_id),
         confidence=confidence,
         confidence_level=_level(confidence, row.status),
+        review_status="Confirmed" if row.is_decision else "Not reviewed",
         status=row.status,
         method=row.method,
         evidence=list(row.evidence or []),

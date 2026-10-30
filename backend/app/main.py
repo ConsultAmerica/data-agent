@@ -34,6 +34,8 @@ from app.api import (
     universal_extraction,
     validation_rules,
     document_intelligence,
+    original_structure,
+    document_workspace,
     source_view,
     staging_workbook,
     v3_export,
@@ -56,6 +58,7 @@ from app.database.migrate import (
     ensure_extraction_model_columns,
     ensure_metadata_field_audit_log_columns,
     ensure_recognition_run_columns,
+    ensure_extraction_job_columns,
     ensure_target_correction_columns,
     run_alembic_upgrade,
 )
@@ -94,6 +97,8 @@ from app.models import document_schema as document_schema_model  # noqa: F401
 from app.models import recognition_run as recognition_run_model  # noqa: F401
 from app.models import reference_data as reference_data_model  # noqa: F401
 from app.models import document_key_date as document_key_date_model  # noqa: F401
+from app.models import structure_record_review as structure_record_review_model  # noqa: F401
+from app.models import document_skill_version as document_skill_version_model  # noqa: F401
 from app.models import far_master_clause as far_master_clause_model  # noqa: F401
 from app.models import (  # noqa: F401
     document_delivery_schedule as document_delivery_schedule_model,
@@ -208,6 +213,24 @@ app.include_router(
     dependencies=[Depends(enforce_document_access)],
     tags=["Document Intelligence"],
 )
+
+app.include_router(
+    original_structure.router,
+    prefix="/api/documents",
+    # Document isolation for every /{document_id} route (core/document_access.py).
+    dependencies=[Depends(enforce_document_access)],
+    tags=["Original Structure"],
+)
+
+app.include_router(
+    document_workspace.router,
+    prefix="/api/documents",
+    # Document isolation for every /{document_id} route (core/document_access.py).
+    dependencies=[Depends(enforce_document_access)],
+    tags=["Verification Workspace"],
+)
+
+app.include_router(document_workspace.skills_router, prefix="/api/document-skills", tags=["Document Skills"])
 
 app.include_router(
     source_view.router,
@@ -519,6 +542,7 @@ async def create_database_tables() -> None:
     ensure_metadata_field_audit_log_columns(engine)
     ensure_actor_audit_log_columns(engine)
     ensure_recognition_run_columns(engine)
+    ensure_extraction_job_columns(engine)
     ensure_detected_target_columns(engine)
     ensure_clause_playbook_rule_columns(engine)
 

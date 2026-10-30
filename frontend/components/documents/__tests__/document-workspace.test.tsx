@@ -10,6 +10,20 @@ beforeEach(() => window.localStorage.setItem("dx-workspace-mode", "advanced"));
 let search = new URLSearchParams();
 const replace = vi.fn();
 
+vi.mock("@/lib/verification", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/verification")>()),
+  getBusinessData: vi.fn(() => Promise.reject(new Error("not needed"))),
+  getValidationSummary: vi.fn(() => Promise.reject(new Error("not needed"))),
+}));
+vi.mock("@/lib/original-structure", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/original-structure")>()),
+  getOriginalStructure: vi.fn(() =>
+    Promise.resolve({
+      document_id: "d1", source_type: "pdf", pages: 1, sections: [], unplaced: [],
+      stats: { sections: 0, fields: 0, blank_fields: 0, tables: 0, table_rows: 0, needs_review: 0, unplaced: 0 },
+    }),
+  ),
+}));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace }),
   useSearchParams: () => search,
@@ -167,7 +181,7 @@ describe("DocumentWorkspace with a profile-declared presentation", () => {
     expect(screen.getByRole("dialog", { name: "Custom export" })).toBeTruthy();
   });
 
-  it("opens Custom export from Smart View too (the default view)", async () => {
+  it("opens Custom export from Smart View too", async () => {
     window.localStorage.setItem("dx-workspace-mode", "smart");
     render(<DocumentWorkspace documentId="d1" />);
     await screen.findByTestId("smart-workspace");
@@ -176,6 +190,26 @@ describe("DocumentWorkspace with a profile-declared presentation", () => {
     fireEvent.click(within(within(menu).getByRole("tablist", { name: "Export type" })).getByRole("tab", { name: "Custom" }));
     fireEvent.click(within(menu).getByRole("menuitem", { name: /Open custom export/ }));
     expect(screen.getByRole("dialog", { name: "Custom export" })).toBeTruthy();
+  });
+
+  it("opens on Original Structure, the first view, when no view was chosen", async () => {
+    window.localStorage.removeItem("dx-workspace-mode");
+    render(<DocumentWorkspace documentId="d1" />);
+    await screen.findByTestId("original-structure");
+    // Original Structure first, Summary last; Tables and Oracle only when used.
+    const views = screen.getByRole("tablist", { name: "Document workspace" });
+    expect(within(views).getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Original Structure",
+      "Smart Review",
+      "Advanced Grid",
+      "Validation",
+      "Oracle / Mapping",
+      "History",
+      "Summary",
+    ]);
+    expect(within(views).getByRole("tab", { name: "Original Structure" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("button", { name: /More views/ }));
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([expect.stringContaining("Smart View")]);
   });
 
   it("Export menu: scope summary, Export Selected disabled until selection, Oracle toggle", async () => {

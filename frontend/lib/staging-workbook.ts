@@ -333,6 +333,24 @@ export async function downloadSelectedFieldsExport(
   );
 }
 
+/** Export Selected from Source Verification: extracted fields by key and
+ * table rows by their position in the stored table; the server reads the
+ * values and writes nothing else. */
+export async function downloadSelectedTargetRecords(
+  documentId: string,
+  format: SelectedExportFormat,
+  fields: string[],
+  rows: { table: string; index: number }[],
+  fallbackName: string,
+): Promise<void> {
+  await postSelectedExport(
+    `/api/documents/${documentId}/extract-results/export-selected`,
+    { format, fields, rows },
+    format,
+    `${fallbackName.replace(/\.[A-Za-z0-9]{2,5}$/, "")}_selected.${format}`,
+  );
+}
+
 /** Custom export (backend app/staging/custom_export.py): output columns,
  * each a label and one or more source fields by id. A source with a
  * record_id is one value; without, a column of one repeating dataset (the
@@ -391,7 +409,7 @@ export async function downloadCustomExport(
   );
 }
 
-async function postSelectedExport(
+export async function postSelectedExport(
   url: string,
   body: object,
   format: SelectedExportFormat,

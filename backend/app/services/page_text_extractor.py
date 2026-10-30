@@ -7,6 +7,7 @@ import time
 
 import fitz
 
+from app.services.sorted_page_text import sorted_page_text
 from app.core.config import Settings
 from app.core.observability import log_event
 from app.services.ocr_detection import (
@@ -189,10 +190,8 @@ def extract_page(
     page = document.load_page(page_index)
     page_number = page_index + 1
 
-    native_text = page.get_text(
-        "text",
-        sort=True,
-    ).strip()
+    # Same text as page.get_text("text", sort=True), several times faster.
+    native_text = sorted_page_text(page).strip()
 
     native_blocks = page.get_text(
         "blocks",

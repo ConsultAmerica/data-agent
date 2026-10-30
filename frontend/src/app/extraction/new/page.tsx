@@ -1564,7 +1564,9 @@ function NewExtractionPageContent() {
           </div>
         </div>
 
-        {document && targetResult && targetResult.scalars.length > 0 && (
+        {/* Source Verification lives inside the Staging Workbook (below its
+            tabs) when the target results show; elsewhere it stays here. */}
+        {document && targetResult && targetResult.scalars.length > 0 && (contractAnalysis || presentedProfile) && (
           <div className="mt-8">
             <UcfFieldReview
               documentId={document.document_id}
@@ -1594,6 +1596,8 @@ function NewExtractionPageContent() {
                   processingDurationMs={targetResultDurationMs}
                   selectedResultId={sourceRequest?.id ?? null}
                   onViewSource={handleViewSource}
+                  embedSourceVerification={targetResult.scalars.length > 0}
+                  sourceVerificationRequest={sourceRequest}
                 />
               </div>
             </div>

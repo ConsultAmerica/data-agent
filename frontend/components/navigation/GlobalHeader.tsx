@@ -9,6 +9,7 @@ import CommandTrigger from "@/components/navigation/command-trigger";
 import DataomatixLogo from "@/components/navigation/dataomatix-logo";
 import MobileNavigation from "@/components/navigation/MobileNavigation";
 import NavDropdown from "@/components/navigation/NavDropdown";
+import ThemeToggle from "@/components/navigation/theme-toggle";
 import UserChip from "@/components/navigation/user-chip";
 import { TOP_MENUS, menuForPath } from "@/components/navigation/nav-config";
 
@@ -59,6 +60,8 @@ export default function GlobalHeader({ onOpenSearch }: GlobalHeaderProps) {
           </Link>
 
           <CommandTrigger onOpen={onOpenSearch} kbdClassName="hidden xl:inline" labelClassName="hidden 2xl:inline" />
+
+          <ThemeToggle />
 
           {/* The public header stays lean: the profile only (no backend status
               or environment; connection problems surface where they matter). */}

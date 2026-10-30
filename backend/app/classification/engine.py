@@ -71,6 +71,31 @@ SUBTYPES: dict[str, tuple[str, ...]] = {
     "invoice": ("Standard Invoice", "PO-Referenced Invoice"),
     "purchase_order": ("Purchase Order", "Purchase Order Amendment"),
     "academic_transcript": ("University Transcript", "School Transcript"),
+    "bank_statement": ("Checking Account Statement", "Savings Account Statement", "Credit Card Statement"),
+    "financial_statement": ("Balance Sheet", "Income Statement", "Cash Flow Statement"),
+    "passport": ("Passport Book", "Passport Card"),
+    "identity_card": ("National Identity Card", "Residence Permit"),
+}
+# (subtype, pattern) checked in order; the first that the text states wins.
+_STATED_SUBTYPES: dict[str, tuple[tuple[str, re.Pattern[str]], ...]] = {
+    "bank_statement": (
+        ("Credit Card Statement", re.compile(r"\bcredit\s+card\b.{0,40}\bstatement\b|\bminimum\s+payment\s+due\b", re.I)),
+        ("Savings Account Statement", re.compile(r"\bsavings\s+account\b", re.I)),
+        ("Checking Account Statement", re.compile(r"\bchecking\s+account\b|\bchecks\s+paid\b", re.I)),
+    ),
+    "financial_statement": (
+        ("Balance Sheet", re.compile(r"\bbalance\s+sheet\b|\bstatement\s+of\s+financial\s+position\b", re.I)),
+        ("Income Statement", re.compile(r"\bincome\s+statement\b|\bstatement\s+of\s+operations\b|\bprofit\s+and\s+loss\b", re.I)),
+        ("Cash Flow Statement", re.compile(r"\bstatement\s+of\s+cash\s+flows?\b|\bcash\s+flow\s+statement\b", re.I)),
+    ),
+    "passport": (
+        ("Passport Card", re.compile(r"\bpassport\s+card\b", re.I)),
+        ("Passport Book", re.compile(r"\bpassport\b", re.I)),
+    ),
+    "identity_card": (
+        ("Residence Permit", re.compile(r"\bresidence\s+permit\b|\bpermanent\s+resident\b", re.I)),
+        ("National Identity Card", re.compile(r"\bidentity\s+card\b|\bnational\s+id\b", re.I)),
+    ),
 }
 _PO_REFERENCE = re.compile(r"\b(purchase\s+order|p\.?\s?o\.?)\s*(no\.?|number|#|:)", re.I)
 _PO_AMENDMENT = re.compile(r"\b(change\s+order|purchase\s+order\s+(amendment|change)|po\s+amendment)\b", re.I)
@@ -143,6 +168,11 @@ def detect_subtype(family: str, text: str) -> tuple[str | None, str | None]:
     if family == "purchase_order":
         match = _PO_AMENDMENT.search(text)
         return ("Purchase Order Amendment", f'"{match.group(0).strip()}" found') if match else ("Purchase Order", None)
+    # Only a subtype the document states; never a guess.
+    for label, pattern in _STATED_SUBTYPES.get(family, ()):
+        match = pattern.search(text)
+        if match:
+            return label, f'"{match.group(0).strip()}" found'
     return None, None
 
 

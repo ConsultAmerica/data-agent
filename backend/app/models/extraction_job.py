@@ -83,3 +83,10 @@ class ExtractionJob(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+
+    # Touched every few seconds while the runner is alive; a running job
+    # whose heartbeat stops was lost with its process (job_recovery.py).
+    heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )

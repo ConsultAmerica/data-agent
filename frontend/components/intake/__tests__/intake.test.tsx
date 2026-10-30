@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import BatchFooter from "@/components/intake/batch-footer";
 import BatchIntakePortal from "@/components/intake/batch-intake-portal";
 import { BatchQueue, type BatchQueueDeps, type QueueItem } from "@/components/intake/batch-queue";
-import ProcessingQueue from "@/components/intake/processing-queue";
+import ProcessingQueue, { STALL_AFTER_MS, formatElapsed, processingDetails, progressLine, statusBadge } from "@/components/intake/processing-queue";
+import { ApiError } from "@/lib/api";
 import UcfFieldReview from "@/components/intake/ucf-field-review";
 import type { IntakeConfig, IntakeFields } from "@/lib/intake";
 import type { ExtractTargetsResult, UploadedDocument } from "@/types/document";
@@ -16,6 +17,12 @@ const { envMock, setStatusMock } = vi.hoisted(() => ({
 
 vi.mock("@/components/navigation/client-env", () => ({
   useDeployEnvironment: envMock,
+}));
+
+const { jobMock } = vi.hoisted(() => ({ jobMock: vi.fn() }));
+vi.mock("@/lib/documents", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/documents")>()),
+  getExtractionJob: jobMock,
 }));
 
 vi.mock("@/lib/intake", async (importOriginal) => ({
@@ -106,6 +113,114 @@ describe("BatchQueue", () => {
     expect(first.ocrCompleted).toBe(1);
   });
 
+  it("extracts two files at a time, each file once, and records when each finished", async () => {
+    const releases: (() => void)[] = [];
+    const d = deps({
+      extract: vi.fn().mockImplementation(
+        () => new Promise((resolve) => releases.push(() => resolve({ scalars: [{}], tables: [], unresolved_targets: [], warnings: [] }))),
+      ),
+    });
+    const queue = new BatchQueue(() => fields, d);
+    queue.addFiles([new File(["a"], "a.pdf"), new File(["b"], "b.pdf"), new File(["c"], "c.pdf")]);
+    // Two extract at once; the third waits for a free slot.
+    await settle(queue, (items) => items.filter((item) => item.status === "extracting").length === 2);
+    expect(d.extract).toHaveBeenCalledTimes(2);
+    expect(queue.extractionRunning).toBe(true);
+    // Finishing extractions frees slots; the third file then starts.
+    await waitFor(() => {
+      releases.splice(0).forEach((release) => release());
+      expect(queue.getSnapshot().every((item) => item.status === "extracted")).toBe(true);
+    });
+    expect((d.extract as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0]).sort()).toEqual(["doc-a.pdf", "doc-b.pdf", "doc-c.pdf"]);
+    for (const item of queue.getSnapshot()) {
+      expect(item.startedAt).toEqual(expect.any(Number));
+      expect(item.finishedAt).toBeGreaterThanOrEqual(item.startedAt!);
+    }
+    await waitFor(() => expect(queue.extractionRunning).toBe(false));
+  });
+
+  it("details processing with reported pages, batches, last update, retries and errors only", () => {
+    const base = { status: "processing", pipelineStage: "rendering_ocr", startedAt: 0, finishedAt: null, pageCount: 288, pagesDone: 120,
+      ocrRequired: null, ocrCompleted: null, batchesTotal: null, batchesDone: null, retries: 2, lastProgressAt: 50_000, error: null } as unknown as QueueItem;
+    const rows = Object.fromEntries(processingDetails(base, 60_000).map((row) => [row.label, row.value]));
+    expect(rows).toEqual({
+      Stage: "Reading pages · in progress",
+      "Pages read": "120 of 288",
+      Elapsed: "1:00",
+      "Last update": "0:10 ago",
+      Retries: "2",
+    });
+    // No backend report for over three minutes: flagged, not guessed.
+    const stalled = processingDetails({ ...base, lastProgressAt: 0 }, STALL_AFTER_MS + 1_000).find((row) => row.label === "Last update")!;
+    expect(stalled.tone).toBe("warning");
+    expect(stalled.value).toMatch(/no progress reported/);
+    const extracting = processingDetails({ ...base, status: "extracting", pipelineStage: "extracting_data", batchesDone: 3, batchesTotal: 5 }, 60_000);
+    expect(extracting.find((row) => row.label === "Batches")?.value).toBe("3 of 5");
+    const failed = processingDetails({ ...base, status: "failed", finishedAt: 30_000, error: "Interrupted by a server restart." }, 60_000);
+    expect(failed.find((row) => row.label === "Error")).toMatchObject({ value: "Interrupted by a server restart.", tone: "danger" });
+    expect(failed.find((row) => row.label === "Last update")).toBeUndefined();
+    expect(processingDetails({ ...base, status: "extracted" }, 60_000)).toEqual([]);
+  });
+
+  it("tells an unavailable job status apart from a confirmed failure, and retries it", async () => {
+    const d = deps({ process: vi.fn().mockRejectedValueOnce(new ApiError("Job not found.", 404)).mockResolvedValue(undefined) });
+    const queue = new BatchQueue(() => fields, d);
+    queue.addFiles([new File(["a"], "a.pdf")]);
+    await settle(queue, (items) => items[0].status === "failed");
+    const [item] = queue.getSnapshot();
+    expect(item.statusUnavailable).toBe(true);
+    expect(item.error).toMatch(/Status unavailable.*isn't a confirmed processing failure/);
+    expect(statusBadge(item).label).toBe("Status unavailable");
+    expect(processingDetails(item, Date.now()).find((row) => row.label === "Status")?.tone).toBe("warning");
+    queue.retry(item.id);
+    await settle(queue, (items) => items[0].status === "extracted");
+    expect(queue.getSnapshot()[0].statusUnavailable).toBe(false);
+  });
+
+  it("shows the backend's finer job states as badges", () => {
+    const base = { status: "processing", jobState: null, statusUnavailable: false } as unknown as QueueItem;
+    expect(statusBadge(base).label).toBe("Classifying");
+    expect(statusBadge({ ...base, jobState: "interrupted" }).label).toBe("Interrupted");
+    expect(statusBadge({ ...base, status: "failed", jobState: "partially_complete" }).label).toBe("Partially complete");
+    expect(statusBadge({ ...base, status: "failed", jobState: "cancelled" }).label).toBe("Cancelled");
+  });
+
+  it("opens diagnostics with the job's state, retries, error and stage timings", async () => {
+    jobMock.mockResolvedValueOnce({
+      id: 153, document_id: "d", job_type: "processing", status: "failed", state: "partially_complete", stage: "reading_pages",
+      progress: 0, error_message: "pages 26–50: MemoryError", retry_count: 2, created_at: "2026-10-29T10:00:00Z",
+      started_at: "2026-10-29T10:00:01Z", completed_at: null,
+      result: { metrics: { total_ms: 61_000, queue_wait_ms: 12, stages: [{ stage: "document_page_loading", ms: 41_000, percent: 67.2 }] } },
+    });
+    const item = { id: "i1", name: "Contract - FA30.pdf", status: "failed", jobId: 153, size: 3_100_000, documentId: "d",
+      file: null, uploadFraction: 1, pipelineStage: null, pageCount: 288, ocrRequired: null, ocrCompleted: null, error: "x",
+      failedPhase: "processing", duplicate: null, portfolio: null, staged: null, profileLabel: null, typeLabel: null, category: null,
+      categoryLabel: null, fieldsExtracted: null, note: null } as unknown as QueueItem;
+    render(<ProcessingQueue items={[item]} onOpen={vi.fn()} onRetry={vi.fn()} onRemove={vi.fn()} onResolveDuplicate={vi.fn()} onSelectPortfolioFile={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "View diagnostics for Contract - FA30.pdf" }));
+    const dialog = await screen.findByRole("dialog", { name: "Diagnostics for Contract - FA30.pdf" });
+    expect(await within(dialog).findByTestId("diagnostics-job")).toHaveTextContent("failed (partially_complete)");
+    expect(within(dialog).getByTestId("diagnostics-job")).toHaveTextContent("pages 26–50: MemoryError");
+    expect(within(dialog).getByTestId("diagnostics-stages")).toHaveTextContent("document page loading41,000 ms67.2%");
+    expect(jobMock).toHaveBeenCalledWith(153);
+
+    jobMock.mockRejectedValueOnce(new ApiError("Job not found.", 404));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close diagnostics" }));
+    fireEvent.click(screen.getByRole("button", { name: "View diagnostics for Contract - FA30.pdf" }));
+    expect(await screen.findByText(/Job 153 is not available from the server/)).toBeInTheDocument();
+  });
+
+  it("describes progress with real stages, elapsed time and place in line", () => {
+    const base = { startedAt: 1_000, finishedAt: null } as unknown as QueueItem;
+    expect(progressLine({ ...base, status: "processing", pipelineStage: "discovering_fields" }, 43_000, -1)).toBe("Finding fields · 0:42");
+    expect(progressLine({ ...base, status: "waiting", startedAt: null, pipelineStage: null }, 0, 2)).toBe("Waiting · 2 ahead");
+    expect(progressLine({ ...base, status: "processed", pipelineStage: null }, 11_000, -1)).toBe("Waiting to extract · 0:10");
+    expect(progressLine({ ...base, status: "extracted", finishedAt: 95_000, pipelineStage: null }, 999_999, -1)).toBe("Done in 1:34");
+    expect(progressLine({ ...base, status: "failed", finishedAt: 4_000, pipelineStage: null }, 999_999, -1)).toBe("Failed after 0:03");
+    expect(formatElapsed(3_725_000)).toBe("62:05");
+    expect(progressLine({ ...base, status: "duplicate", pipelineStage: null }, 9_000, -1)).toBe("Waiting for your choice");
+  });
+
   it("groups a file as soon as it is processed, then takes the staged type after extraction", async () => {
     let staged = false;
     let release!: () => void;
@@ -162,7 +277,7 @@ describe("BatchQueue", () => {
     // Reused with a discovered schema: no reprocessing, straight to extraction.
     expect(d.process).not.toHaveBeenCalled();
     await settle(queue, (items) => items[0].status === "extracted");
-    expect(d.extract).toHaveBeenCalledWith("existing-1", ["t1"], expect.any(Function));
+    expect(d.extract).toHaveBeenCalledWith("existing-1", ["t1"], expect.any(Function), expect.any(Function));
   });
 
   it("reports a failed upload per file and can retry it", async () => {
@@ -183,7 +298,7 @@ describe("BatchQueue", () => {
     await settle(queue, (items) => items[0].status === "extracted");
 
     expect(d.extract).toHaveBeenCalledTimes(1);
-    expect(d.extract).toHaveBeenCalledWith("doc-a.pdf", ["t1"], expect.any(Function));
+    expect(d.extract).toHaveBeenCalledWith("doc-a.pdf", ["t1"], expect.any(Function), expect.any(Function));
     const [item] = queue.getSnapshot();
     expect(item.status).toBe("extracted");
     expect(item.fieldsExtracted).toBe(2);

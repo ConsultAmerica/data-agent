@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -15,6 +15,9 @@ import {
 import DuplicateDialog from "@/components/duplicate-dialog";
 import PortfolioPicker from "@/components/portfolio-picker";
 import type { QueueItem } from "@/components/intake/batch-queue";
+import { ApiError } from "@/lib/api";
+import { getExtractionJob } from "@/lib/documents";
+import type { ExtractionJob } from "@/types/document";
 import { formatBytes } from "@/lib/format";
 import { FILE_STAGES, fileStageStates, type FileStage, type FileStageState } from "@/lib/intake";
 
@@ -51,6 +54,118 @@ const STATUS_TONE: Record<QueueItem["status"], string> = {
   extracted: "bg-success/10 text-success",
   failed: "bg-danger/10 text-danger",
 };
+
+/** The backend stage a file is in, in words (only stages it reports). */
+const STAGE_WORDS: Record<string, string> = {
+  uploaded: "Uploaded",
+  queued: "Queued on the server",
+  reading_document: "Reading the document",
+  processing_document: "Reading the document",
+  rendering_ocr: "Reading pages",
+  running_ocr: "Running OCR",
+  indexing: "Indexing",
+  detecting_structure: "Detecting structure",
+  discovering_fields: "Finding fields",
+  extracting_data: "Extracting values",
+  validating_results: "Validating",
+  v3_classification: "Classifying",
+  prepare_staging: "Preparing the workbook",
+};
+
+export function formatElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+/** The current time, ticking each second only while `active`. */
+function useNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  return now;
+}
+
+/** What the file is doing now, how long it has taken, and its place in
+ * line — only facts the queue knows (no estimated percentages). */
+export function progressLine(item: QueueItem, now: number, waitingAhead: number): string | null {
+  const elapsed = item.startedAt != null ? formatElapsed((item.finishedAt ?? now) - item.startedAt) : null;
+  if (item.status === "waiting") return waitingAhead > 0 ? `Waiting · ${waitingAhead} ahead` : "Waiting · next";
+  if (item.status === "duplicate" || item.status === "portfolio") return "Waiting for your choice";
+  if (item.status === "processed") return `Waiting to extract${elapsed ? ` · ${elapsed}` : ""}`;
+  if (item.status === "extracted") return elapsed ? `Done in ${elapsed}` : null;
+  if (item.status === "failed") return elapsed ? `Failed after ${elapsed}` : null;
+  const stage = (item.pipelineStage && STAGE_WORDS[item.pipelineStage]) || (item.status === "uploading" ? "Uploading" : null);
+  return [stage, elapsed].filter(Boolean).join(" · ") || null;
+}
+
+/** No backend report for this long while active: possibly stalled. The
+ * server marks a job whose worker stopped as interrupted (job_recovery.py). */
+export const STALL_AFTER_MS = 180_000;
+
+const ACTIVE = new Set<QueueItem["status"]>(["uploading", "processing", "extracting"]);
+
+/** The detail panel's rows: only values the backend or the browser
+ * actually recorded — nothing estimated, no percentages. */
+export function processingDetails(item: QueueItem, now: number): { label: string; value: string; tone?: "warning" | "danger" }[] {
+  const rows: { label: string; value: string; tone?: "warning" | "danger" }[] = [];
+  const active = ACTIVE.has(item.status);
+  if (!active && item.status !== "failed") return rows;
+  const stage = (item.pipelineStage && STAGE_WORDS[item.pipelineStage]) || STATUS_LABEL[item.status];
+  rows.push({
+    label: "Stage",
+    value: `${stage} · ${item.statusUnavailable ? "status unavailable" : item.status === "failed" ? "failed" : "in progress"}`,
+    tone: item.statusUnavailable ? "warning" : item.status === "failed" ? "danger" : undefined,
+  });
+  if (item.jobState && JOB_STATE_WORDS[item.jobState]) {
+    rows.push({ label: "State", value: JOB_STATE_WORDS[item.jobState], tone: item.jobState === "interrupted" ? "warning" : undefined });
+  }
+  if (item.pagesDone != null && item.pageCount) rows.push({ label: "Pages read", value: `${item.pagesDone} of ${item.pageCount}` });
+  if (item.ocrRequired) rows.push({ label: "OCR pages", value: `${item.ocrCompleted ?? 0} of ${item.ocrRequired}` });
+  if (item.batchesTotal) rows.push({ label: "Batches", value: `${item.batchesDone ?? 0} of ${item.batchesTotal}` });
+  if (item.startedAt != null) rows.push({ label: "Elapsed", value: formatElapsed((item.finishedAt ?? now) - item.startedAt) });
+  if (active && item.lastProgressAt != null) {
+    const quiet = now - item.lastProgressAt;
+    rows.push(
+      quiet > STALL_AFTER_MS
+        ? { label: "Last update", value: `${formatElapsed(quiet)} ago — no progress reported; if the server stopped, the job will be marked interrupted and can be retried`, tone: "warning" }
+        : { label: "Last update", value: `${formatElapsed(quiet)} ago` },
+    );
+  }
+  if (item.retries) rows.push({ label: "Retries", value: String(item.retries), tone: "warning" });
+  if (item.status === "failed" && item.error) {
+    rows.push(item.statusUnavailable ? { label: "Status", value: item.error, tone: "warning" } : { label: "Error", value: item.error, tone: "danger" });
+  }
+  return rows;
+}
+
+/** Badge for the backend's finer job state, where it differs from the
+ * queue's own status. */
+const JOB_STATE_BADGE: Record<string, { label: string; tone: string }> = {
+  interrupted: { label: "Interrupted", tone: "bg-warning/10 text-warning" },
+  partially_complete: { label: "Partially complete", tone: "bg-warning/10 text-warning" },
+  cancelled: { label: "Cancelled", tone: "bg-surface-soft text-text-secondary" },
+};
+
+const JOB_STATE_WORDS: Record<string, string> = {
+  queued: "Queued",
+  processing: "Processing",
+  interrupted: "Interrupted — a worker stopped; its pages are being picked up again",
+  partially_complete: "Partially complete — some pages finished, others failed",
+  ready_for_review: "Ready for review",
+  completed: "Completed",
+  failed: "Failed",
+  cancelled: "Cancelled",
+};
+
+export function statusBadge(item: QueueItem): { label: string; tone: string } {
+  if (item.statusUnavailable) return { label: "Status unavailable", tone: "bg-warning/10 text-warning" };
+  const special = item.jobState ? JOB_STATE_BADGE[item.jobState] : undefined;
+  if (special) return special;
+  return { label: STATUS_LABEL[item.status], tone: STATUS_TONE[item.status] };
+}
 
 const REMOVABLE = new Set<QueueItem["status"]>(["waiting", "duplicate", "portfolio", "failed", "processed", "extracted"]);
 
@@ -99,7 +214,10 @@ export default function ProcessingQueue({
   onSelectPortfolioFile,
 }: ProcessingQueueProps) {
   const [promptId, setPromptId] = useState<string | null>(null);
+  const [diagnosticsFor, setDiagnosticsFor] = useState<QueueItem | null>(null);
   const prompt = items.find((item) => item.id === promptId) ?? null;
+  const now = useNow(items.some((item) => item.startedAt != null && item.finishedAt == null && item.status !== "waiting"));
+  const waitingOrder = items.filter((item) => item.status === "waiting").map((item) => item.id);
 
   if (items.length === 0) {
     return (
@@ -167,10 +285,15 @@ export default function ProcessingQueue({
                 : ""}
               {item.fieldsExtracted != null ? ` · ${item.fieldsExtracted} fields extracted` : ""}
             </p>
+            {(() => {
+              const line = progressLine(item, now, waitingOrder.indexOf(item.id));
+              return line ? <p className="text-xs tabular-nums text-text-secondary" data-testid="queue-progress">{line}</p> : null;
+            })()}
           </div>
-          <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_TONE[item.status]}`}>
-            {STATUS_LABEL[item.status]}
-          </span>
+          {(() => {
+            const badge = statusBadge(item);
+            return <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${badge.tone}`} data-testid="queue-status">{badge.label}</span>;
+          })()}
           <div className="flex items-center gap-1.5">
             {(item.status === "duplicate" || item.status === "portfolio") && (
               <button type="button" className="btn-secondary px-2.5 py-1 text-xs" onClick={() => setPromptId(item.id)}>
@@ -185,6 +308,16 @@ export default function ProcessingQueue({
                 aria-pressed={selected}
               >
                 {selected ? "Open" : "Review"}
+              </button>
+            )}
+            {item.jobId != null && (
+              <button
+                type="button"
+                className="rounded-lg px-2 py-1 text-xs font-medium text-text-secondary hover:bg-surface-soft hover:text-foreground"
+                onClick={() => setDiagnosticsFor(item)}
+                aria-label={`View diagnostics for ${item.name}`}
+              >
+                Diagnostics
               </button>
             )}
             {item.status === "failed" && (item.file != null || item.documentId != null) && (
@@ -231,8 +364,23 @@ export default function ProcessingQueue({
           })}
         </ol>
 
+        {(() => {
+          const details = processingDetails(item, now);
+          if (details.length === 0) return null;
+          return (
+            <dl className="mt-2 ml-7 grid grid-cols-[7rem_1fr] gap-x-3 gap-y-0.5 rounded-lg border border-border bg-surface-soft/60 px-3 py-2 text-xs" data-testid="processing-details" aria-label={`Processing details for ${item.name}`}>
+              {details.map((row) => (
+                <div key={row.label} className="contents">
+                  <dt className="text-text-secondary">{row.label}</dt>
+                  <dd role={row.label === "Error" ? "alert" : undefined}
+                    className={`tabular-nums ${row.tone === "danger" ? "text-danger" : row.tone === "warning" ? "text-warning" : "text-foreground"}`}>{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+          );
+        })()}
         {item.note && <p className="mt-1.5 pl-7 text-xs text-text-muted">{item.note}</p>}
-        {item.error && (
+        {item.error && item.status !== "failed" && (
           <p className="mt-1.5 pl-7 text-xs text-danger" role="alert">
             {item.error}
           </p>
@@ -296,7 +444,90 @@ export default function ProcessingQueue({
           onCancel={() => setPromptId(null)}
         />
       )}
+      {diagnosticsFor?.jobId != null && (
+        <DiagnosticsDialog item={diagnosticsFor} jobId={diagnosticsFor.jobId} onClose={() => setDiagnosticsFor(null)} />
+      )}
     </section>
+  );
+}
+
+/** What the backend reports for a file's job: state, stage, times, retries,
+ * error and per-stage timings. No document content. */
+function DiagnosticsDialog({ item, jobId, onClose }: { item: QueueItem; jobId: number; onClose: () => void }) {
+  const [job, setJob] = useState<ExtractionJob | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let active = true;
+    getExtractionJob(jobId)
+      .then((value) => active && setJob(value))
+      .catch((err: unknown) =>
+        active &&
+        setError(
+          err instanceof ApiError && err.status === 404
+            ? `Job ${jobId} is not available from the server (removed, or started from another browser workspace).`
+            : err instanceof Error ? err.message : "Diagnostics could not be loaded.",
+        ),
+      );
+    return () => {
+      active = false;
+    };
+  }, [jobId]);
+  const metrics = (job?.result as { metrics?: { stages?: { stage: string; ms: number; percent: number }[]; total_ms?: number; queue_wait_ms?: number | null } } | null)?.metrics;
+  const rows: [string, string][] = job
+    ? [
+        ["Job", `#${job.id} · ${job.job_type}`],
+        ["Status", job.state ? `${job.status} (${job.state})` : job.status],
+        ["Stage", job.stage ?? "—"],
+        ["Created", job.created_at ?? "—"],
+        ["Started", job.started_at ?? "—"],
+        ["Completed", job.completed_at ?? "—"],
+        ["Retries", String(job.retry_count ?? 0)],
+        ["Error", job.error_message ?? "—"],
+        ...(metrics?.total_ms != null ? ([["Total", formatElapsed(metrics.total_ms)]] as [string, string][]) : []),
+        ...(metrics?.queue_wait_ms != null ? ([["Queue wait", `${metrics.queue_wait_ms} ms`]] as [string, string][]) : []),
+      ]
+    : [];
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" role="dialog" aria-modal="true" aria-label={`Diagnostics for ${item.name}`}>
+      <div className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-xl border border-border bg-surface p-5 text-xs shadow-xl">
+        <div className="mb-3 flex items-start justify-between gap-2">
+          <h3 className="text-sm font-semibold text-foreground">Diagnostics · {item.name}</h3>
+          <button type="button" onClick={onClose} aria-label="Close diagnostics" className="rounded-md p-1 text-text-muted hover:bg-surface-soft">
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+        {error && <p className="text-warning" role="status">{error}</p>}
+        {!job && !error && <p className="text-text-muted">Loading…</p>}
+        {job && (
+          <>
+            <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1" data-testid="diagnostics-job">
+              {rows.map(([label, value]) => (
+                <div key={label} className="contents">
+                  <dt className="text-text-secondary">{label}</dt>
+                  <dd className="break-words tabular-nums text-foreground">{value}</dd>
+                </div>
+              ))}
+            </dl>
+            {metrics?.stages && metrics.stages.length > 0 && (
+              <table className="mt-3 w-full" data-testid="diagnostics-stages">
+                <thead>
+                  <tr className="text-left text-text-secondary"><th className="py-1 font-medium">Stage</th><th className="py-1 text-right font-medium">Time</th><th className="py-1 text-right font-medium">Share</th></tr>
+                </thead>
+                <tbody>
+                  {metrics.stages.map((stage) => (
+                    <tr key={stage.stage} className="border-t border-border/60">
+                      <td className="py-1">{stage.stage.replace(/_/g, " ")}</td>
+                      <td className="py-1 text-right tabular-nums">{stage.ms.toLocaleString()} ms</td>
+                      <td className="py-1 text-right tabular-nums">{stage.percent}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 

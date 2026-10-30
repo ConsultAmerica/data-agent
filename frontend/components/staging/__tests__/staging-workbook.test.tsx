@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cellSourceRequest } from "@/components/staging/review-status";
@@ -13,6 +13,9 @@ import {
   type StagingWorkbook as Workbook,
 } from "@/lib/staging-workbook";
 
+vi.mock("@/lib/original-structure", () => ({
+  getOriginalStructure: vi.fn(() => new Promise(() => {})),
+}));
 vi.mock("@/lib/staging-workbook", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/staging-workbook")>()),
   getStagingWorkbook: vi.fn(),
@@ -171,6 +174,12 @@ function contractWorkbook(overrides: Partial<Workbook> = {}): Workbook {
   };
 }
 
+// Content tests open the Summary tab (the first tab before Original Structure).
+beforeEach(() => {
+  window.sessionStorage.clear();
+  window.sessionStorage.setItem("dx-presentation-tab:doc-1", "summary");
+});
+
 describe("StagingWorkbook load failures", () => {
   beforeEach(() => {
     getWorkbook.mockReset();
@@ -230,11 +239,27 @@ describe("StagingWorkbook rendering", () => {
     getWorkbook.mockReset();
   });
 
+  it("shows Source Verification under the Staging Workbook / Source tabs, above the workbook sections", async () => {
+    getWorkbook.mockResolvedValue(contractWorkbook());
+    render(<StagingWorkbook documentId="doc-1" sourceVerification={<div data-testid="source-verification-slot">viewer</div>} />);
+    const slot = await screen.findByTestId("source-verification-slot");
+    const viewTabs = screen.getByRole("tablist", { name: "Workbook views" });
+    const sections = screen.getByRole("tablist", { name: "Document sections" });
+    // tabs → Source Verification → the workbook's sections (Statement of Work …)
+    expect(viewTabs.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(slot.compareDocumentPosition(sections) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The Source view has its own viewer: no second one.
+    fireEvent.click(within(viewTabs).getByRole("tab", { name: "Source" }));
+    expect(screen.queryByTestId("source-verification-slot")).toBeNull();
+    fireEvent.click(within(viewTabs).getByRole("tab", { name: "Staging Workbook" }));
+    expect(await screen.findByTestId("source-verification-slot")).toBeInTheDocument();
+  });
+
   it("renders business groups from the profile's datasets, omitting blank fields", async () => {
     getWorkbook.mockResolvedValue(contractWorkbook());
     render(<StagingWorkbook documentId="doc-1" />);
 
-    expect(await screen.findByRole("tab", { name: "Summary" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("tab", { name: "Summary" }));
     expect(screen.getByRole("tab", { name: "Line Items" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Government Contract" })).toBeInTheDocument();
     expect(screen.getByText("47QRCA25DSF07")).toBeInTheDocument();
@@ -362,6 +387,10 @@ describe("StagingWorkbook rendering", () => {
     const tabs = (await screen.findAllByRole("tab")).map((tab) => tab.getAttribute("aria-label"));
     expect(tabs).toEqual(expect.arrayContaining(["Summary", "Line Items", "Clauses"]));
     expect(tabs).not.toContain("Contract Summary");
+    const sectionTabs = within(screen.getByRole("tablist", { name: "Document sections" })).getAllByRole("tab").map((tab) => tab.textContent);
+    expect(sectionTabs[0]).toBe("Original Structure");
+    expect(sectionTabs.at(-1)).toBe("Summary");
+    fireEvent.click(screen.getByRole("tab", { name: "Summary" }));
     // Sections follow the professional order; labels are the source's own.
     const headings = screen.getAllByRole("heading", { level: 4 }).map((heading) => heading.textContent);
     expect(headings).toEqual(["Solicitation & Award", "Issuing Office", "Performance"]);
@@ -570,7 +599,7 @@ describe("Generic presentation", () => {
     render(<StagingWorkbook documentId="doc-1" />);
     const tabs = await screen.findByRole("tablist", { name: "Document sections" });
     const labels = Array.from(tabs.querySelectorAll("button")).map((b) => b.getAttribute("aria-label"));
-    expect(labels).toEqual(["Summary"]);
+    expect(labels).toEqual(["Original Structure", "Summary"]);
     expect(screen.getByText("Certificate")).toBeInTheDocument();
   });
 
@@ -715,12 +744,12 @@ describe("Academic transcript presentation", () => {
     expect(screen.queryByRole("heading", { name: "English Composition" })).toBeNull();
   });
 
-  it("leads with a Summary of document-level details and no Other Information tab", async () => {
+  it("keeps a Summary of document-level details (the last tab) and no Other Information tab", async () => {
     getWorkbook.mockResolvedValue(transcriptWorkbook());
     render(<StagingWorkbook documentId="doc-1" />);
     const sections = await screen.findByRole("tablist", { name: "Document sections" });
     const labels = Array.from(sections.querySelectorAll("button")).map((b) => b.getAttribute("aria-label"));
-    expect(labels).toEqual(["Summary", "Student & Program", "Academic Record", "Academic Summary"]);
+    expect(labels).toEqual(["Original Structure", "Student & Program", "Academic Record", "Academic Summary", "Summary"]);
     expect(screen.getByRole("tab", { name: "Staging Workbook" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Source" })).toBeInTheDocument();
   });
@@ -885,7 +914,12 @@ describe("Invoice presentation", () => {
     render(<StagingWorkbook documentId="doc-1" />);
     const nav = await screen.findByRole("tablist", { name: "Document sections" });
     const labels = Array.from(nav.querySelectorAll("[role='tab']")).map((tab) => tab.getAttribute("aria-label"));
-    expect(labels).toEqual(["Summary", "Parties", "Line Items", "Charges & Totals"]);
+    expect(labels).toEqual(["Original Structure", "Parties", "Line Items", "Charges & Totals", "Summary"]);
+    // The chosen tab survives a review action that reloads the workbook.
+    fireEvent.click(screen.getByRole("tab", { name: "Line Items" }));
+    cleanup();
+    render(<StagingWorkbook documentId="doc-1" />);
+    expect(await screen.findByRole("tab", { name: "Line Items" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("omits blank fields and replaces per-row OCR warnings with a review indicator", async () => {
