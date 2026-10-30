@@ -21,7 +21,7 @@ from app.core.auth import ActorContext, get_current_actor, require_permission
 from app.database.dependencies import get_database
 from app.models.document import Document
 from app.services.document_storage import DocumentStorageError
-from app.source_structure.original_export import build_original_structure_xlsx, original_rows
+from app.source_structure.original_export import build_original_structure_xlsx, csv_rows
 from app.source_structure.original_layout import original_layout_for
 from app.source_structure.structure_review import StructureAction, review_records
 
@@ -53,7 +53,7 @@ async def export_original_structure(
     database: Session = Depends(get_database),
     actor: ActorContext = Depends(require_permission("export.read")),
 ) -> Response:
-    """The Original Structure view as Excel: sections, numbered items and
+    """The Original File tab as Excel: sections, numbered items and
     printed tables in document order, every value kept as printed text."""
 
     document = database.get(Document, document_id)
@@ -68,7 +68,7 @@ async def export_original_structure(
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": attachment_header(f"{PurePath(name).stem} - original structure.xlsx")},
+        headers={"Content-Disposition": attachment_header(f"{PurePath(name).stem} - original file.xlsx")},
     )
 
 
@@ -134,7 +134,8 @@ def selected_layout(layout: dict[str, Any], keys: set[str]) -> dict[str, Any]:
     return {
         **layout, "sections": sections, "unplaced": unplaced,
         "stats": {**layout["stats"], "fields": len(fields), "blank_fields": sum(1 for f in fields if f["blank"]),
-                  "tables": len(tables), "table_rows": sum(t["row_count"] for t in tables)},
+                  "tables": len(tables), "table_rows": sum(t["row_count"] for t in tables),
+                  "quality": {code: sum(1 for f in fields if f.get("quality") == code) for code in layout["stats"].get("quality", {})}},
     }
 
 
@@ -174,7 +175,7 @@ def export_original_structure_selection(
         )
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    for row in original_rows(chosen):
+    for row in csv_rows(chosen):
         # Spreadsheet-safe: text starting like a formula is never executed.
         writer.writerow([("'" + v) if isinstance(v, str) and v[:1] in ("=", "+", "@") else v for v in row])
     return Response(

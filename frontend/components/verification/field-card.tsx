@@ -3,7 +3,7 @@
 import { Check, ChevronDown, ChevronRight, Crosshair, History, Pencil, X } from "lucide-react";
 import { memo, useEffect, useState } from "react";
 
-import { TriCheckbox } from "@/components/original-structure/original-structure-view";
+import { QUALITY_TONE, TriCheckbox } from "@/components/original-structure/original-structure-view";
 import { getRecordHistory, reviewStructureRecords, type RecordHistoryEntry, type StructureAction } from "@/lib/original-structure";
 import { layoutId } from "@/lib/record-selection";
 import type { BusinessField } from "@/lib/verification";
@@ -124,8 +124,13 @@ function FieldCardInner({ documentId, field, density, focused, onFocus, onChange
     }
   }
 
+  // The value shown is the chosen candidate's: its data quality is the card's.
+  const chosen = field.candidates.find((c) => c.record_key === field.record_key);
   const chips = (
     <span className="flex shrink-0 flex-wrap items-center gap-1">
+      {chosen?.quality && chosen.quality !== "confirmed" && (
+        <Chip tone={QUALITY_TONE[chosen.quality] ?? "bg-surface-soft text-text-secondary"} title="Data quality">{chosen.quality_label ?? chosen.quality}</Chip>
+      )}
       {field.value && <ConfidenceChip value={field.confidence} />}
       <Chip tone={validation.tone} title="Validation">{validation.label}</Chip>
       {field.review_status && <Chip tone={REVIEW_TONE[field.review_status] ?? "bg-surface-soft text-text-secondary"} title="Review">{field.review_status}</Chip>}
@@ -173,7 +178,7 @@ function FieldCardInner({ documentId, field, density, focused, onFocus, onChange
             <li key={candidate.record_key}>
               <button type="button" className="text-left hover:underline" onClick={() => onFocus(candidate.record_key)}>
                 <span className="text-foreground">{candidate.value || "(blank)"}</span>
-                <span className="text-text-muted"> · “{candidate.label}”{candidate.group ? ` under ${candidate.group}` : ""}{candidate.page ? ` · p. ${candidate.page}` : ""}</span>
+                <span className="text-text-muted"> · “{candidate.label}”{candidate.item ? ` under ${[candidate.item.number, candidate.item.name].filter(Boolean).join(" ")}` : candidate.group ? ` under ${candidate.group}` : ""}{candidate.page ? ` · p. ${candidate.page}` : ""}</span>
               </button>
             </li>
           ))}

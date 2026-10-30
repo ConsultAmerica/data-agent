@@ -1,6 +1,6 @@
 import { apiFetch } from "@/lib/api";
 import { downloadExport, postSelectedExport, type SelectedExportFormat } from "@/lib/staging-workbook";
-import type { LayoutFlag, LayoutTableRow } from "@/lib/original-structure";
+import type { LayoutFlag, LayoutItem, LayoutTableRow } from "@/lib/original-structure";
 
 /** Mirrors backend app/skills/business_data.py, validation.py, dates.py,
  * find.py and app/api/document_workspace.py. */
@@ -20,6 +20,11 @@ export interface BusinessCandidate {
   validation_status: string | null;
   review_status: string | null;
   layout_flags: LayoutFlag[];
+  /** Its numbered item and data quality, as the layout decided them. */
+  item?: LayoutItem | null;
+  field_name?: string | null;
+  quality?: string | null;
+  quality_label?: string | null;
 }
 
 export interface BusinessIssue {
@@ -173,7 +178,7 @@ function stem(name: string): string {
 /** Whole-document exports built from the same records as the workspace. */
 export function downloadWorkspaceExport(documentId: string, kind: "original" | "all_fields" | "json", documentName: string) {
   const spec = {
-    original: { format: "xlsx" as const, href: `/api/documents/${documentId}/original-structure/export.xlsx`, label: "Original Structure export", name: `${stem(documentName)} - original structure.xlsx` },
+    original: { format: "xlsx" as const, href: `/api/documents/${documentId}/original-structure/export.xlsx`, label: "Original File export", name: `${stem(documentName)} - original file.xlsx` },
     all_fields: { format: "csv" as const, href: `/api/documents/${documentId}/all-fields.csv`, label: "All Extracted Fields export", name: `${stem(documentName)} - all extracted fields.csv` },
     json: { format: "json" as const, href: `/api/documents/${documentId}/structured.json`, label: "Structured JSON export", name: `${stem(documentName)} - structured.json` },
   }[kind];

@@ -199,7 +199,7 @@ describe("DocumentWorkspace with a profile-declared presentation", () => {
     // Original Structure first, Summary last; Tables and Oracle only when used.
     const views = screen.getByRole("tablist", { name: "Document workspace" });
     expect(within(views).getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
-      "Original Structure",
+      "Original File",
       "Smart Review",
       "Advanced Grid",
       "Validation",
@@ -207,7 +207,7 @@ describe("DocumentWorkspace with a profile-declared presentation", () => {
       "History",
       "Summary",
     ]);
-    expect(within(views).getByRole("tab", { name: "Original Structure" })).toHaveAttribute("aria-selected", "true");
+    expect(within(views).getByRole("tab", { name: "Original File" })).toHaveAttribute("aria-selected", "true");
     fireEvent.click(screen.getByRole("button", { name: /More views/ }));
     expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([expect.stringContaining("Smart View")]);
   });

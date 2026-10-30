@@ -34,6 +34,25 @@ export interface StructureReview {
   reviewed_at: string | null;
 }
 
+/** The numbered item a field belongs to ("1." "Contractor Information"),
+ * decided once by the backend layout; views never re-derive it. */
+export interface LayoutItem {
+  /** Stable: the field's parent_id. */
+  id: string;
+  number: string;
+  name: string;
+  /** True: the item has sub-fields printed under its caption. */
+  has_subfields: boolean;
+}
+
+/** One state per value: confirmed, unreadable, missing_extraction, blank,
+ * conflicting, unverified_ocr or extracted (labels in `quality_labels`). */
+export type QualityCode = string;
+
+/** How far the source can be shown, kept apart from the value's quality:
+ * an exact region, its page only, or nothing recorded. */
+export type SourceLocation = "exact" | "page" | "none";
+
 export interface LayoutField {
   kind: "field";
   id: string;
@@ -61,6 +80,52 @@ export interface LayoutField {
   structure_review?: StructureReview;
   /** Extracted value shown in the section of its page; exact spot unknown. */
   placed_by_page?: boolean;
+  /** Its numbered item, or null for an unnumbered, uncaptioned label. */
+  item?: LayoutItem | null;
+  /** The field's own wording ("Cage"; "Briefed Through" for item 3). */
+  field_name?: string;
+  /** The first field of its item: the only row showing the item's number and name. */
+  item_start?: boolean;
+  /** Its item's id, else its section's id. */
+  parent_id?: string;
+  quality?: QualityCode;
+  quality_label?: string;
+  ocr_confidence?: number | null;
+  ocr_contested?: boolean;
+  /** A printed date range's Start Date and End Date (the value itself is kept). */
+  parts?: CompositePart[];
+  /** Printed again at the top of a later page (a running header). */
+  repeated_header?: boolean;
+  source_location?: SourceLocation;
+}
+
+export interface CompositePart {
+  label: string;
+  value: string;
+}
+
+/** A column holding one contract or item for every row: shown once above the table. */
+export interface SharedColumn {
+  column: number;
+  label: string;
+  value: string;
+}
+
+export interface CellIssue {
+  column: number;
+  quality: QualityCode;
+  message: string;
+}
+
+/** Contract metadata a table belongs to, shown once above it. */
+export interface TableContext {
+  /** The concept ("Contractor Name"). */
+  label: string;
+  /** The label as the document printed it ("Legal Entity"). */
+  printed_label?: string;
+  value: string;
+  record_key: string;
+  page: number | null;
 }
 
 export interface LayoutTableRow {
@@ -75,6 +140,13 @@ export interface LayoutTableRow {
   /** A row a reviewer added (missing from the printed table). */
   added?: boolean;
   structure_review?: StructureReview;
+  /** The table's record key. */
+  parent_id?: string;
+  /** The row's printed region on its page, for source navigation. */
+  bbox?: number[] | null;
+  /** Cells worth a second look (unreadable, unverified OCR); an empty cell is printed blank. */
+  cell_issues?: CellIssue[];
+  source_location?: SourceLocation;
 }
 
 export interface LayoutTable {
@@ -90,6 +162,13 @@ export interface LayoutTable {
   detection_method: string;
   rows: LayoutTableRow[];
   row_count: number;
+  /** Its section's id. */
+  parent_id?: string;
+  context?: TableContext[];
+  /** "printed": the document shows the block right above the table;
+   * "inherited": taken from the nearest block before it. */
+  context_source?: "printed" | "inherited" | null;
+  shared_columns?: SharedColumn[];
 }
 
 export interface LayoutSection {
@@ -108,6 +187,9 @@ export interface OriginalStructure {
   pages: number;
   sections: LayoutSection[];
   document_title?: string | null;
+  /** The document's first contract metadata block. */
+  document_context?: TableContext[];
+  quality_labels?: Record<QualityCode, string>;
   unplaced: LayoutField[];
   stats: {
     sections: number;
@@ -117,6 +199,10 @@ export interface OriginalStructure {
     table_rows: number;
     needs_review: number;
     unplaced: number;
+    /** Empty "fields" with no printed label, left out of the view. */
+    artifacts_hidden?: number;
+    quality?: Record<QualityCode, number>;
+    cell_issues?: Record<QualityCode, number>;
   };
 }
 

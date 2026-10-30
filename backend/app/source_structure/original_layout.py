@@ -5,14 +5,22 @@ each joined to what extraction and review recorded for it.
 Nothing here replaces a value. A row's document value is what the page
 shows; the extracted / reviewed value comes from the metadata row it was
 matched to, and any disagreement between the two is flagged for review.
+
+This is the one place the hierarchy is decided — section › numbered item ›
+sub-field, table › row — and each record's data quality. Original
+Structure, Smart Review and every export read it from here; none of them
+re-derives it.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import threading
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -25,6 +33,7 @@ from app.services.evidence_text import source_text_of
 from app.source_structure.models import FieldCandidate, StructuredSourceDocument, TableCandidate
 from app.source_structure.service import get_or_build_source_structure
 from app.source_structure.text_shapes import infer_value_type, normalize_space
+from app.staging.validation import OCR_VERIFY_MIN_CONFIDENCE
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +53,114 @@ FLAG_LABELS = {
     CELL_COLUMN_MISMATCH: "Value doesn't match the rest of its column",
     MISSED_VALUE: "Extraction found no value, but the document shows one",
 }
+
+# Data quality: what the source and extraction say about a value, apart
+# from its review status. Exactly one per field; per table cell, only the
+# cells worth a second look are listed (an empty cell is printed blank).
+CONFIRMED = "confirmed"  # read from the source, nothing contradicts it
+UNREADABLE = "unreadable"  # the source text can't be read ("�", "#####")
+MISSING_EXTRACTION = "missing_extraction"  # the page shows a value, extraction has none
+BLANK = "blank"  # printed blank on the source, intentionally empty
+CONFLICTING = "conflicting"  # candidates disagree with each other or the page
+UNVERIFIED_OCR = "unverified_ocr"  # read by OCR below the verify bar, not yet reviewed
+EXTRACTED = "extracted"  # extracted with nothing to check it against on the page
+
+QUALITY_LABELS = {
+    CONFIRMED: "Confirmed source value",
+    UNREADABLE: "Unreadable source value",
+    MISSING_EXTRACTION: "Missing — Review Required",
+    BLANK: "Blank in source",
+    CONFLICTING: "Conflicting candidates",
+    UNVERIFIED_OCR: "Unverified OCR result",
+    EXTRACTED: "Extracted value",
+}
+
+# Where a record sits on the source, kept apart from its quality: a value
+# without coordinates is not, for that reason, a wrong value.
+EXACT, PAGE_ONLY, NO_LOCATION = "exact", "page", "none"
+SOURCE_LOCATION_LABELS = {
+    EXACT: "Exact region on the page",
+    PAGE_ONLY: "Source page only (no exact position recorded)",
+    NO_LOCATION: "No source position recorded",
+}
+_CONFLICT_FLAGS = {CONFLICTING_VALUES, LABEL_VALUE_MISMATCH, EVIDENCE_OTHER_FIELD}
+# A run of "#" is a value too wide for its printed cell; U+FFFD a glyph that
+# couldn't be decoded.
+_UNREADABLE_TEXT = re.compile("^#{3,}$|\ufffd")
+_REVIEWED = {"Approved", "Corrected"}
+
+# "3. Briefed Through", "9a) Prime Contractor": a numbered form item.
+_NUMBERED_ITEM = re.compile(r"^(\d{1,3}[a-z]?[.)])\s+(\S.*)$")
+
+# Document-level metadata shown once above each table, found by the printed
+# wording of the field that holds it: metadata_aliases.json, extended by
+# the file METADATA_ALIASES_PATH names.
+_ALIASES_FILE = Path(__file__).with_name("metadata_aliases.json")
+
+
+def _alias_key(label: str | None) -> str:
+    return normalize_space(label or "").lower().strip(" :.")
+
+
+@lru_cache(maxsize=1)
+def metadata_aliases() -> dict[str, frozenset[str]]:
+    """Concept → printed wordings, in display order."""
+
+    from app.core.config import get_settings
+
+    sources = [json.loads(_ALIASES_FILE.read_text(encoding="utf-8"))]
+    extra = get_settings().metadata_aliases_path
+    if extra:
+        try:
+            sources.append(json.loads(Path(extra).read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            logger.exception("Metadata aliases at %s couldn't be read; using the built-in list", extra)
+    aliases: dict[str, set[str]] = {}
+    for source in sources:
+        for concept, wordings in source.items():
+            if concept.startswith("_") or not isinstance(wordings, list):
+                continue
+            aliases.setdefault(concept, {_alias_key(concept)}).update(_alias_key(w) for w in wordings if isinstance(w, str))
+    return {concept: frozenset(wordings) for concept, wordings in aliases.items()}
+
+
+def metadata_concept(label: str | None) -> str | None:
+    """The metadata a printed label names ("Legal Entity" → Contractor
+    Name), or None."""
+
+    key = _alias_key(label)
+    return next((concept for concept, wordings in metadata_aliases().items() if key in wordings), None)
+
+
+_CONTRACT_NUMBER = "Contract Number"
+
+# Table columns that name the record a group of rows belongs to. When one
+# holds the same value in every row it is that group's metadata: shown once
+# above the table instead of in each row (the cells themselves are kept).
+_SHARED_COLUMN = re.compile(
+    r"^(?:item|contract|contractor|vendor|supplier|customer|po|purchase order|invoice|account|"
+    r"oracle project|project|order)(?: (?:name|no\.?|number|#|id|code))?$",
+    re.I,
+)
+
+# A printed range of two dates ("01/01/2025 - 12/31/2025"): the one composite
+# value split into sub-fields, because both parts are certain.
+_MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
+_DATE = (
+    rf"(?:\d{{1,2}}[/.-]\d{{1,2}}[/.-]\d{{2,4}}|\d{{4}}-\d{{2}}-\d{{2}}|{_MONTH}\s+\d{{1,2}},?\s+\d{{4}}"
+    rf"|\d{{1,2}}[ -]{_MONTH}[ -]\d{{2,4}})"
+)
+_DATE_RANGE = re.compile(
+    rf"^\s*(?:from\s+)?({_DATE})\s*(?:[-–—]|\s(?:to|through|thru|until)\s)\s*({_DATE})\s*$", re.I
+)
+
+# Abbreviations in technical field names ("contract_no", "award_dt").
+_ABBREVIATIONS = {
+    "no": "Number", "num": "Number", "nbr": "Number", "dt": "Date", "amt": "Amount", "qty": "Quantity",
+    "id": "ID", "po": "PO", "desc": "Description", "addr": "Address", "acct": "Account", "inv": "Invoice",
+    "uom": "UOM", "cage": "CAGE", "tin": "TIN", "ein": "EIN", "dob": "Date of Birth",
+}
+_TECHNICAL_NAME = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+|[a-z]+(?:[A-Z][a-z0-9]*)+")
 
 # A structure review's status as the grid shows it.
 _STRUCTURE_REVIEW_LABELS = {"accepted": "Approved", "edited": "Corrected", "rejected": "Rejected", "added": "Added"}
@@ -153,6 +270,8 @@ class _Field:
     # Further metadata rows describing the same printed field.
     others: list[DocumentMetadataField] = field(default_factory=list)
     record_key: str = ""
+    # Printed again at the top of a later page (a running header).
+    repeated: bool = False
 
 
 def _usable(candidate: FieldCandidate) -> bool:
@@ -185,7 +304,8 @@ def _row_number(table: TableCandidate, row_index: int) -> int | None:
 def _continues(previous: TableCandidate, following: TableCandidate, between: bool) -> bool:
     """Merge only with evidence of the same table: the structure linked them
     (position, column count, header repeated or absent), nothing else sits
-    between them, and numbered rows carry on (36 then 37)."""
+    between them but a running page header, and numbered rows carry on at
+    their own step (36 then 37; 260 then 270)."""
 
     if between or previous.continuation is None or following.continuation is None:
         return False
@@ -193,7 +313,9 @@ def _continues(previous: TableCandidate, following: TableCandidate, between: boo
         return False
     last, first = _row_number(previous, len(previous.rows) - 1), _row_number(following, 0)
     if last is not None or first is not None:
-        return last is not None and first == last + 1
+        before = _row_number(previous, len(previous.rows) - 2) if len(previous.rows) > 1 else None
+        step = last - before if last is not None and before is not None and last > before else 1
+        return last is not None and first in {last + 1, last + step}
     return True
 
 
@@ -299,6 +421,135 @@ def _slug(text: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")[:60]
 
 
+def item_parts(group: str | None, label: str) -> tuple[str, str, str, bool]:
+    """(Item #, item name, field name, has sub-fields): "1.", "Contractor
+    Information", "Cage", True for a row printed under item 1's caption;
+    "3.", "Briefed Through", "Briefed Through", False for an item that is
+    its own field; no item name for an unnumbered, uncaptioned label."""
+
+    if group:
+        numbered = _NUMBERED_ITEM.match(group.strip())
+        if numbered:
+            return numbered.group(1), numbered.group(2), label, True
+        return "", group.strip(), label, True
+    numbered = _NUMBERED_ITEM.match(label.strip())
+    if numbered:
+        return numbered.group(1), numbered.group(2), numbered.group(2), False
+    return "", "", label, False
+
+
+def display_label(label: str) -> str:
+    """A readable name for a technical field identifier ("contract_no" →
+    "Contract Number"); printed wording is returned as it is."""
+
+    text = label.strip()
+    if not _TECHNICAL_NAME.fullmatch(text):
+        return label
+    words = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text).replace("_", " ").split()
+    return " ".join(_ABBREVIATIONS.get(word.lower(), word.capitalize()) for word in words)
+
+
+def composite_parts(value: str | None) -> list[dict[str, str]]:
+    """Sub-fields of a value that reliably holds two: only a range of two
+    dates. Anything else is left whole; nothing is invented."""
+
+    match = _DATE_RANGE.match(value or "")
+    if not match:
+        return []
+    return [{"label": "Start Date", "value": match.group(1)}, {"label": "End Date", "value": match.group(2)}]
+
+
+def _is_artifact(payload: dict[str, Any]) -> bool:
+    """A "field" made by the layout reader, not printed: no value, no
+    extraction row, no flag, no review, and a label with no words."""
+
+    return (
+        payload["metadata"] is None
+        and not payload["flags"]
+        and "structure_review" not in payload
+        and not (payload.get("document_value") or "").strip()
+        and not (payload.get("effective_value") or "").strip()
+        and len(re.findall(r"[A-Za-z]", payload["label"] or "")) < 2
+    )
+
+
+def _shared_columns(headers: list[str], rows: list[dict[str, Any]], printed: bool) -> list[dict[str, Any]]:
+    """Columns naming the group every row belongs to (one contract or item
+    number in each row): their value once, for display above the table. A
+    column whose value changes between rows stays in the rows."""
+
+    if not printed or len(rows) < 2:
+        return []
+    shared = []
+    for column, header in enumerate(headers):
+        if not (_SHARED_COLUMN.match(normalize_space(header).strip(" :")) or metadata_concept(header)):
+            continue
+        values = {normalize_space(((row.get("reviewed_cells") or row["cells"]) + [""] * len(headers))[column]) for row in rows}
+        if len(values) == 1 and next(iter(values)):
+            shared.append({"column": column, "label": header, "value": next(iter(values))})
+    # A table is never reduced to its metadata alone.
+    return shared if len(shared) < len(headers) else []
+
+
+def _unreadable(*texts: str | None) -> bool:
+    return any(text and _UNREADABLE_TEXT.search(text.strip()) for text in texts)
+
+
+def _ocr_unverified(method: str | None, confidence: float | None, contested: bool) -> bool:
+    # The staging validator's bar: every OCR word at OCR_VERIFY_MIN_CONFIDENCE.
+    return method == "ocr" and (contested or confidence is None or confidence < OCR_VERIFY_MIN_CONFIDENCE)
+
+
+def _field_quality(payload: dict[str, Any], candidate: FieldCandidate | None) -> str:
+    codes = {flag["code"] for flag in payload["flags"]}
+    printed = payload.get("document_value")
+    extracted = payload.get("extracted_value") or ""
+    if _unreadable(printed, extracted):
+        return UNREADABLE
+    if codes & _CONFLICT_FLAGS:
+        return CONFLICTING
+    if candidate is None:
+        return MISSING_EXTRACTION if not extracted.strip() else EXTRACTED
+    if MISSED_VALUE in codes:
+        return MISSING_EXTRACTION
+    if not (printed or "").strip() and not extracted.strip():
+        return BLANK
+    if payload["review_status"] not in _REVIEWED and _ocr_unverified(
+        candidate.extraction_method, candidate.ocr_confidence, candidate.ocr_contested
+    ):
+        return UNVERIFIED_OCR
+    return CONFIRMED
+
+
+def _set_quality(payload: dict[str, Any], candidate: FieldCandidate | None) -> None:
+    code = _field_quality(payload, candidate)
+    payload["quality"] = code
+    payload["quality_label"] = QUALITY_LABELS[code]
+    if code == UNVERIFIED_OCR and candidate is not None:
+        payload["ocr_confidence"] = candidate.ocr_confidence
+        payload["ocr_contested"] = candidate.ocr_contested
+    _set_location(payload)
+
+
+def _set_location(record: dict[str, Any]) -> None:
+    """Exact region, page only, or nothing: how far the source can be shown."""
+
+    if record.get("value_bbox") or record.get("bbox"):
+        code = EXACT
+    elif record.get("page"):
+        code = PAGE_ONLY
+    else:
+        code = NO_LOCATION
+    record["source_location"] = code
+
+
+def _box_union(boxes: list[Any]) -> list[float] | None:
+    boxes = [b for b in boxes if b]
+    if not boxes:
+        return None
+    return [min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes)]
+
+
 def _field_payload(item: _Field, review: StructureRecordReview | None = None) -> dict[str, Any]:
     c = item.candidate
     m = item.match
@@ -327,12 +578,16 @@ def _field_payload(item: _Field, review: StructureRecordReview | None = None) ->
         "metadata": _metadata_payload(m) if m else None,
         "other_metadata": [_metadata_payload(o) for o in item.others],
     }
+    if item.repeated:
+        payload["repeated_header"] = True
     # Fields with an extraction row are reviewed there; the others here.
     if m is None and review is not None:
         payload["review_status"] = _STRUCTURE_REVIEW_LABELS.get(review.status, review.status)
         if review.status != "rejected" and isinstance(review.reviewed_value, str):
             payload["effective_value"] = review.reviewed_value
         payload["structure_review"] = _review_payload(review)
+    _set_quality(payload, c)
+    payload["parts"] = composite_parts(payload["effective_value"])
     return payload
 
 
@@ -350,7 +605,7 @@ def _review_payload(review: StructureRecordReview) -> dict[str, Any]:
 def _metadata_field_payload(m: DocumentMetadataField, placed_by_page: bool = False) -> dict[str, Any]:
     """An extracted value the layout has no printed field for."""
 
-    return {
+    payload = {
         "kind": "field",
         "id": f"metadata-{m.id}",
         "record_key": f"metadata:{m.id}",
@@ -373,6 +628,9 @@ def _metadata_field_payload(m: DocumentMetadataField, placed_by_page: bool = Fal
         # Shown in the section printed on its page; its exact spot is unknown.
         "placed_by_page": placed_by_page,
     }
+    _set_quality(payload, None)
+    payload["parts"] = composite_parts(payload["effective_value"])
+    return payload
 
 
 def _document_title(structure: StructuredSourceDocument) -> str | None:
@@ -477,16 +735,33 @@ def _table_payload(
     headers = list(first.headers) if first.header_cells else [h for h in first.headers]
     rows: list[dict[str, Any]] = []
     texts: list[list[str]] = []
+    issues_of: list[list[tuple[int, str]]] = []
     for table in tables:
         for index, row in enumerate(table.rows):
             cells = [cell.text for cell in row]
             texts.append(cells)
             rows.append({
+                "source_location": EXACT if any(cell.bbox for cell in row) else (PAGE_ONLY if table.page else NO_LOCATION),
                 "id": f"{table.candidate_id}:r{index}",
                 "record_key": f"{table_key}:row:{len(rows)}",
+                "parent_id": table_key,
                 "page": table.page,
+                # The row's printed region, for source navigation.
+                "bbox": _box_union([cell.bbox for cell in row]),
                 "cells": cells,
             })
+            issues_of.append([
+                (column, UNREADABLE if _unreadable(cell.text) else UNVERIFIED_OCR)
+                for column, cell in enumerate(row)
+                if cell.text.strip() and (
+                    _unreadable(cell.text)
+                    or _ocr_unverified(
+                        "ocr" if cell.ocr_confidence is not None else table.extraction_method,
+                        cell.ocr_confidence,
+                        cell.ocr_contested,
+                    )
+                )
+            ])
     flags = _column_flags(headers, texts)
     for (row_index, column), code in flags.items():
         rows[row_index].setdefault("flags", []).append(
@@ -498,17 +773,28 @@ def _table_payload(
         review = reviews[key]
         cells = [str(v) for v in (review.reviewed_value or [])]
         rows.append({"id": key, "record_key": key, "page": None, "cells": cells, "added": True})
-    for row in rows:
+    for index, row in enumerate(rows):
         review = reviews.get(row["record_key"])
-        if review is None:
+        if review is not None:
+            row["review_status"] = _STRUCTURE_REVIEW_LABELS.get(review.status, review.status)
+            if review.status != "rejected" and isinstance(review.reviewed_value, list):
+                row["reviewed_cells"] = [str(v) for v in review.reviewed_value]
+            row["structure_review"] = _review_payload(review)
+        if row.get("added"):
+            row["parent_id"] = table_key
             continue
-        row["review_status"] = _STRUCTURE_REVIEW_LABELS.get(review.status, review.status)
-        if review.status != "rejected" and isinstance(review.reviewed_value, list):
-            row["reviewed_cells"] = [str(v) for v in review.reviewed_value]
-        row["structure_review"] = _review_payload(review)
+        issues = issues_of[index]
+        if row.get("review_status") in _REVIEWED:
+            # A reviewer checked the row against the source.
+            issues = [(column, code) for column, code in issues if code != UNVERIFIED_OCR]
+        if issues:
+            row["cell_issues"] = [
+                {"column": column, "quality": code, "message": QUALITY_LABELS[code]} for column, code in issues
+            ]
     return {
         "kind": "table",
         "id": first.candidate_id,
+        "shared_columns": _shared_columns(headers, rows, bool(first.header_cells)),
         "record_key": table_key,
         "title": heading,
         "headers": headers,
@@ -519,6 +805,101 @@ def _table_payload(
         "rows": rows,
         "row_count": len(rows),
     }
+
+
+def _apply_hierarchy(section_id: str, items: list[dict[str, Any]]) -> None:
+    """Each field's place under its numbered item: the item's id, number
+    and name, the field's own wording, and whether it opens the item (the
+    only row that shows the item's number and name)."""
+
+    previous: str | None = None
+    for item in items:
+        if item["kind"] != "field":
+            item["parent_id"] = section_id
+            previous = None
+            continue
+        number, name, field_name, has_subfields = item_parts(item.get("group"), item["label"])
+        item["field_name"] = display_label(field_name)
+        if not name:
+            item["item"] = None
+            item["item_start"] = True
+            item["parent_id"] = section_id
+            previous = None
+            continue
+        item_id = f"item:{section_id}:{_slug(number) or 'x'}:{_slug(name)}"
+        item["item"] = {"id": item_id, "number": number, "name": name, "has_subfields": has_subfields}
+        item["item_start"] = item_id != previous
+        item["parent_id"] = item_id
+        previous = item_id
+
+
+def _context_label(item: dict[str, Any]) -> str | None:
+    if item["kind"] != "field" or item.get("placed_by_page"):
+        return None
+    return metadata_concept(item.get("field_name") or item["label"])
+
+
+def _apply_table_context(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The contract metadata each table belongs to, shown once above it.
+
+    A block of metadata printed in the table's own section, before it, is
+    its own ("printed": the document already shows it there). A table with
+    none takes the nearest block printed before it ("inherited"), never the
+    first one in the document: a brief can describe several contracts.
+    Returns the document's first block."""
+
+    def entries(block: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+        # The concept, and the label as the document printed it.
+        return [
+            {"label": label, "printed_label": normalize_space(block[label].get("field_name") or block[label]["label"]).strip(" :"),
+             "value": (block[label].get("effective_value") or "").strip(),
+             "record_key": block[label]["record_key"], "page": block[label].get("page")}
+            for label in metadata_aliases() if label in block
+        ]
+
+    first: list[dict[str, Any]] = []
+    inherited: list[dict[str, Any]] = []
+    for section in sections:
+        block: dict[str, dict[str, Any]] = {}
+        for item in section["items"]:
+            label = _context_label(item)
+            if label:
+                block.setdefault(label, item)
+                continue
+            if item["kind"] != "table":
+                continue
+            if block:
+                inherited = entries(block)
+                first = first or inherited
+                item["context"], item["context_source"] = inherited, "printed"
+                block = {}
+            else:
+                item["context"] = [e for e in inherited if e["value"]]
+                item["context_source"] = "inherited" if item["context"] else None
+        if block:
+            inherited = entries(block)
+            first = first or inherited
+    return [e for e in first if e["value"]]
+
+
+def _reconcile_context(table: dict[str, Any]) -> None:
+    """The table's own columns outrank metadata inherited from earlier in
+    the document. Rows naming another contract (or several) mark a contract
+    boundary: nothing is inherited across it. A column already shown once
+    above the table isn't said a second time."""
+
+    if table.get("context_source") != "inherited":
+        return
+    shared = {metadata_concept(e["label"]): e["value"] for e in table["shared_columns"]}
+    own_contract = [i for i, h in enumerate(table["headers"]) if metadata_concept(h) == _CONTRACT_NUMBER]
+    inherited = {e["label"]: e["value"] for e in table["context"]}
+    crosses = (own_contract and _CONTRACT_NUMBER not in shared) or (
+        _CONTRACT_NUMBER in shared and _CONTRACT_NUMBER in inherited
+        and _norm(shared[_CONTRACT_NUMBER]) != _norm(inherited[_CONTRACT_NUMBER])
+    )
+    table["context"] = [] if crosses else [e for e in table["context"] if e["label"] not in shared]
+    if not table["context"]:
+        table["context_source"] = None
 
 
 def build_original_layout(
@@ -548,11 +929,15 @@ def build_original_layout(
     sections: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
     pending_tables: list[TableCandidate] = []
+    # Running-header fields waiting until the table they interrupt ends.
+    held: list[_Field] = []
+    printed_in_section: set[tuple[str, str]] = set()
     last_kind = None
 
     parent: str | None = None
 
     def section(title: str | None, page: int, level: int = 1) -> dict[str, Any]:
+        printed_in_section.clear()
         entry = {
             "id": f"section-{len(sections) + 1}", "title": title, "page": page, "items": [],
             "level": level, "parent": parent if level > 1 else None,
@@ -561,22 +946,38 @@ def build_original_layout(
         return entry
 
     def flush_tables() -> None:
-        nonlocal pending_tables
+        nonlocal pending_tables, held
         if pending_tables and current is not None:
             current["items"].append(("table", pending_tables))
-        pending_tables = []
+        if current is not None:
+            current["items"].extend(("field", entry) for entry in held)
+        pending_tables, held = [], []
 
     for page, _, kind, item in stream:
         if kind == "heading":
-            flush_tables()
             title, level = item
+            # The same heading again on a later page is a running page
+            # header (an invoice's letterhead), not a new section: what
+            # follows it continues the section, and a table can carry on.
+            if current is not None and title == current["title"] and level == current["level"] and page > current["page"]:
+                continue
+            flush_tables()
             if level == 1:
                 parent = title
             current = section(title, page, level)
         elif kind == "field":
+            printed = (_norm(item.label_text), _norm(item.raw_value))
+            if pending_tables and printed[1] and printed in printed_in_section and page > (pending_tables[-1].page or 0):
+                # A field the section already printed, repeated at the top
+                # of the page a table continues on: kept, after the table.
+                entry = _Field(candidate=item, heading=current["title"], repeated=True)
+                fields.append(entry)
+                held.append(entry)
+                continue
             flush_tables()
             if current is None:
                 current = section(None, page)
+            printed_in_section.add(printed)
             entry = _Field(candidate=item, heading=current["title"])
             fields.append(entry)
             current["items"].append(("field", entry))
@@ -631,11 +1032,17 @@ def build_original_layout(
     out_sections = []
     tables_on_page: dict[int, int] = {}
     dropped_tables = 0
+    artifacts = 0
     for entry in sections:
         items = []
         for kind, value in entry["items"]:
             if kind == "field":
-                items.append(_field_payload(value, by_key.get(value.record_key)))
+                payload = _field_payload(value, by_key.get(value.record_key))
+                # Left out of the view and exports; the record is untouched.
+                if _is_artifact(payload):
+                    artifacts += 1
+                    continue
+                items.append(payload)
             elif kind == "metadata":
                 items.append(_metadata_field_payload(value, placed_by_page=True))
             else:
@@ -649,18 +1056,42 @@ def build_original_layout(
                 items.append(_table_payload(value, entry["title"], table_key, by_key))
         # A printed contract part stays listed even with nothing of its own.
         if items or (has_parts and entry["level"] == 1):
+            _apply_hierarchy(entry["id"], items)
             out_sections.append({
                 "id": entry["id"], "title": entry["title"], "page": entry["page"],
                 "level": entry["level"], "parent": entry["parent"], "items": items,
             })
+    # A subsection's parent part, by id as well as by title.
+    part_id: str | None = None
+    for entry in out_sections:
+        if entry["level"] == 1:
+            part_id = entry["id"]
+        entry["parent_id"] = None if entry["level"] == 1 else part_id
+
+    unplaced_items = [_metadata_field_payload(m) for m in sorted(still_unplaced, key=lambda m: m.id)]
+    _apply_hierarchy("unplaced", unplaced_items)
+    # Shown once above each table, never repeated in its rows.
+    context = _apply_table_context(out_sections)
+    for table in (i for s in out_sections for i in s["items"] if i["kind"] == "table"):
+        _reconcile_context(table)
 
     all_items = [i for s in out_sections for i in s["items"] if not i.get("placed_by_page")]
     field_items = [i for i in all_items if i["kind"] == "field"]
     table_items = [i for i in all_items if i["kind"] == "table"]
+    quality = {code: 0 for code in QUALITY_LABELS}
+    for item in [i for s in out_sections for i in s["items"] if i["kind"] == "field"] + unplaced_items:
+        quality[item["quality"]] += 1
+    cell_issues = {UNREADABLE: 0, UNVERIFIED_OCR: 0}
+    for table in table_items:
+        for row in table["rows"]:
+            for issue in row.get("cell_issues") or []:
+                cell_issues[issue["quality"]] += 1
     return {
         "sections": out_sections,
         "document_title": _document_title(structure),
-        "unplaced": [_metadata_field_payload(m) for m in sorted(still_unplaced, key=lambda m: m.id)],
+        "document_context": context,
+        "quality_labels": QUALITY_LABELS,
+        "unplaced": unplaced_items,
         "stats": {
             "sections": len(out_sections),
             "fields": len(field_items),
@@ -673,7 +1104,17 @@ def build_original_layout(
             "placed_by_page": len(unplaced) - len(still_unplaced),
             # Headerless alignment "tables" that were paragraphs cut into columns.
             "tables_set_aside": dropped_tables,
+            # Empty "fields" with no printed label: reader artifacts, not shown.
+            "artifacts_hidden": artifacts,
+            "quality": quality,
+            "cell_issues": cell_issues,
+            "source_location": {
+                code: sum(1 for i in [i for s in out_sections for i in s["items"] if i["kind"] == "field"] + unplaced_items
+                          if i.get("source_location") == code)
+                for code in SOURCE_LOCATION_LABELS
+            },
         },
+        "source_location_labels": SOURCE_LOCATION_LABELS,
     }
 
 

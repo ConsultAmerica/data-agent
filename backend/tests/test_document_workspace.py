@@ -210,8 +210,10 @@ def test_workspace_endpoints_and_exports(brief_id: str) -> None:
     response = client.get(f"/api/documents/{brief_id}/all-fields.csv")
     assert response.status_code == 200
     rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig"))))
-    assert rows[0] == ["Item #", "Section", "Fields Extracted", "Value / Details"]
-    assert ["1.", "Contractor Information", "Legal Entity", "ORBITAL FIELD SERVICES, LLC"] == rows[1]
+    # The Original Document Structure rows: the section, the field columns,
+    # then item 1 with its first sub-field.
+    assert rows[1] == ["Item #", "Section / Field Name", "Extracted Value", "Field Details / Sub-Attributes"]
+    assert rows[2] == ["1.", "Contractor Information", "ORBITAL FIELD SERVICES, LLC", "Legal Entity"]
 
     structured = client.get(f"/api/documents/{brief_id}/structured.json").json()
     assert {"classification", "skill", "original_structure", "business_data", "validation", "dates"} <= set(structured)

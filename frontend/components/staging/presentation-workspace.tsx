@@ -214,7 +214,7 @@ export default function PresentationWorkspace({
 
       {(
         <div role="tablist" aria-label="Document sections" className="flex flex-wrap gap-1.5">
-          {[{ id: ORIGINAL_STRUCTURE_TAB, label: "Original Structure" }, ...manifest.groups].map((group) => {
+          {[{ id: ORIGINAL_STRUCTURE_TAB, label: "Original File" }, ...manifest.groups].map((group) => {
             const selected = group.id === ORIGINAL_STRUCTURE_TAB ? originalActive : !originalActive && current?.id === group.id;
             return (
               <button
