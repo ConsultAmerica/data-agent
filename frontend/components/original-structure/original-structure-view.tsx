@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Check, ChevronDown, ChevronRight, Crosshair, Download, Pencil, Plus, Table2, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 
 import type { SourceViewRequest } from "@/components/source-verification-panel";
 import { MAPPING_LABEL, MAPPING_TONE, useOracleMappings } from "@/components/smart-view/oracle-status";
@@ -28,6 +28,12 @@ const COLLAPSE_ABOVE_FIELDS = 400;
 /** The source region to highlight, when the layout recorded one. */
 export function regionOf(box: number[] | null | undefined): [number, number, number, number] | null {
   return box && box.length === 4 ? [box[0], box[1], box[2], box[3]] : null;
+}
+
+/** Text to search for a row: none when its printed region is recorded (the
+ * row itself is boxed); else its first filled cell. */
+export function rowHighlight(row: { bbox?: number[] | null; cells: string[] }): string | null {
+  return regionOf(row.bbox) ? null : row.cells.find((c) => c.trim()) ?? null;
 }
 
 /** A tri-state checkbox (the mixed state can't be set in markup). */
@@ -56,12 +62,14 @@ export function itemRecordIds(items: (LayoutField | LayoutTable)[]): string[] {
   return items.flatMap((item) => (item.kind === "field" ? [layoutId(item.record_key)] : item.rows.map((row) => layoutId(row.record_key))));
 }
 
-/** Fields grid: Type, Found By and Source Page are always the last three. */
+/** Fields grid: the Original Document Structure export's columns first,
+ * then review detail; Type, Found By and Source Page are always the last three. */
 export const FIELD_COLUMNS = [
-  "No.",
-  "Category / Section",
-  "Field / Label",
+  "Item #",
+  "Section / Field Name",
   "Extracted Value",
+  "Field Details / Sub-Attributes",
+  "Data Quality",
   "Evidence",
   "Review Status",
   "Type",
@@ -89,25 +97,59 @@ export function StatusBadge({ status }: { status: string }) {
   );
 }
 
+/** A section's printed heading; the few fields printed before any heading
+ * (and with no document title above them) say so rather than invent one. */
+export function sectionTitle(section: Pick<LayoutSection, "title">): string {
+  return section.title ?? "Before the first heading";
+}
+
+/** A table's own caption, or "Table" when it would only repeat its
+ * section's heading (as the Excel export writes it). */
+export function tableTitle(table: Pick<LayoutTable, "title">, section?: string | null): string {
+  return table.title && table.title !== section ? table.title : "Table";
+}
+
 function sectionPath(section: string | null, group: string | null): string {
   return [section, group].filter(Boolean).join(" › ") || "—";
 }
 
-/** "3. Briefed Through", "9a) Prime Contractor": a numbered form item. */
-const NUMBERED_ITEM = /^(\d{1,3}[a-z]?[.)])\s+(\S.*)$/;
+/** Where a field sits in the grid, as the backend layout decided it (never
+ * re-derived here): its item's number and name, printed once per item, and
+ * its own wording as a sub-attribute when the item has sub-fields. A field
+ * with no item is its own row under Section / Field Name. */
+export function fieldPlacement(field: Pick<LayoutField, "item" | "field_name" | "label" | "record_key">): { key: string; number: string; name: string; detail: string } {
+  const item = field.item;
+  const own = field.field_name ?? field.label;
+  if (!item) return { key: field.record_key, number: "", name: own, detail: "" };
+  return { key: item.id, number: item.number, name: item.name, detail: item.has_subfields ? own : "" };
+}
 
-/** Where a field sits in the grid: its item number ("1.") and item name
- * ("Contractor Information") — the group, or the field itself when the
- * item has no sub-labels — and its own wording under Field. The section is
- * the heading above. */
-export function fieldPlacement(field: Pick<LayoutField, "group" | "label">): { number: string; category: string; label: string } {
-  if (field.group) {
-    const group = NUMBERED_ITEM.exec(field.group.trim());
-    return group ? { number: group[1], category: group[2], label: field.label } : { number: "", category: field.group, label: field.label };
-  }
-  const item = NUMBERED_ITEM.exec(field.label.trim());
-  if (item) return { number: item[1], category: item[2], label: item[2] };
-  return { number: "", category: "—", label: field.label };
+export const QUALITY_TONE: Record<string, string> = {
+  unreadable: "bg-danger/10 text-danger",
+  conflicting: "bg-danger/10 text-danger",
+  missing_extraction: "bg-warning/10 text-warning",
+  unverified_ocr: "bg-warning/10 text-warning",
+  extracted: "bg-surface-soft text-text-secondary",
+  blank: "bg-surface-soft text-text-muted",
+};
+
+/** Where a record can be shown on the source; said apart from its quality. */
+export const SOURCE_LOCATION_LABEL: Record<string, string> = {
+  exact: "Exact region on the page",
+  page: "Source page only (no exact position recorded)",
+  none: "No source position recorded",
+};
+
+/** A value's data quality, apart from its review status. A confirmed
+ * source value needs no chip. */
+export function QualityChip({ quality, label, confidence }: { quality?: string; label?: string; confidence?: number | null }) {
+  if (!quality || quality === "confirmed") return <span className="text-text-muted">—</span>;
+  return (
+    <span className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ${QUALITY_TONE[quality] ?? "bg-surface-soft text-text-secondary"}`}
+      title={confidence != null ? `OCR confidence ${Math.round(confidence * 100)}%` : undefined} data-testid="quality-chip">
+      {label ?? quality}
+    </span>
+  );
 }
 
 /** Short names for how a field was found; anything else is shown as sent. */
@@ -189,7 +231,7 @@ export default function OriginalStructureView({
   const allSections = useMemo(() => {
     if (!data) return [];
     const extra: LayoutSection[] = data.unplaced.length
-      ? [{ id: "unplaced", title: "Other extracted fields (no position in the layout)", page: 0, items: data.unplaced }]
+      ? [{ id: "unplaced", title: "Extracted fields without a printed position", page: 0, items: data.unplaced }]
       : [];
     return [...data.sections, ...extra];
   }, [data]);
@@ -238,8 +280,8 @@ export default function OriginalStructureView({
     setExportError("");
     try {
       await downloadExport(
-        { capability_id: "original_structure", label: "Original structure export", format: "xlsx", href: `/api/documents/${documentId}/original-structure/export.xlsx`, dataset_id: null },
-        `${documentName.replace(/\.[A-Za-z0-9]{2,5}$/, "")} - original structure.xlsx`,
+        { capability_id: "original_structure", label: "Original File export", format: "xlsx", href: `/api/documents/${documentId}/original-structure/export.xlsx`, dataset_id: null },
+        `${documentName.replace(/\.[A-Za-z0-9]{2,5}$/, "")} - original file.xlsx`,
       );
     } catch (err) {
       setExportError(err instanceof Error ? err.message : "The export failed.");
@@ -257,7 +299,12 @@ export default function OriginalStructureView({
             <TriCheckbox ids={sections.flatMap((s) => itemRecordIds(s.items))} label="Select all fields and table rows" />
             {stats.fields} fields ({stats.blank_fields} blank on the page) · {stats.tables} tables · {stats.table_rows} table rows
             {stats.needs_review > 0 && <span className="ml-1 font-medium text-danger">· {stats.needs_review} need review</span>}
-            {stats.unplaced > 0 && <> · {stats.unplaced} other extracted</>}
+            {stats.unplaced > 0 && <> · {stats.unplaced} without a printed position</>}
+            {(stats.artifacts_hidden ?? 0) > 0 && (
+              <span className="text-text-muted" title="Empty entries with no printed label, made while reading the layout. Nothing is deleted.">
+                · {stats.artifacts_hidden} empty layout artifact{stats.artifacts_hidden === 1 ? "" : "s"} hidden
+              </span>
+            )}
             {data.document_title && <span className="text-text-muted">· {data.document_title}</span>}
           </p>
           <div className="flex flex-wrap items-center gap-2">
@@ -288,14 +335,14 @@ export default function OriginalStructureView({
           const fields = section.items.filter((i): i is LayoutField => i.kind === "field");
           const tables = section.items.filter((i): i is LayoutTable => i.kind === "table");
           return (
-            <section key={section.id} className={`rounded-xl border border-border bg-surface ${(section.level ?? 1) > 1 ? "ml-4" : ""}`} aria-label={section.title ?? "Document start"} data-testid="layout-section">
+            <section key={section.id} className={`rounded-xl border border-border bg-surface ${(section.level ?? 1) > 1 ? "ml-4" : ""}`} aria-label={sectionTitle(section)} data-testid="layout-section">
               <div className="flex w-full items-center gap-2 px-4 py-2.5">
-                <TriCheckbox ids={itemRecordIds(section.items)} label={`Select all records in ${section.title ?? "this section"}`} />
+                <TriCheckbox ids={itemRecordIds(section.items)} label={`Select all records in ${sectionTitle(section)}`} />
               <button type="button" onClick={() => toggle(section.id)} aria-expanded={open}
                 className="flex min-w-0 flex-1 items-center gap-2 text-left">
                 {open ? <ChevronDown className="h-4 w-4 text-text-muted" aria-hidden="true" /> : <ChevronRight className="h-4 w-4 text-text-muted" aria-hidden="true" />}
                 {(section.level ?? 1) > 1 && section.parent && <span className="truncate text-xs text-text-muted">{section.parent} ›</span>}
-                <span className="text-sm font-semibold text-foreground">{section.title ?? "Document start"}</span>
+                <span className={`text-sm font-semibold ${section.title ? "text-foreground" : "italic text-text-secondary"}`}>{sectionTitle(section)}</span>
                 <span className="text-xs text-text-muted">
                   {section.page > 0 && `p. ${section.page} · `}
                   {fields.length} field{fields.length === 1 ? "" : "s"}{tables.length > 0 && ` · ${tables.length} table${tables.length === 1 ? "" : "s"}`}
@@ -315,11 +362,12 @@ export default function OriginalStructureView({
                         }} />
                     ) : (
                       <TableView key={run.table.id} table={run.table} reviewEnabled={reviewEnabled} density={density}
+                        sectionTitle={section.title} groupShared
                         selectedId={focusedKey ?? (selected?.kind === "row" ? selected.row.record_key : null)}
                         onSelect={(row) => {
                           if (onFocusRecord) return onFocusRecord(row.record_key);
                           setSelected({ kind: "row", table: run.table, row, section: section.title });
-                          viewSource(row.page, row.cells.find((c) => c.trim()) ?? null, run.table.title ?? "Table row", row.cells.join(" "));
+                          viewSource(row.page, rowHighlight(row), tableTitle(run.table, section.title), row.cells.join(" "), regionOf(row.bbox));
                         }} />
                     ),
                   )}
@@ -342,7 +390,7 @@ export default function OriginalStructureView({
             onClose={() => setSelected(null)}
             onViewSource={() => {
               if (selected.kind === "field") viewSource(selected.field.page, selected.field.document_value || selected.field.extracted_value, selected.field.label, selected.field.extracted_value, regionOf(selected.field.value_bbox ?? selected.field.bbox));
-              else viewSource(selected.row.page, selected.row.cells.find((c) => c.trim()) ?? null, selected.table.title ?? "Table row", selected.row.cells.join(" "));
+              else viewSource(selected.row.page, rowHighlight(selected.row), selected.table.title ?? "Table row", selected.row.cells.join(" "), regionOf(selected.row.bbox));
             }} />
         )}
         {source && (
@@ -420,13 +468,15 @@ function FieldGrid({ fields, section, selectedId, onSelect, density = "comfortab
   // Thousands of fields (a 288-page contract): only the rows in view render.
   const [windowRef, windowRows] = useWindowedRows(fields.length, density === "compact" ? 24 : 40);
   const shown = fields.slice(windowRows.start, windowRows.end);
-  // Number and category are printed once per item, spanning its rows.
+  // An item's number and name are printed once, spanning its rows (a
+  // split value's Start / End Date rows included).
   const places = shown.map((field) => fieldPlacement(field));
-  const keyOf = (index: number) => `${places[index].number}|${places[index].category}`;
+  const keyOf = (index: number) => places[index].key;
+  const height = (index: number) => 1 + (shown[index].parts?.length ?? 0);
   const spans = places.map((_, index) => {
     if (index > 0 && keyOf(index - 1) === keyOf(index)) return 0;
-    let span = 1;
-    while (index + span < places.length && keyOf(index + span) === keyOf(index)) span += 1;
+    let span = 0;
+    for (let next = index; next < places.length && keyOf(next) === keyOf(index); next += 1) span += height(next);
     return span;
   });
   return (
@@ -443,8 +493,11 @@ function FieldGrid({ fields, section, selectedId, onSelect, density = "comfortab
           {shown.map((field, index) => {
             const place = places[index];
             const span = spans[index];
+            const parts = field.parts ?? [];
+            const value = field.effective_value || field.extracted_value;
             return (
-            <tr key={field.id} data-testid="layout-field-row" data-window-row data-record-key={field.record_key}
+            <Fragment key={field.id}>
+            <tr data-testid="layout-field-row" data-window-row data-record-key={field.record_key}
               className={`cursor-pointer border-b border-border/60 align-top hover:bg-surface-soft ${selectedId === field.record_key ? "bg-primary/[0.06]" : ""} ${field.flags.length ? "border-l-2 border-l-danger" : ""}`}
               onClick={() => onSelect(field)}
               onKeyDown={(event) => {
@@ -458,15 +511,17 @@ function FieldGrid({ fields, section, selectedId, onSelect, density = "comfortab
               {span > 0 && (
                 <>
                   <td rowSpan={span} className="w-10 border-r border-border/60 bg-surface px-2 py-1.5 align-top font-medium text-text-secondary" data-testid="item-number">{place.number}</td>
-                  <td rowSpan={span} className="border-r border-border/60 bg-surface px-2 py-1.5 align-top font-medium text-foreground" title={sectionPath(section, field.group)} data-testid="item-category">{place.category}</td>
+                  <td rowSpan={span} className="border-r border-border/60 bg-surface px-2 py-1.5 align-top font-medium text-foreground" title={sectionPath(section, field.group)} data-testid="item-category">{place.name}</td>
                 </>
               )}
-              <td className="px-2 py-1.5 font-medium text-foreground">{place.label}</td>
               <td className="px-2 py-1.5">
-                {field.extracted_value ? (
+                {parts.length > 0 ? (
+                  // The printed text, kept; its parts carry the values below.
+                  <span className="block text-[11px] text-text-muted" data-testid="composite-source">Printed as {value}</span>
+                ) : field.extracted_value ? (
                   <span className="whitespace-pre-wrap break-words text-foreground">{field.extracted_value}</span>
                 ) : (
-                  <span className="text-text-muted">{field.blank ? "Blank in document" : "Not extracted"}</span>
+                  <span className="text-text-muted">{field.quality_label ?? (field.blank ? "Blank in source" : "Not extracted")}</span>
                 )}
                 {field.effective_value !== field.extracted_value && field.effective_value && (
                   <span className="block text-[11px] text-primary">Reviewed: {field.effective_value}</span>
@@ -474,12 +529,17 @@ function FieldGrid({ fields, section, selectedId, onSelect, density = "comfortab
                 {field.placed_by_page && (
                   <span className="block text-[11px] text-text-muted">Placed by page; exact position not recorded</span>
                 )}
+                {field.repeated_header && (
+                  <span className="block text-[11px] text-text-muted">Repeated in the header of page {field.page}</span>
+                )}
                 {field.other_metadata.length > 0 && (
                   <span className="block text-[11px] text-text-muted" data-testid="candidate-count">
                     {field.other_metadata.length + 1} candidates
                   </span>
                 )}
               </td>
+              <td className="px-2 py-1.5 font-medium text-foreground" data-testid="sub-attribute">{place.detail}</td>
+              <td className="px-2 py-1.5"><QualityChip quality={field.quality} label={field.quality_label} confidence={field.ocr_confidence} /></td>
               <td className="max-w-[240px] px-2 py-1.5 text-text-secondary"><span className="line-clamp-2 break-words">{field.evidence || "—"}</span></td>
               <td className="px-2 py-1.5">
                 <StatusBadge status={field.review_status} />
@@ -491,6 +551,18 @@ function FieldGrid({ fields, section, selectedId, onSelect, density = "comfortab
               </td>
               <td className="px-2 py-1.5 text-text-secondary">{field.page ?? "—"}</td>
             </tr>
+            {parts.map((part) => (
+              // Part of the field above: it opens the same record and source.
+              <tr key={part.label} data-testid="composite-part" onClick={() => onSelect(field)}
+                className={`cursor-pointer border-b border-border/60 align-top hover:bg-surface-soft ${selectedId === field.record_key ? "bg-primary/[0.06]" : ""}`}>
+                {shared && <td className={`w-6 px-2 ${pad}`} />}
+                <td className="px-2 py-1.5 text-foreground">{part.value}</td>
+                <td className="px-2 py-1.5 text-text-secondary"><span aria-hidden="true">↳ </span>{part.label}</td>
+                <td colSpan={FIELD_COLUMNS.length - 5} className="px-2 py-1.5 text-[11px] text-text-muted">Split from the printed value</td>
+                <td className="px-2 py-1.5 text-text-secondary">{field.page ?? "—"}</td>
+              </tr>
+            ))}
+            </Fragment>
             );
           })}
           {windowRows.after > 0 && <tr aria-hidden="true" style={{ height: windowRows.after }} />}
@@ -514,8 +586,13 @@ export function shownColumns(table: LayoutTable): number[] {
     });
 }
 
-export function TableView({ table, selectedId, onSelect, reviewEnabled = false, density = "comfortable" }: {
+export function TableView({ table, selectedId, onSelect, reviewEnabled = false, density = "comfortable", sectionTitle: section, groupShared = false }: {
   table: LayoutTable;
+  /** Its section's heading: a title that only repeats it reads "Table". */
+  sectionTitle?: string | null;
+  /** Shows a column holding one contract or item for every row once above
+   * the table instead of in each row (the Original File tab). */
+  groupShared?: boolean;
   /** The focused row's key. */
   selectedId: string | null;
   onSelect: (row: LayoutTableRow) => void;
@@ -523,10 +600,12 @@ export function TableView({ table, selectedId, onSelect, reviewEnabled = false, 
   reviewEnabled?: boolean;
   density?: "comfortable" | "compact";
 }) {
-  const shared = useRecordSelection();
+  const selection = useRecordSelection();
   // Thousands of invoice lines: only the rows in view render.
-  const columns = shownColumns(table);
-  const hidden = table.headers.length - columns.length;
+  const shared = groupShared ? table.shared_columns ?? [] : [];
+  const sharedIndexes = new Set(shared.map((entry) => entry.column));
+  const columns = shownColumns(table).filter((index) => !sharedIndexes.has(index));
+  const hidden = table.headers.length - columns.length - sharedIndexes.size;
   // A row with nothing in any column is a gap in the ruling, not a record.
   const filled = useMemo(
     () => table.rows.filter((row) => row.added || columns.some((index) => (row.reviewed_cells ?? row.cells)[index]?.trim())),
@@ -543,7 +622,7 @@ export function TableView({ table, selectedId, onSelect, reviewEnabled = false, 
       <p className="flex flex-wrap items-center gap-2 border-b border-border bg-surface-soft px-3 py-1.5 text-xs text-text-secondary">
         <Table2 className="h-3.5 w-3.5" aria-hidden="true" />
         <TriCheckbox ids={table.rows.map((row) => layoutId(row.record_key))} label={`Select all rows of ${table.title ?? "this table"}`} />
-        <span className="font-medium text-foreground">{table.title ?? "Table"}</span>
+        <span className="font-medium text-foreground">{section === undefined ? table.title ?? "Table" : tableTitle(table, section)}</span>
         <span>
           {table.row_count} row{table.row_count === 1 ? "" : "s"} · {table.pages.length > 1 ? `pages ${table.pages.join("–")}` : `page ${table.pages[0] ?? "—"}`}
           {table.continued && " · continued across pages"}
@@ -553,6 +632,23 @@ export function TableView({ table, selectedId, onSelect, reviewEnabled = false, 
         </span>
         {flagged > 0 && <span className="text-danger">{flagged} row{flagged === 1 ? "" : "s"} need review</span>}
       </p>
+      {((table.context_source === "inherited" && table.context && table.context.length > 0) || shared.length > 0) && (
+        // What every row belongs to, once above it: the contract (when the
+        // document printed no block of its own here) and any column with one
+        // value for every row.
+        <p className="flex flex-wrap gap-x-4 gap-y-0.5 border-b border-border px-3 py-1.5 text-[11px] text-text-secondary" data-testid="table-context">
+          {table.context_source === "inherited" && (table.context ?? []).map((entry) => (
+            <span key={entry.record_key} title={entry.printed_label && entry.printed_label !== entry.label ? entry.label : undefined}>
+              <span className="text-text-muted">{entry.printed_label ?? entry.label}:</span> <span className="font-medium text-foreground">{entry.value}</span>
+            </span>
+          ))}
+          {shared.map((entry) => (
+            <span key={`column-${entry.column}`} data-testid="shared-column">
+              <span className="text-text-muted">{entry.label}:</span> <span className="font-medium text-foreground">{entry.value}</span>
+            </span>
+          ))}
+        </p>
+      )}
       {loose && (
         <p className="border-b border-border bg-warning/5 px-3 py-1 text-[11px] text-warning">
           Found by text alignment (no ruling or printed header): a cell may be split across columns or rows. Check it against the source.
@@ -562,7 +658,7 @@ export function TableView({ table, selectedId, onSelect, reviewEnabled = false, 
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-surface">
             <tr className="border-b border-border text-left text-text-secondary">
-              {shared && <td className="w-6 px-2 py-1.5" />}
+              {selection && <td className="w-6 px-2 py-1.5" />}
               {columns.map((index) => <th key={index} scope="col" className="whitespace-nowrap px-2 py-1.5 font-semibold">{table.headers[index]}</th>)}
               {reviewEnabled && <th scope="col" className="whitespace-nowrap px-2 py-1.5 font-semibold">Review</th>}
             </tr>
@@ -572,6 +668,7 @@ export function TableView({ table, selectedId, onSelect, reviewEnabled = false, 
             {rows.map((row, offset) => {
               const rowIndex = windowRows.start + offset;
               const bad = new Set((row.flags ?? []).map((flag) => flag.column));
+              const issues = new Map((row.cell_issues ?? []).map((issue) => [issue.column, issue]));
               const cells = row.reviewed_cells ?? row.cells;
               return (
                 <tr key={row.id} data-testid="layout-table-row" data-window-row data-record-key={row.record_key} tabIndex={0} aria-selected={selectedId === row.record_key}
@@ -583,12 +680,14 @@ export function TableView({ table, selectedId, onSelect, reviewEnabled = false, 
                     }
                   }}
                   className={`cursor-pointer border-b border-border/60 hover:bg-surface-soft ${selectedId === row.record_key ? "bg-primary/[0.06]" : ""}`}>
-                  {shared && <td className={`w-6 px-2 ${pad}`}><TriCheckbox ids={[layoutId(row.record_key)]} label={`Select row ${rowIndex + 1} of ${table.title ?? "the table"}`} /></td>}
+                  {selection && <td className={`w-6 px-2 ${pad}`}><TriCheckbox ids={[layoutId(row.record_key)]} label={`Select row ${rowIndex + 1} of ${table.title ?? "the table"}`} /></td>}
                   {columns.map((index) => {
                     const corrected = row.reviewed_cells && row.reviewed_cells[index] !== row.cells[index] && !row.added;
+                    const issue = issues.get(index);
                     return (
-                      <td key={index} title={corrected ? `Printed: ${row.cells[index] || "(blank)"}` : undefined}
-                        className={`whitespace-pre-wrap px-2 ${pad} ${bad.has(index) ? "bg-danger/10 text-danger" : corrected ? "text-primary" : "text-foreground"}`}>
+                      <td key={index} title={corrected ? `Printed: ${row.cells[index] || "(blank)"}` : issue?.message}
+                        data-quality={issue?.quality}
+                        className={`whitespace-pre-wrap px-2 ${pad} ${bad.has(index) || issue?.quality === "unreadable" ? "bg-danger/10 text-danger" : issue ? "bg-warning/10 text-foreground" : corrected ? "text-primary" : "text-foreground"}`}>
                         {cells[index] ?? ""}
                       </td>
                     );
@@ -700,8 +799,9 @@ function RecordPanel({ selection, documentId, mappings, onClose, onViewSource, r
         <dl className="space-y-1.5">
           <Detail label="Original label">{selection.field.label}</Detail>
           <Detail label="Section">{sectionPath(selection.section, selection.field.group)}</Detail>
+          <Detail label="Data quality"><QualityChip quality={selection.field.quality} label={selection.field.quality_label} confidence={selection.field.ocr_confidence} /></Detail>
           <Detail label="Original source text">{selection.field.evidence || <span className="text-text-muted">Original source text unavailable.</span>}</Detail>
-          <Detail label="Printed value">{selection.field.document_value === null ? none : selection.field.document_value || <span className="text-text-muted">Blank in document</span>}</Detail>
+          <Detail label="Printed value">{selection.field.document_value === null ? none : selection.field.document_value || <span className="text-text-muted">Blank in source</span>}</Detail>
           <Detail label="Extracted value">{selection.field.metadata ? selection.field.extracted_value || <span className="text-text-muted">Nothing extracted</span> : <span className="text-text-muted">Read from the layout; no extraction record</span>}</Detail>
           <Detail label="Reviewed value">{selection.field.metadata ? selection.field.effective_value || none : <span className="text-text-muted">Not reviewed</span>}</Detail>
           <Detail label="Validation">{selection.field.metadata?.validation_status ?? none}</Detail>
@@ -712,6 +812,7 @@ function RecordPanel({ selection, documentId, mappings, onClose, onViewSource, r
             </Detail>
           )}
           <Detail label="Source page">{selection.field.page ?? none}</Detail>
+          {selection.field.source_location && <Detail label="Source location">{SOURCE_LOCATION_LABEL[selection.field.source_location]}</Detail>}
           <Detail label="Extraction method">
             {selection.field.found_by || none}
             {selection.field.metadata && ` · ${selection.field.metadata.extraction_method}`}
@@ -736,6 +837,7 @@ function RecordPanel({ selection, documentId, mappings, onClose, onViewSource, r
             </Detail>
           ) : null}
           <Detail label="Source page">{selection.row.page ?? none}</Detail>
+          {selection.row.source_location && <Detail label="Source location">{SOURCE_LOCATION_LABEL[selection.row.source_location]}</Detail>}
           <Detail label="Extraction method">{selection.table.detection_method.replace(/_/g, " ")}{selection.table.continued && " · merged across pages"}</Detail>
         </dl>
       )}

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 
 import ClassificationPanel from "@/components/classification/classification-panel";
 import OracleIntegrationPanel from "@/components/oracle-integration-panel";
-import OriginalStructureView, { TableView } from "@/components/original-structure/original-structure-view";
+import OriginalStructureView, { regionOf, rowHighlight, TableView } from "@/components/original-structure/original-structure-view";
 import DocumentAuditTrail from "@/components/review/document-audit-trail";
 import { MAPPING_LABEL, MAPPING_TONE, useOracleMappings } from "@/components/smart-view/oracle-status";
 import type { SourceViewRequest } from "@/components/source-verification-panel";
@@ -28,7 +28,7 @@ export type WorkspaceView = VerificationTab | "smart";
 
 /** The tab order; Summary stays last. */
 export const VERIFICATION_TABS: [VerificationTab, string][] = [
-  ["original", "Original Structure"],
+  ["original", "Original File"],
   ["business", "Smart Review"],
   ["advanced", "Advanced Grid"],
   ["tables", "Tables"],
@@ -420,7 +420,8 @@ function Workspace({
       setSource({ id: key, pageNumber: field.page, highlightText: field.document_value || field.extracted_value || null, label: field.label,
         value: field.effective_value || field.extracted_value, region: box && box.length === 4 ? [box[0], box[1], box[2], box[3]] : null });
     } else if (record.row?.page) {
-      setSource({ id: key, pageNumber: record.row.page, highlightText: record.row.cells.find((c: string) => c.trim()) ?? null, label: record.table?.title ?? "Table row", value: record.row.cells.join(" ") });
+      setSource({ id: key, pageNumber: record.row.page, highlightText: rowHighlight(record.row), label: record.table?.title ?? "Table row",
+        value: record.row.cells.join(" "), region: regionOf(record.row.bbox) });
     }
     setSourceOpen(true);
   }, [records]);

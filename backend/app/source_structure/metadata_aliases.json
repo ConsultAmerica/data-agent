@@ -1,0 +1,13 @@
+{
+  "_about": "Printed labels that name the document-level metadata shown once above each table. Keys are the concepts; values are printed wordings, compared without case, trailing colons or full stops. Set METADATA_ALIASES_PATH to a JSON file of the same shape to add wordings or concepts; its lists extend these.",
+  "Contractor Name": [
+    "contractor", "contractor name", "name of contractor", "legal entity", "legal entity name",
+    "offeror", "offeror name", "vendor", "vendor name", "vendor legal name", "supplier", "supplier name"
+  ],
+  "Contract Number": [
+    "contract number", "contract no", "contract #", "contract id", "contract nbr", "piid",
+    "award number", "award no", "agreement number", "agreement no"
+  ],
+  "Oracle Project Number": ["oracle project number", "oracle project no", "oracle project #"],
+  "Contract Type": ["contract type", "type of contract"]
+}

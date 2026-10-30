@@ -388,7 +388,7 @@ describe("StagingWorkbook rendering", () => {
     expect(tabs).toEqual(expect.arrayContaining(["Summary", "Line Items", "Clauses"]));
     expect(tabs).not.toContain("Contract Summary");
     const sectionTabs = within(screen.getByRole("tablist", { name: "Document sections" })).getAllByRole("tab").map((tab) => tab.textContent);
-    expect(sectionTabs[0]).toBe("Original Structure");
+    expect(sectionTabs[0]).toBe("Original File");
     expect(sectionTabs.at(-1)).toBe("Summary");
     fireEvent.click(screen.getByRole("tab", { name: "Summary" }));
     // Sections follow the professional order; labels are the source's own.
@@ -599,7 +599,7 @@ describe("Generic presentation", () => {
     render(<StagingWorkbook documentId="doc-1" />);
     const tabs = await screen.findByRole("tablist", { name: "Document sections" });
     const labels = Array.from(tabs.querySelectorAll("button")).map((b) => b.getAttribute("aria-label"));
-    expect(labels).toEqual(["Original Structure", "Summary"]);
+    expect(labels).toEqual(["Original File", "Summary"]);
     expect(screen.getByText("Certificate")).toBeInTheDocument();
   });
 
@@ -749,7 +749,7 @@ describe("Academic transcript presentation", () => {
     render(<StagingWorkbook documentId="doc-1" />);
     const sections = await screen.findByRole("tablist", { name: "Document sections" });
     const labels = Array.from(sections.querySelectorAll("button")).map((b) => b.getAttribute("aria-label"));
-    expect(labels).toEqual(["Original Structure", "Student & Program", "Academic Record", "Academic Summary", "Summary"]);
+    expect(labels).toEqual(["Original File", "Student & Program", "Academic Record", "Academic Summary", "Summary"]);
     expect(screen.getByRole("tab", { name: "Staging Workbook" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Source" })).toBeInTheDocument();
   });
@@ -914,7 +914,7 @@ describe("Invoice presentation", () => {
     render(<StagingWorkbook documentId="doc-1" />);
     const nav = await screen.findByRole("tablist", { name: "Document sections" });
     const labels = Array.from(nav.querySelectorAll("[role='tab']")).map((tab) => tab.getAttribute("aria-label"));
-    expect(labels).toEqual(["Original Structure", "Parties", "Line Items", "Charges & Totals", "Summary"]);
+    expect(labels).toEqual(["Original File", "Parties", "Line Items", "Charges & Totals", "Summary"]);
     // The chosen tab survives a review action that reloads the workbook.
     fireEvent.click(screen.getByRole("tab", { name: "Line Items" }));
     cleanup();

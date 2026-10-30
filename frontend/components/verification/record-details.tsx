@@ -2,7 +2,7 @@
 
 import { Crosshair, X } from "lucide-react";
 
-import { RecordReview, StatusBadge, type Selection } from "@/components/original-structure/original-structure-view";
+import { QualityChip, RecordReview, SOURCE_LOCATION_LABEL, StatusBadge, type Selection } from "@/components/original-structure/original-structure-view";
 import { MAPPING_LABEL, MAPPING_TONE, type CategoryMapping } from "@/components/smart-view/oracle-status";
 import { ConfidenceChip, RecordHistory } from "@/components/verification/field-card";
 import type { LayoutField, LayoutTable, LayoutTableRow } from "@/lib/original-structure";
@@ -81,13 +81,15 @@ export default function RecordDetails({ documentId, recordKey, record, business,
 
       {field ? (
         <dl>
-          <Detail label="Original label">{field.label}{field.group ? <span className="text-text-muted"> · under {field.group}</span> : null}</Detail>
+          <Detail label="Original label">{field.label}{field.item ? <span className="text-text-muted"> · under {[field.item.number, field.item.name].filter(Boolean).join(" ")}</span> : field.group ? <span className="text-text-muted"> · under {field.group}</span> : null}</Detail>
+          <Detail label="Data quality"><QualityChip quality={field.quality} label={field.quality_label} confidence={field.ocr_confidence} /></Detail>
           <Detail label="Display label">{claimed ? `${claimed.field.label} (${claimed.section})` : <span className="text-text-muted">No business category</span>}</Detail>
-          <Detail label="Printed value">{field.document_value === null ? none : field.document_value || <span className="text-text-muted">Blank in document</span>}</Detail>
+          <Detail label="Printed value">{field.document_value === null ? none : field.document_value || <span className="text-text-muted">Blank in source</span>}</Detail>
           <Detail label="Original extracted value">{meta ? field.extracted_value || <span className="text-text-muted">Nothing extracted</span> : <span className="text-text-muted">Read from the layout; no extraction record</span>}</Detail>
           <Detail label="Effective value">{field.effective_value || <span className="text-text-muted">(blank)</span>}</Detail>
           <Detail label="Source evidence">{field.evidence || <span className="text-text-muted">Original source text unavailable.</span>}</Detail>
           <Detail label="Source page">{page ?? none}{page && !(field.value_bbox ?? field.bbox) ? <span className="text-text-muted"> · no coordinates (the page is searched for the text)</span> : null}</Detail>
+          {field.source_location && <Detail label="Source location">{SOURCE_LOCATION_LABEL[field.source_location]}</Detail>}
           <Detail label="Extraction method">{field.found_by || none}{meta && ` · ${meta.extraction_method}`}</Detail>
           <Detail label="Confidence"><ConfidenceChip value={meta ? meta.confidence : null} /></Detail>
           <Detail label="Validation">

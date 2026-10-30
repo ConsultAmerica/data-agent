@@ -38,6 +38,10 @@ class Settings(BaseSettings):
 
     frontend_url: str = "http://localhost:3000"
 
+    # A JSON file of extra printed wordings for table metadata (Contractor
+    # Name, Contract Number…), shaped like source_structure/metadata_aliases.json.
+    metadata_aliases_path: str | None = None
+
     ai_provider: str = "gemini"
 
     convera_enabled: bool = False

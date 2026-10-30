@@ -357,7 +357,7 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
   }
 
   async function exportDocumentStructure(kind: "original" | "all_fields" | "json") {
-    const labels = { original: "Original Structure Excel", all_fields: "All Extracted Fields CSV", json: "Structured JSON" };
+    const labels = { original: "Original File Excel", all_fields: "All Extracted Fields CSV", json: "Structured JSON" };
     await runExport(
       () => downloadWorkspaceExport(documentId, kind, filename || workbook?.document_filename || "export"),
       `${labels[kind]} download started.`,
@@ -650,7 +650,7 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
                 </p>
                 {(
                   [
-                    ["original", "Original Structure (Excel)"],
+                    ["original", "Excel → Original File"],
                     ["all_fields", "All Extracted Fields (CSV)"],
                     ["json", "Structured JSON"],
                   ] as const

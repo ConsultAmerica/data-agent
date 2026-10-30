@@ -125,6 +125,11 @@ def _candidate(record: _Record) -> dict[str, Any]:
         "record_key": item["record_key"],
         "label": item["label"],
         "group": item.get("group"),
+        # Its place in the printed hierarchy, as Original Structure shows it.
+        "item": item.get("item"),
+        "field_name": item.get("field_name"),
+        "quality": item.get("quality"),
+        "quality_label": item.get("quality_label"),
         "source_section": record.section,
         "value": record.value,
         "document_value": item.get("document_value"),

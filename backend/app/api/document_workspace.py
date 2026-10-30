@@ -40,7 +40,7 @@ from app.skills.definitions import SKILLS
 from app.skills.find import find_in_document
 from app.skills.registry import get_skill, record_skill_versions
 from app.skills.validation import validation_summary
-from app.source_structure.original_export import original_rows
+from app.source_structure.original_export import csv_rows
 from app.source_structure.original_layout import original_layout_for
 
 router = APIRouter()
@@ -157,7 +157,7 @@ def export_all_fields_csv(
     context = workspace_context(database, document)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    for row in original_rows(context["layout"]):
+    for row in csv_rows(context["layout"]):
         # Spreadsheet-safe: text starting like a formula is never executed.
         writer.writerow([("'" + v) if isinstance(v, str) and v[:1] in ("=", "+", "@") else v for v in row])
     name = PurePath(document.original_filename or "document").stem
