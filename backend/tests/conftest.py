@@ -34,6 +34,8 @@ for _name in (
 ):
     os.environ[_name] = ""
 os.environ["CONVERA_ENABLED"] = "false"
+# No background layout builds racing a test database.
+os.environ["PREBUILD_LAYOUT"] = "false"
 os.environ["OCR_ENGINE"] = "tesseract"
 
 from app.main import app  # noqa: E402

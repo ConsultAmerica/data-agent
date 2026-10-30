@@ -530,7 +530,7 @@ function Workspace({
             <button key={id} type="button" data-testid={`count-${id}`}
               onClick={() => onViewChange(id === "pending" ? "original" : "validation")}
               className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 hover:border-primary">
-              <span className={`font-semibold tabular-nums ${count ? tone : "text-text-muted"}`}>{count}</span>
+              <span className={`font-semibold tabular-nums ${count ? tone : "text-text-muted"}`}>{structure && validation ? count : "…"}</span>
               <span className="text-text-secondary">{name}</span>
             </button>
           ))}

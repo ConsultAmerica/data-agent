@@ -126,15 +126,16 @@ export default function BusinessDataView({ documentId, business, onViewRecord, o
             </div>
             {open && (
               <div className={`space-y-3 border-t border-border ${density === "compact" ? "p-1" : "p-3"}`}>
-                {section.fields.length > 0 && (
+                {shownFields(section).length > 0 && (
                   <div className={density === "compact" ? "" : "grid gap-2 md:grid-cols-2 2xl:grid-cols-3"}>
-                    {section.fields.map((field) => (
+                    {shownFields(section).map((field) => (
                       <FieldCard key={field.key} documentId={documentId} field={field} density={density}
                         focused={!!focusedKey && field.candidates.some((c) => c.record_key === focusedKey)}
                         onFocus={onViewRecord} onChanged={onChanged} />
                     ))}
                   </div>
                 )}
+                <NotFound fields={absentFields(section)} />
                 {section.values.length > 0 && <ValueList values={section.values} onViewRecord={onViewRecord} density={density} focusedKey={focusedKey} />}
                 {section.tables.map((table) => (
                   <div key={table.record_key}>
@@ -148,6 +149,28 @@ export default function BusinessDataView({ documentId, business, onViewRecord, o
         );
       })}
     </div>
+  );
+}
+
+/** Fields with a value, and required fields (shown as Missing). */
+function shownFields(section: BusinessSection): BusinessField[] {
+  return section.fields.filter((field) => field.value || field.required);
+}
+
+/** Optional fields this document doesn't print: listed once, not as cards. */
+function absentFields(section: BusinessSection): BusinessField[] {
+  return section.fields.filter((field) => !field.value && !field.required);
+}
+
+function NotFound({ fields }: { fields: BusinessField[] }) {
+  if (fields.length === 0) return null;
+  return (
+    <details className="px-2 text-xs text-text-muted" data-testid="not-found-fields">
+      <summary className="cursor-pointer">
+        {fields.length} field{fields.length === 1 ? "" : "s"} not found in this document
+      </summary>
+      <p className="mt-1">{fields.map((field) => field.label).join(" · ")}</p>
+    </details>
   );
 }
 

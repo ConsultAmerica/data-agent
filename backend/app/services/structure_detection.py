@@ -374,6 +374,24 @@ TABLE_FAMILIES: dict[str, tuple[str, list[str]]] = {
 }
 
 
+# A value that is only an amount ("USD 97,003.20", "$1,200.00").
+_BARE_AMOUNT = re.compile(r"^\s*(?:[A-Z]{3}\s*)?[$€£]?\s*-?\d[\d,]*(?:\.\d{2})?\s*(?:[A-Z]{3})?\s*$")
+# Labels that name an amount, so an amount beside them is a real field.
+_AMOUNT_LABEL = re.compile(
+    r"\b(total|amount|value|price|cost|ceiling|funding|funded|obligat|award|fee|sum|balance|due|tax|subtotal)",
+    re.IGNORECASE,
+)
+_SCHEDULE_TEXT = re.compile(r"\bCLIN\b|\bLine\s+Item\b|\bSupplies\s*/\s*Services?\b", re.IGNORECASE)
+# Labels that name the kind of value they carry.
+_VALUE_KIND_LABEL = re.compile(r"\b(type|arrangement|pricing|basis|method|terms?)\b", re.IGNORECASE)
+_REPEATABLE_ANSWERS = {"not applicable", "n / a", "not required", "see attached", "see schedule", "see section"}
+
+
+def _is_bare_amount(value: object) -> bool:
+    text = str(value or "")
+    return bool(_BARE_AMOUNT.match(text)) and any(c.isdigit() for c in text)
+
+
 DOCUMENT_FAMILIES: dict[str, tuple[str, list[str]]] = {
     "financial_report": (
         "Financial Report",
@@ -1114,8 +1132,23 @@ async def detect_document_structures(
     # mis-pairing is hard to catch in isolation, but the same exact value
     # attaching to several otherwise-unrelated headings is decisive: a
     # real contract fact belongs to one field, not five.
+    # Pages of a contract schedule: a real line-item table, or text that
+    # names line items (CLIN / Line Item / Supplies or Services).
+    schedule_pages = line_item_pages | {
+        page.page_number for page in scan_pages if _SCHEDULE_TEXT.search(page.final_text or "")
+    }
     _REPEATED_VALUE_MIN_OCCURRENCES = 3
     kv_value_occurrences: dict[str, list[str]] = {}
+    # Any method: a multi-word value after four or more different labels is
+    # a table column ("All Services ... Firm Price", "Vehicles ... Firm
+    # Price"), not five facts. Answers that legitimately repeat (YES / NO /
+    # Not applicable) are exempt.
+    _REPEATED_PHRASE_MIN_LABELS = 4
+    # Three or more labels that name no amount, each carrying only an
+    # amount, are a schedule's line items (Service, Maintenance, Support).
+    _LINE_AMOUNT_MIN_LABELS = 3
+    kv_line_amounts: set[str] = set()
+    kv_phrase_occurrences: dict[str, set[str]] = {}
 
     for page in scan_pages:
         for pair in scan_page_for_labeled_pairs(page=page):
@@ -1139,6 +1172,11 @@ async def detect_document_structures(
                 # "Unit Price"/"Quantity"/... found on a page that also
                 # carries a real line-item table is that table's own
                 # column data leaking into free text, not a document fact.
+                continue
+
+            if page.page_number in schedule_pages and _is_bare_amount(pair.value) and not _AMOUNT_LABEL.search(pair.raw_label):
+                # "Damage ... USD 97,003.20" on a CLIN schedule page: one
+                # line's amount beside its description, not a document fact.
                 continue
 
             from app.services.field_classification import (
@@ -1198,6 +1236,15 @@ async def detect_document_structures(
             # still requires an explicit colon/gap/dot-leader on the same
             # line as its label — real structural evidence a repeated
             # value there doesn't undermine.
+            if _is_bare_amount(pair.value) and not _AMOUNT_LABEL.search(pair.raw_label):
+                kv_line_amounts.add(kv_key)
+            phrase = " ".join(str(pair.value).strip().lower().split())
+            if (
+                len(phrase.split()) >= 2 and phrase not in _REPEATABLE_ANSWERS and not any(c.isdigit() for c in phrase)
+                # "Pricing Arrangement: Firm Fixed Price" names its value's kind.
+                and not _VALUE_KIND_LABEL.search(pair.raw_label)
+            ):
+                kv_phrase_occurrences.setdefault(phrase, set()).add(kv_key)
             if pair.method == "stacked_line":
                 normalized_value = " ".join(str(pair.value).strip().lower().split())
                 if normalized_value:
@@ -1212,6 +1259,11 @@ async def detect_document_structures(
     for keys in kv_value_occurrences.values():
         if len(set(keys)) >= _REPEATED_VALUE_MIN_OCCURRENCES:
             suspect_keys.update(keys)
+    for keys in kv_phrase_occurrences.values():
+        if len(keys) >= _REPEATED_PHRASE_MIN_LABELS:
+            suspect_keys.update(keys)
+    if len(kv_line_amounts) >= _LINE_AMOUNT_MIN_LABELS:
+        suspect_keys.update(kv_line_amounts)
 
     if suspect_keys:
         rewritten: list[DetectedTarget] = []
@@ -1229,9 +1281,10 @@ async def detect_document_structures(
                     evidence=item.evidence
                     + [
                         "Excluded from business fields: this value repeated "
-                        "across multiple unrelated candidates, indicating a "
-                        "text-extraction column/reading-order artifact "
-                        "rather than a genuine label/value pairing."
+                        "across multiple unrelated candidates, or is one of "
+                        "several bare line amounts, indicating table data "
+                        "(a column or a schedule's line items) rather than a "
+                        "genuine label/value pairing."
                     ],
                     discovery_method=item.discovery_method,
                     source_labels=item.source_labels,

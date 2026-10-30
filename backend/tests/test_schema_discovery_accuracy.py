@@ -239,3 +239,27 @@ def test_line_item_columns_are_not_flattened_into_document_fields() -> None:
     assert "contract_number" in keys
     # The real line-item data still exists, just as a table, not scalars.
     assert any(target.target_type == "table" for target in schema.targets)
+
+
+def test_contract_schedule_rows_are_not_document_fields() -> None:
+    """FA30's CLIN schedule: each service line prints its pricing type or
+    its amount after the service name. Those are line items, not fields —
+    while the header's own label/value pairs stay."""
+
+    text = (
+        "Contract Number: FA300224C0008\n"
+        "Pricing Arrangement: Firm Fixed Price\n"
+        "All Services: Firm Price\n"
+        "Vehicles: Firm Price\n"
+        "Resource Management: Firm Price\n"
+        "Maintenance Foreign Object: Firm Price\n"
+        "Damage: USD 97,003.20\n"
+        "Maintenance: USD 364,628.80\n"
+        "Support: USD 79,661.50\n"
+        "Total Amount: USD 541,293.50\n"
+    )
+    detection = asyncio.run(_detect(text))
+    fields = {target.key for target in detection.detected_targets if target.key.startswith("kv_")}
+    for row in ("kv_all_services", "kv_vehicles", "kv_damage", "kv_maintenance", "kv_support"):
+        assert row not in fields
+    assert {"kv_pricing_arrangement", "kv_total_amount"} <= fields

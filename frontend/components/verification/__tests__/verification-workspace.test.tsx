@@ -161,7 +161,10 @@ describe("VerificationWorkspace", () => {
       fireEvent.click(within(card).getByRole("button", { name: "Save" }));
     });
     expect(reviewMock).toHaveBeenCalledWith("d1", ["field:1:a:legal-entity:0"], "correct", { value: "ORBITAL FIELD SVCS LLC" });
-    expect(screen.getByRole("article", { name: "UEI" })).toHaveTextContent("Not found in the document");
+    // Optional fields the document doesn't print are listed once, not as cards.
+    expect(screen.queryByRole("article", { name: "UEI" })).toBeNull();
+    expect(screen.getByTestId("not-found-fields")).toHaveTextContent("1 field not found in this document");
+    expect(screen.getByTestId("not-found-fields")).toHaveTextContent("UEI");
   });
 
   it("says when a requested value isn't in the document", async () => {

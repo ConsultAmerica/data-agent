@@ -176,3 +176,23 @@ describe("OriginalStructureView", () => {
     expect(within(other).getByText("08/13/2025")).toBeInTheDocument();
   });
 });
+
+describe("TableView", () => {
+  it("hides columns and rows with nothing in them, but never a printed column", async () => {
+    const { TableView } = await import("@/components/original-structure/original-structure-view");
+    const table = {
+      kind: "table" as const, id: "t", record_key: "table:1:0", title: "Schedule", headers: ["Column 1", "Column 2", "Column 3"],
+      headers_printed: false, pages: [1], continued: false, detection_method: "pdf_ruling_lines", row_count: 3,
+      rows: [
+        { id: "a", record_key: "table:1:0:row:0", page: 1, cells: ["0001", "", "Firm Price"] },
+        { id: "b", record_key: "table:1:0:row:1", page: 1, cells: ["", "", ""] },
+        { id: "c", record_key: "table:1:0:row:2", page: 1, cells: ["0002", "", "Estimated Cost"] },
+      ],
+    };
+    render(<TableView table={table} selectedId={null} onSelect={() => undefined} />);
+    const box = screen.getByTestId("layout-table");
+    expect(within(box).getAllByRole("columnheader").map((th) => th.textContent)).toEqual(["Column 1", "Column 3"]);
+    expect(within(box).getAllByTestId("layout-table-row")).toHaveLength(2);
+    expect(box).toHaveTextContent("1 empty column hidden · 1 empty row hidden");
+  });
+});

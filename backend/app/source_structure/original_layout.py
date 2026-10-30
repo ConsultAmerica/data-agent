@@ -9,7 +9,9 @@ matched to, and any disagreement between the two is flagged for review.
 
 from __future__ import annotations
 
+import logging
 import re
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,6 +25,8 @@ from app.services.evidence_text import source_text_of
 from app.source_structure.models import FieldCandidate, StructuredSourceDocument, TableCandidate
 from app.source_structure.service import get_or_build_source_structure
 from app.source_structure.text_shapes import infer_value_type, normalize_space
+
+logger = logging.getLogger(__name__)
 
 # Flags (each one puts the row in Needs Review).
 LABEL_VALUE_MISMATCH = "label_value_mismatch"  # extraction read another value for this label
@@ -433,6 +437,39 @@ def _metadata_payload(m: DocumentMetadataField) -> dict[str, Any]:
     }
 
 
+_LOWER_START = re.compile(r"^[a-z]")
+_LETTER_END = re.compile(r"[a-z]$")
+
+
+def _is_broken_prose(tables: list[TableCandidate]) -> bool:
+    """A table with no printed header that is really text cut into a grid
+    (boxes drawn around a schedule's prose, or columns guessed from
+    alignment): mostly empty cells, text in fewer than two columns, fewer
+    than two rows with text, or words split across neighbouring cells
+    ("addr" | "ess"). A table with a printed header is never set aside."""
+
+    first = tables[0]
+    if first.header_cells:
+        return False
+    rows = [[cell.text.strip() for cell in row] for table in tables for row in table.rows]
+    if not rows:
+        return True
+    width = max(len(row) for row in rows)
+    filled = [row for row in rows if any(row)]
+    used = {i for row in rows for i, text in enumerate(row) if text}
+    cells = sum(1 for row in rows for text in row if text)
+    if len(filled) < 2 or len(used) < 2 or cells / max(1, len(rows) * width) < 0.25:
+        return True
+    pairs = splits = 0
+    for row in rows:
+        texts = [text for text in row if text]
+        for left, right in zip(texts, texts[1:]):
+            pairs += 1
+            if _LETTER_END.search(left) and _LOWER_START.match(right):
+                splits += 1
+    return pairs >= 3 and splits / pairs > 0.3
+
+
 def _table_payload(
     tables: list[TableCandidate], heading: str | None, table_key: str, reviews: dict[str, StructureRecordReview]
 ) -> dict[str, Any]:
@@ -593,6 +630,7 @@ def build_original_layout(
 
     out_sections = []
     tables_on_page: dict[int, int] = {}
+    dropped_tables = 0
     for entry in sections:
         items = []
         for kind, value in entry["items"]:
@@ -604,6 +642,10 @@ def build_original_layout(
                 page = value[0].page or 0
                 table_key = f"table:{page}:{tables_on_page.get(page, 0)}"
                 tables_on_page[page] = tables_on_page.get(page, 0) + 1
+                # Keys are numbered before this check, so they stay stable.
+                if _is_broken_prose(value):
+                    dropped_tables += 1
+                    continue
                 items.append(_table_payload(value, entry["title"], table_key, by_key))
         # A printed contract part stays listed even with nothing of its own.
         if items or (has_parts and entry["level"] == 1):
@@ -629,12 +671,57 @@ def build_original_layout(
             + sum(1 for t in table_items for r in t["rows"] if r.get("flags")),
             "unplaced": len(still_unplaced),
             "placed_by_page": len(unplaced) - len(still_unplaced),
+            # Headerless alignment "tables" that were paragraphs cut into columns.
+            "tables_set_aside": dropped_tables,
         },
     }
 
 
+_build_locks: dict[str, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _build_lock(document_id: str) -> threading.Lock:
+    with _locks_guard:
+        return _build_locks.setdefault(document_id, threading.Lock())
+
+
+def structure_for(database: Session, document: Document) -> StructuredSourceDocument:
+    """The document's source structure, built once: a request arriving while
+    it's being built (after processing) waits for that build instead of
+    starting another."""
+
+    with _build_lock(document.id):
+        return get_or_build_source_structure(database, document)
+
+
+def prebuild_structure_soon(document_id: str) -> None:
+    """Build and store the layout in the background after processing, so the
+    first Original Structure view of a large document opens at once."""
+
+    from app.core.config import get_settings
+
+    if not get_settings().prebuild_layout:
+        return
+
+    def run() -> None:
+        from app.database.session import SessionLocal
+
+        database = SessionLocal()
+        try:
+            document = database.get(Document, document_id)
+            if document is not None:
+                structure_for(database, document)
+        except Exception:  # noqa: BLE001 - the view builds it on demand instead
+            logger.exception("Pre-building the layout of %s failed", document_id)
+        finally:
+            database.close()
+
+    threading.Thread(target=run, name=f"layout-{document_id[:8]}", daemon=True).start()
+
+
 def original_layout_for(database: Session, document: Document) -> dict[str, Any]:
-    structure = get_or_build_source_structure(database, document)
+    structure = structure_for(database, document)
     metadata_rows = list(
         database.scalars(
             select(DocumentMetadataField)

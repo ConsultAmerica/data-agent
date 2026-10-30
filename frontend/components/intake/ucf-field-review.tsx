@@ -322,6 +322,12 @@ function TableRows({ table, onOpen }: { table: TableTargetResult; onOpen: (index
   const ids = useMemo(() => table.rows.map((_, index) => rowId(table.target, index)), [table]);
   const state = checkState(ids, selected);
   const shown = all ? table.rows : table.rows.slice(0, ROWS_SHOWN);
+  // "Column 3" with nothing in any row is layout noise: hidden here only.
+  const columns = useMemo(
+    () => table.columns.filter((column) => !/^Column \d+$/.test(column) || table.rows.some((row) => String(row[column] ?? "").trim())),
+    [table],
+  );
+  const hiddenColumns = table.columns.length - columns.length;
   const toggleSelection = selection?.toggle;
   const toggleRow = useCallback((id: string, on: boolean) => toggleSelection?.([id], on), [toggleSelection]);
   // A stable handler for the memoised rows; it calls the latest onOpen.
@@ -344,6 +350,7 @@ function TableRows({ table, onOpen }: { table: TableTargetResult; onOpen: (index
         <span className="font-medium text-foreground">{table.target}</span>
         <span className="text-text-muted">
           {table.rows.length} rows · {table.pages.length > 1 ? `pages ${table.pages[0]}–${table.pages[table.pages.length - 1]}` : `page ${table.pages[0] ?? "—"}`}
+          {hiddenColumns > 0 && ` · ${hiddenColumns} empty column${hiddenColumns === 1 ? "" : "s"} hidden`}
         </span>
       </p>
       <div className="max-h-[360px] overflow-auto">
@@ -351,7 +358,7 @@ function TableRows({ table, onOpen }: { table: TableTargetResult; onOpen: (index
           <thead className="sticky top-0 bg-surface">
             <tr className="text-left text-text-secondary">
               {selection && <th className="w-6 px-2 py-1" aria-label="Select" />}
-              {table.columns.map((column) => <th key={column} scope="col" className="whitespace-nowrap px-2 py-1 font-medium">{column}</th>)}
+              {columns.map((column) => <th key={column} scope="col" className="whitespace-nowrap px-2 py-1 font-medium">{column}</th>)}
             </tr>
           </thead>
           <tbody>
@@ -361,7 +368,7 @@ function TableRows({ table, onOpen }: { table: TableTargetResult; onOpen: (index
                 id={ids[index]}
                 index={index}
                 table={table.target}
-                columns={table.columns}
+                columns={columns}
                 row={row}
                 selectable={Boolean(selection)}
                 checked={selected.has(ids[index])}

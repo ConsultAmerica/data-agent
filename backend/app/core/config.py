@@ -12,6 +12,9 @@ class Settings(BaseSettings):
 
     app_name: str = "Dataomatix"
     app_env: str = "development"
+    # Build each document's original layout in the background after
+    # processing, so Original Structure opens at once.
+    prebuild_layout: bool = True
     debug: bool = True
 
     upload_directory: str = "uploads"

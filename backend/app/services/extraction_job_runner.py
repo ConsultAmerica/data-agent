@@ -413,6 +413,10 @@ async def run_processing_job(job_id: int) -> None:
             discovery_reused=reused_discovery,
             **{f"timing_{key}": value for key, value in stage_timings.items()},
         )
+        # Original Structure is ready when the reviewer opens it.
+        from app.source_structure.original_layout import prebuild_structure_soon
+
+        prebuild_structure_soon(job.document_id)
 
     finally:
         await stop_heartbeat(heartbeat)

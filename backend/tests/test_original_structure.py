@@ -375,3 +375,27 @@ def test_record_history_lists_every_decision_oldest_first(brief_id: str) -> None
     assert history["entries"][-1]["previous_value"] == row["cells"]  # the printed row, kept
     empty = client.get(f"/api/documents/{brief_id}/original-structure/history", params={"record_key": "field:9:x:y:0"}).json()
     assert empty["entries"] == []
+
+
+def _grid(rows: list[list[str]], *, header: list[str] | None = None, method: str = "pdf_ruling_lines"):
+    from app.source_structure.models import TableCandidate, TableCell
+
+    return TableCandidate(
+        candidate_id="t", region_id="t", page=1, bbox=(0, 0, 100, 100), detection_method=method,
+        headers=header or [f"Column {i + 1}" for i in range(len(rows[0]))],
+        header_cells=[TableCell(row_index=-1, column_index=i, text=h) for i, h in enumerate(header or [])],
+        rows=[[TableCell(row_index=r, column_index=c, text=t) for c, t in enumerate(row)] for r, row in enumerate(rows)],
+    )
+
+
+def test_text_cut_into_a_grid_is_set_aside_and_real_tables_kept() -> None:
+    from app.source_structure.original_layout import _is_broken_prose
+
+    empty = _grid([["", "", ""]] * 6)
+    split = _grid([["[ List name, addr", "ess, telephone", "and contact for suppl", "iers surveyed"], ["", "", "", ""]] * 2)
+    sparse = _grid([["", "Product Service Code: S2", "", "", "", ""]] + [[""] * 6] * 9)
+    clauses = _grid([["52.202-1", "Definitions.", "Jun 2020"], ["52.204-7", "System for Award Management.", "Nov 2024"], ["52.204-13", "SAM Maintenance.", "Oct 2018"]], method="pdf_column_alignment")
+    printed = _grid([["", "", ""], ["", "", ""]], header=["Mod Number", "Description", "Date"])
+    assert _is_broken_prose([empty]) and _is_broken_prose([split]) and _is_broken_prose([sparse])
+    assert not _is_broken_prose([clauses])
+    assert not _is_broken_prose([printed])  # a printed header is always a table

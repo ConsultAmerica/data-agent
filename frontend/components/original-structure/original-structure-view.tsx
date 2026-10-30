@@ -202,7 +202,18 @@ export default function OriginalStructureView({
   }
 
   if (error) return <p className="mt-4 rounded-lg border border-danger/30 bg-danger/5 p-3 text-sm text-danger" role="alert">{error}</p>;
-  if (!data) return <p className="mt-4 text-sm text-text-muted" data-testid="original-structure-loading">Reading the document layout…</p>;
+  if (!data) {
+    return (
+      <div className="mt-4 rounded-xl border border-border bg-surface p-4 text-sm text-text-secondary" role="status" data-testid="original-structure-loading">
+        <p className="font-medium text-foreground">Reading the document layout…</p>
+        <p className="mt-1 text-xs text-text-muted">
+          {pageCount > 50
+            ? `A ${pageCount}-page document's layout is built once, right after processing (about a minute for 300 pages); after that it opens at once.`
+            : "This takes a few seconds the first time."}
+        </p>
+      </div>
+    );
+  }
 
   function toggle(id: string) {
     setCollapsed((current) => {
@@ -489,6 +500,20 @@ function FieldGrid({ fields, section, selectedId, onSelect, density = "comfortab
   );
 }
 
+/** Columns worth a place on screen: every printed header, and any column
+ * with a value in some row. An unlabelled column empty in every row is
+ * hidden here only; exports keep the table whole. */
+export function shownColumns(table: LayoutTable): number[] {
+  const generic = /^Column \d+$/;
+  return table.headers
+    .map((header, index) => index)
+    .filter((index) => {
+      const header = (table.headers[index] ?? "").trim();
+      if (table.headers_printed && header && !generic.test(header)) return true;
+      return table.rows.some((row) => (row.reviewed_cells ?? row.cells)[index]?.trim() || row.cells[index]?.trim());
+    });
+}
+
 export function TableView({ table, selectedId, onSelect, reviewEnabled = false, density = "comfortable" }: {
   table: LayoutTable;
   /** The focused row's key. */
@@ -500,9 +525,18 @@ export function TableView({ table, selectedId, onSelect, reviewEnabled = false, 
 }) {
   const shared = useRecordSelection();
   // Thousands of invoice lines: only the rows in view render.
-  const [windowRef, windowRows] = useWindowedRows(table.rows.length, density === "compact" ? 22 : 28);
-  const rows = table.rows.slice(windowRows.start, windowRows.end);
+  const columns = shownColumns(table);
+  const hidden = table.headers.length - columns.length;
+  // A row with nothing in any column is a gap in the ruling, not a record.
+  const filled = useMemo(
+    () => table.rows.filter((row) => row.added || columns.some((index) => (row.reviewed_cells ?? row.cells)[index]?.trim())),
+    [table, columns],
+  );
+  const emptyRows = table.rows.length - filled.length;
+  const [windowRef, windowRows] = useWindowedRows(filled.length, density === "compact" ? 22 : 28);
+  const rows = filled.slice(windowRows.start, windowRows.end);
   const pad = density === "compact" ? "py-0.5" : "py-1";
+  const loose = !table.headers_printed && table.detection_method === "pdf_column_alignment";
   const flagged = table.rows.filter((row) => row.flags?.length).length;
   return (
     <div className="rounded-lg border border-border" data-testid="layout-table">
@@ -514,15 +548,22 @@ export function TableView({ table, selectedId, onSelect, reviewEnabled = false, 
           {table.row_count} row{table.row_count === 1 ? "" : "s"} · {table.pages.length > 1 ? `pages ${table.pages.join("–")}` : `page ${table.pages[0] ?? "—"}`}
           {table.continued && " · continued across pages"}
           {!table.headers_printed && " · no header row printed"}
+          {hidden > 0 && ` · ${hidden} empty column${hidden === 1 ? "" : "s"} hidden`}
+          {emptyRows > 0 && ` · ${emptyRows} empty row${emptyRows === 1 ? "" : "s"} hidden`}
         </span>
         {flagged > 0 && <span className="text-danger">{flagged} row{flagged === 1 ? "" : "s"} need review</span>}
       </p>
+      {loose && (
+        <p className="border-b border-border bg-warning/5 px-3 py-1 text-[11px] text-warning">
+          Found by text alignment (no ruling or printed header): a cell may be split across columns or rows. Check it against the source.
+        </p>
+      )}
       <div ref={windowRef} className="max-h-[520px] overflow-auto">
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-surface">
             <tr className="border-b border-border text-left text-text-secondary">
               {shared && <td className="w-6 px-2 py-1.5" />}
-              {table.headers.map((header, index) => <th key={index} scope="col" className="whitespace-nowrap px-2 py-1.5 font-semibold">{header}</th>)}
+              {columns.map((index) => <th key={index} scope="col" className="whitespace-nowrap px-2 py-1.5 font-semibold">{table.headers[index]}</th>)}
               {reviewEnabled && <th scope="col" className="whitespace-nowrap px-2 py-1.5 font-semibold">Review</th>}
             </tr>
           </thead>
@@ -543,7 +584,7 @@ export function TableView({ table, selectedId, onSelect, reviewEnabled = false, 
                   }}
                   className={`cursor-pointer border-b border-border/60 hover:bg-surface-soft ${selectedId === row.record_key ? "bg-primary/[0.06]" : ""}`}>
                   {shared && <td className={`w-6 px-2 ${pad}`}><TriCheckbox ids={[layoutId(row.record_key)]} label={`Select row ${rowIndex + 1} of ${table.title ?? "the table"}`} /></td>}
-                  {table.headers.map((_, index) => {
+                  {columns.map((index) => {
                     const corrected = row.reviewed_cells && row.reviewed_cells[index] !== row.cells[index] && !row.added;
                     return (
                       <td key={index} title={corrected ? `Printed: ${row.cells[index] || "(blank)"}` : undefined}

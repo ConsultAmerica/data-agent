@@ -98,7 +98,8 @@ function FieldCardInner({ documentId, field, density, focused, onFocus, onChange
   const [value, setValue] = useState(field.value ?? "");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const validation = VALIDATION_CHIP[field.validation_status] ?? VALIDATION_CHIP.not_checked;
+  // A required field the document doesn't print is missing, not invalid.
+  const validation = !field.value && field.required ? VALIDATION_CHIP.missing : VALIDATION_CHIP[field.validation_status] ?? VALIDATION_CHIP.not_checked;
   const issues = field.issues.filter((i) => !["repeating_record", "repeated_in_other_sections"].includes(i.code));
   const flagged = issues.length > 0;
   const key = field.record_key;
@@ -125,7 +126,7 @@ function FieldCardInner({ documentId, field, density, focused, onFocus, onChange
 
   const chips = (
     <span className="flex shrink-0 flex-wrap items-center gap-1">
-      <ConfidenceChip value={field.value ? field.confidence : null} />
+      {field.value && <ConfidenceChip value={field.confidence} />}
       <Chip tone={validation.tone} title="Validation">{validation.label}</Chip>
       {field.review_status && <Chip tone={REVIEW_TONE[field.review_status] ?? "bg-surface-soft text-text-secondary"} title="Review">{field.review_status}</Chip>}
       {field.page != null && <span className="text-[11px] text-text-muted" title="Source page">p. {field.page}</span>}
