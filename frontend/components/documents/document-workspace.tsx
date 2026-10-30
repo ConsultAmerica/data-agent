@@ -357,7 +357,7 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
   }
 
   async function exportDocumentStructure(kind: "original" | "all_fields" | "json") {
-    const labels = { original: "Original File Excel", all_fields: "All Extracted Fields CSV", json: "Structured JSON" };
+    const labels = { original: "Original File Excel", all_fields: "Original File CSV", json: "Structured JSON" };
     await runExport(
       () => downloadWorkspaceExport(documentId, kind, filename || workbook?.document_filename || "export"),
       `${labels[kind]} download started.`,
@@ -646,12 +646,12 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
                   )}
                 </div>
                 <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
-                  Document structure
+                  Original File
                 </p>
                 {(
                   [
                     ["original", "Excel → Original File"],
-                    ["all_fields", "All Extracted Fields (CSV)"],
+                    ["all_fields", "CSV → Original File"],
                     ["json", "Structured JSON"],
                   ] as const
                 ).map(([kind, label]) => (
@@ -667,7 +667,7 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
                 ))}
                 <div className="my-1 border-t border-border" />
                 <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
-                  Staging — Export All
+                  Advanced Grid data — Export All
                 </p>
                 {profile.export_capabilities.length === 0 && (
                   <p className="px-3 py-1.5 pl-5 text-xs text-text-muted">
@@ -688,7 +688,7 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
                 ))}
                 <div className="my-1 border-t border-border" />
                 <p className="px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
-                  Staging — Export Selected
+                  Advanced Grid data — Export Selected
                 </p>
                 {SELECTED_EXPORT_FORMATS.map((item) => (
                   <button

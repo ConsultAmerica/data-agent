@@ -179,7 +179,7 @@ function stem(name: string): string {
 export function downloadWorkspaceExport(documentId: string, kind: "original" | "all_fields" | "json", documentName: string) {
   const spec = {
     original: { format: "xlsx" as const, href: `/api/documents/${documentId}/original-structure/export.xlsx`, label: "Original File export", name: `${stem(documentName)} - original file.xlsx` },
-    all_fields: { format: "csv" as const, href: `/api/documents/${documentId}/all-fields.csv`, label: "All Extracted Fields export", name: `${stem(documentName)} - all extracted fields.csv` },
+    all_fields: { format: "csv" as const, href: `/api/documents/${documentId}/all-fields.csv`, label: "Original File CSV export", name: `${stem(documentName)} - original file.csv` },
     json: { format: "json" as const, href: `/api/documents/${documentId}/structured.json`, label: "Structured JSON export", name: `${stem(documentName)} - structured.json` },
   }[kind];
   return downloadExport({ capability_id: kind, label: spec.label, format: spec.format, href: spec.href, dataset_id: null }, spec.name);

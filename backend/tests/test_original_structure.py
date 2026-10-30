@@ -130,6 +130,8 @@ def test_label_value_disagreements_are_flagged_and_reviewed_values_kept(brief_id
     assert number["extracted_value"] == "C05550001"
     assert [f["code"] for f in number["flags"]] == ["missed_value"]
     assert number["review_status"] == "Needs review"
+    # Still for review, but the value was read: it isn't "missing".
+    assert number["quality"] == "confirmed"
     assert "label_value_mismatch" in [f["code"] for f in by_label["Business Size"]["flags"]]
     assert by_label["Business Size"]["document_value"] == "HUBZone"  # never replaced
     role = by_label["8. Company Role"]
@@ -352,6 +354,7 @@ def test_quality_states_follow_the_source_and_extraction() -> None:
     # Read from the layout with no extraction row: the printed value stands.
     assert _field_quality(payload("FAR", ""), candidate()) == "confirmed"
     assert _field_quality(payload("FAR", "", ["missed_value"]), candidate()) == "missing_extraction"
+    assert _field_quality(payload("FAR", "FAR", ["missed_value"]), candidate()) == "confirmed"
     assert _field_quality(payload("FAR", "DFARS", ["label_value_mismatch"]), candidate()) == "conflicting"
     assert _field_quality(payload("FAR", "FAR", ["conflicting_values"]), candidate()) == "conflicting"
     ocr = candidate(extraction_method="ocr", ocr_confidence=0.62)

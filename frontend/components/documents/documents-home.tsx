@@ -56,7 +56,7 @@ import {
 import { getDocumentTypeAppearance } from "@/lib/document-type-icon";
 import { useTableDensity } from "@/lib/table-density";
 import { presentDocument, statusMark } from "@/lib/document-presentation";
-import { downloadExport, getStagingProfile } from "@/lib/staging-workbook";
+import { downloadWorkspaceExport } from "@/lib/verification";
 import type { CategoryCount, DocumentStatus, DocumentSummary } from "@/types/document";
 import { REVIEW_READ_ONLY_MESSAGE, useReviewMutationsEnabled } from "@/lib/review-gate";
 
@@ -349,10 +349,8 @@ export default function DocumentsHome() {
   async function exportDocument(document: DocumentSummary) {
     setMenuFor(null);
     try {
-      const profile = await getStagingProfile(document.document_id);
-      const capability = profile.export_capabilities.find((item) => item.format === "xlsx");
-      if (!capability) throw new Error("This document has no Excel export.");
-      await downloadExport(capability, document.original_filename.replace(/\.[^.]+$/, ""));
+      // The document's own structure, as the Original File tab shows it.
+      await downloadWorkspaceExport(document.document_id, "original", document.original_filename);
     } catch (err) {
       setNotice(err instanceof Error ? err.message : "Export failed.");
     }

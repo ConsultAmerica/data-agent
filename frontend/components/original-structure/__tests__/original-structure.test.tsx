@@ -94,11 +94,12 @@ describe("OriginalStructureView", () => {
     expect(within(grid).getAllByTestId("item-category").map((c) => c.textContent)).toEqual(["Contractor Information", "Contract Information", "Prime Contractor"]);
     // Sub-fields are sub-attributes; an item that is its own field has none.
     expect(within(grid).getAllByTestId("sub-attribute").map((c) => c.textContent)).toEqual(["Legal Entity", "Contract Number", ""]);
-    expect(within(rows[0]).getAllByRole("cell")[8]).toHaveTextContent("Form line");
+    expect(within(rows[0]).getAllByRole("cell")[7]).toHaveTextContent("Form line");
+    // No Data Quality column; the grid says a blank is blank in its value cell.
+    expect(FIELD_COLUMNS).not.toContain("Data Quality");
     // Blank printed fields are shown, not hidden, and say they are blank in the source.
     expect(within(rows[2]).getAllByText("Blank in source").length).toBeGreaterThan(0);
-    expect(within(rows[2]).getByTestId("quality-chip")).toHaveTextContent("Blank in source");
-    expect(within(rows[0]).queryByTestId("quality-chip")).toBeNull();
+    expect(within(grid).queryByTestId("quality-chip")).toBeNull();
     expect(screen.getByTestId("original-structure-stats")).toHaveTextContent("3 fields (1 blank on the page) · 1 tables · 3 table rows");
   });
 

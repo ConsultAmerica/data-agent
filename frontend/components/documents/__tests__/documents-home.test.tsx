@@ -277,7 +277,11 @@ describe("Documents repository (RC2-02)", { timeout: 15_000 }, () => {
     expect(push).toHaveBeenCalledWith(expect.stringMatching(/^\/documents\/d1\/review/));
     fireEvent.click(screen.getByRole("button", { name: "Actions for 05_multipage_stress.pdf" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Export" }));
-    await waitFor(() => expect(downloadExport).toHaveBeenCalledWith(capability, "05_multipage_stress"));
+    // Export downloads the Original File workbook, not the staging datasets.
+    await waitFor(() => expect(downloadExport).toHaveBeenCalledWith(
+      expect.objectContaining({ format: "xlsx", href: "/api/documents/d1/original-structure/export.xlsx" }),
+      "05_multipage_stress - original file.xlsx",
+    ));
     fireEvent.click(screen.getByRole("button", { name: "Actions for invoice_copy.pdf" }));
     expect((screen.getByRole("menuitem", { name: "Export" }) as HTMLButtonElement).disabled).toBe(true);
   });

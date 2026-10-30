@@ -185,3 +185,32 @@ Render deploy, check that `GET /api/documents/{id}/original-structure` returns
 8. **Image-only documents show no fields until OCR has run.** OCR was not run in these checks.
 9. **CSV carries no quality, location or split comments.** A CSV can't hold comments.
 10. **Local data:** two test documents were uploaded to the local development database (`sample-contract.pdf` `a93d15fe-…`, `two-contracts.pdf` `df508a78-…`). Nothing was sent to staging or production.
+
+## Release record (2026-10-30)
+
+| Item | Value |
+|---|---|
+| Release commit | `8c326e329fc0afb1efed05cb9ef304aa4296569a` on `feature/di-02-safety-foundation` |
+| Deployed commit (`main`) | `7c5a445965c550840647bd694b32811984d8959d` (merge of the above) |
+| Backend (Render, data-agent-backend-qbmc) | build `7c5a445965c5@2026-10-30T19:52:53Z`. `/health` returns 200; `/version` and `/ready` report `7c5a445…`; database and storage OK; Oracle dry-run on. |
+| Frontend (Vercel, production) | `dpl_4Ko6TBqkbKtJ8UzbuK4c4DFnbA1B`, Ready. `dataomatix.com` and `data-agent-rho.vercel.app` both serve the new code (the "Original File export" label is present; the old label is gone). |
+
+### Production smoke tests
+
+All run read-only against an existing workspace: no uploads, reviews or corrections.
+
+| Area | Document | Result |
+|---|---|---|
+| Original File hierarchy | `aa.pdf` (6 pages, uploaded after the deploy) | **Pass.** 3 sections and 67 fields. Every field carries `item`, `quality` and `source_location`, and every table carries `shared_columns`. |
+| Item numbers and section labels once | `aa.pdf`, `Contract - FA30.pdf` | **Pass.** 32 items in `aa.pdf` with none opened twice, and no number repeated in the tab. FA30: 28 sections, no two adjacent sections with the same title. |
+| Original File Excel export | `aa.pdf`, FA30 | **Pass.** One sheet `Original File`, no merged cells, every value stored as text, file `<name> - original file.xlsx`. `aa.pdf` 180 rows in 1.5 s; FA30 4,483 rows in 13.7 s. |
+| Multi-contract metadata | `aa.pdf` (two contracts) | **Pass.** Contract Summary inherits the first contract (NOVA SPACE SOLUTIONS, LLC, `C01420001`). Each modifications table uses the block printed in its own section. The page 6 table belongs to `C01420001.00.9999`, and its printed blank contractor stays blank. |
+| Source Verification | `aa.pdf` on dataomatix.com | **Pass.** Field Legal Entity: page 1, exact region, highlights `NOVA SPACE SOLUTIONS, LLC`. Contract Summary row OPTION YEAR: page 3, exact region, that printed row boxed (checked in the screenshot). |
+| Advanced Grid | `aa.pdf` | **Pass.** Loads Results with 872 fields, 808 key-value pairs and 7 tables, values marked verified. No failed API calls. |
+| Oracle mapping | `aa.pdf`; `/api/oracle/profiles`, `/api/oracle/templates` | **Pass, but limited.** The tab and endpoints respond (200), with no errors. Production has **no Oracle templates or mapping profiles**, so no mapping could be exercised. Regression cover is the backend suite's 42 Oracle tests. |
+| Integration | dataomatix.com against the Render API | **Pass.** No console errors, no failed API calls, and no write requests during the smoke pass. |
+
+### Observations
+
+- **FA30 uploads stuck in `processing`:** `5cafb37f…` (15:55), `71557e87…` (15:29) and `d383bb63…` (29 Oct 19:36). These are processing jobs that never finished, not part of this release. Later uploads of the same file completed (`fabe4450…`, `f998d827…`). They were not touched: reading a job's status can mark it interrupted, which is a database write.
+- FA30's Original File layout returns in 9 s on production.
