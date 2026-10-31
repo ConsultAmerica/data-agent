@@ -551,6 +551,14 @@ export default function DocumentWorkspace({ documentId }: { documentId: string }
             <RefreshCw className={`h-3.5 w-3.5 ${reprocessing || docStatus === "processing" ? "animate-spin" : ""}`} />
             {docStatus === "processing" ? "Processing…" : reprocessing ? "Starting…" : "Reprocess"}
           </button>
+          <Link
+            href={`/mapping/designer?document=${documentId}`}
+            className="btn-secondary px-3 py-2 text-sm"
+            title="Map this document's extracted fields to a registered Oracle Fusion target object"
+            data-testid="map-to-oracle"
+          >
+            Map to Oracle Fusion
+          </Link>
           <button
             type="button"
             className="btn-secondary px-3 py-2 text-sm"

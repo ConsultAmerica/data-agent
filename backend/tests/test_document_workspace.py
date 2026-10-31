@@ -212,8 +212,9 @@ def test_workspace_endpoints_and_exports(brief_id: str) -> None:
     rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig"))))
     # The Original Document Structure rows: the section, the field columns,
     # then item 1 with its first sub-field.
-    assert rows[1] == ["Item #", "Section / Field Name", "Extracted Value", "Field Details / Sub-Attributes"]
-    assert rows[2] == ["1.", "Contractor Information", "ORBITAL FIELD SERVICES, LLC", "Legal Entity"]
+    assert rows[1] == ["Item #", "Field Name", "Extracted Value"]
+    assert rows[2] == ["1.", "Contractor Information", ""]
+    assert rows[3] == ["", "Legal Entity", "ORBITAL FIELD SERVICES, LLC"]
 
     structured = client.get(f"/api/documents/{brief_id}/structured.json").json()
     assert {"classification", "skill", "original_structure", "business_data", "validation", "dates"} <= set(structured)

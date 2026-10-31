@@ -4,11 +4,17 @@ the hierarchy the layout already decided (original_layout.py) — nothing is
 re-derived here.
 
 - A section opens with its printed heading.
-- Fields sit under Item # | Section / Field Name | Extracted Value | Field
-  Details / Sub-Attributes. An item's number and name are written on its
-  first row only; each sub-field has its own row. A printed date range
-  ("01/01/2025 - 12/31/2025") is followed by its Start Date and End Date
-  rows; the printed text is kept in a comment on its own row.
+- Fields sit under Item # | Field Name | Extracted Value. An item with
+  sub-fields opens with its number and name on a row of their own; each
+  sub-field follows on its own row, its number cell blank. An item that is
+  one field is one row. Form boxes sharing a number show it once. A
+  printed date range ("01/01/2025 - 12/31/2025") is followed by its Start
+  Date and End Date rows; the printed text is kept in a comment. Field
+  names are the form's own, without instructions ("Enter the …").
+- A form's own tables (a table of contents, its amendments) are tables:
+  the item's number and caption above them, their printed columns, a
+  choice box as Selected / Not Selected. Rows the text extractor read
+  from a form's boxes or printed wording aren't repeated beside them.
 - A table keeps its printed headers, column order and row order. Document
   metadata (Contractor Name, Contract Number…) appears once above it,
   never in its rows: the block the document prints there, or for a table
@@ -40,8 +46,9 @@ from openpyxl.utils import get_column_letter
 from app.source_structure.original_layout import BLANK, CONFIRMED, EXACT, EXTRACTED, QUALITY_LABELS, SOURCE_LOCATION_LABELS
 from app.staging.custom_export import safe_cell
 
-FIELD_COLUMNS = ["Item #", "Section / Field Name", "Extracted Value", "Field Details / Sub-Attributes"]
+FIELD_COLUMNS = ["Item #", "Field Name", "Extracted Value"]
 _MIN_WIDTH, _MAX_WIDTH = 10, 60
+_TABLE_FIRST_COLUMN = 16
 # Rows whose text runs across the empty cells beside it, unwrapped.
 _BANNERS = {"section", "subsection", "table_title", "context"}
 
@@ -52,6 +59,9 @@ _HEADER_FILL = PatternFill("solid", fgColor="F2F2F2")
 _HEADER_EDGE = Border(bottom=Side(style="thin", color="A6A6A6"))
 _TOP = Alignment(vertical="top", wrap_text=True)
 _BANNER = Alignment(vertical="top", wrap_text=False)
+# Sub-fields sit under their item, set in by one level.
+_INDENTED = Alignment(vertical="top", wrap_text=True, indent=1)
+_CHILDREN = {"subfield", "part"}
 _AUTHOR = "Dataomatix"
 
 
@@ -59,14 +69,17 @@ _AUTHOR = "Dataomatix"
 class Row:
     """One worksheet row: what it is, its cells, and a note per cell."""
 
-    kind: str  # section | subsection | header | field | part | table_title | context | table_header | table_row | gap
+    kind: str  # section | subsection | header | item | field | part | table_title | context | table_header | table_row | gap
     values: list[Any] = field(default_factory=list)
     notes: dict[int, str] = field(default_factory=dict)
 
 
 def field_value(item: dict[str, Any]) -> str:
-    """The value now in effect: a reviewer's correction, else what was read."""
+    """The value now in effect: a reviewer's correction, else what was read
+    (a ticked form box reads "Selected")."""
 
+    if item.get("choice") and not item.get("structure_review"):
+        return item["choice"]
     return item.get("effective_value") or item.get("extracted_value") or item.get("document_value") or ""
 
 
@@ -143,36 +156,50 @@ def original_rows(layout: dict[str, Any]) -> list[Row]:
         in_fields = False
         previous_item: str | None = None
         for item in section["items"]:
+            if item.get("form_duplicate"):
+                # The text extractor's second reading of a form's boxes or
+                # wording: the form's own boxes are written instead.
+                continue
             if item["kind"] == "field":
                 if not in_fields:
                     rows.append(Row("header", list(FIELD_COLUMNS)))
                     in_fields = True
                 parent = item.get("item")
                 value = field_value(item)
-                if parent is None:
-                    values = ["", item.get("field_name") or item["label"], value, ""]
-                    previous_item = None
+                name = item.get("field_name") or item["label"]
+                first = parent is not None and parent["id"] != previous_item
+                kind = "field"
+                if parent is not None and parent.get("has_subfields") and parent.get("name"):
+                    # The item's number and name on a row of their own, once.
+                    if first:
+                        rows.append(Row("item", [parent["number"], parent["name"], ""]))
+                    values, kind = ["", name, value], "subfield"
+                elif parent is not None:
+                    values = [parent["number"] if first else "", name, value]
+                    if not first:
+                        kind = "subfield"
                 else:
-                    # The item's number and name open it; its sub-fields follow.
-                    first = parent["id"] != previous_item
-                    detail = item.get("field_name") if parent.get("has_subfields") else ""
-                    values = [parent["number"] if first else "", parent["name"] if first else "", value, detail or ""]
-                    previous_item = parent["id"]
+                    values = ["", name, value]
+                previous_item = parent["id"] if parent is not None else None
                 note = _field_note(item)
                 parts = item.get("parts") or []
                 if parts:
                     # The printed text once, as a note; its parts carry the values.
                     values[2] = ""
                     note = "; ".join(filter(None, [_composite_note(item), note]))
-                rows.append(Row("field", values, {2: note} if note else {}))
+                rows.append(Row(kind, values, {2: note} if note else {}))
                 for part in parts:
-                    rows.append(Row("part", ["", "", part["value"], f"↳ {part['label']}"]))
+                    rows.append(Row("part", ["", part["label"], part["value"]]))
                 continue
             in_fields = False
             previous_item = None
             gap()
             name = item.get("title") if item.get("title") and item.get("title") != title else "Table"
-            rows.append(Row("table_title", [name, _pages(item.get("pages") or [])]))
+            if item.get("item"):
+                # A form's numbered table: its item number in the Item # column.
+                rows.append(Row("table_title", [item["item"]["number"], item["item"]["name"] or name, _pages(item.get("pages") or [])]))
+            else:
+                rows.append(Row("table_title", [name, _pages(item.get("pages") or [])]))
             # Metadata the document prints right above the table is already
             # there as fields; a table without its own gets its contract's.
             context = _table_context(item)
@@ -213,6 +240,7 @@ def _text(value: Any) -> str | None:
 
 
 _STYLE = {
+    "item": (Font(bold=True), None, None),
     "section": (Font(bold=True, size=12), _SECTION_FILL, None),
     "subsection": (Font(bold=True, size=11), None, None),
     "header": (Font(bold=True), _HEADER_FILL, _HEADER_EDGE),
@@ -231,7 +259,10 @@ def build_original_structure_xlsx(layout: dict[str, Any]) -> bytes:
         if row.kind not in _BANNERS:
             for index, value in enumerate(row.values):
                 longest = max((len(line) for line in str(value or "").splitlines()), default=0)
-                widths[index] = max(widths.get(index, _MIN_WIDTH), min(_MAX_WIDTH, longest + 2))
+                # Column A is also the Item # column: a table's long first
+                # cells wrap there rather than widen it for every field row.
+                cap = _TABLE_FIRST_COLUMN if index == 0 and row.kind in ("table_header", "table_row") else _MAX_WIDTH
+                widths[index] = max(widths.get(index, _MIN_WIDTH), min(cap, longest + 2))
         font, fill, border = _STYLE.get(row.kind, (None, None, None))
         # Header and section rows are painted across the field columns so
         # they read as one band; each value still sits in its own cell.
@@ -244,7 +275,7 @@ def build_original_structure_xlsx(layout: dict[str, Any]) -> bytes:
                 cell.value = text
                 cell.data_type = "s"  # never a formula, never re-typed
             cell.number_format = "@"
-            cell.alignment = _BANNER if row.kind in _BANNERS else _TOP
+            cell.alignment = _BANNER if row.kind in _BANNERS else _INDENTED if row.kind in _CHILDREN and column == 2 else _TOP
             if font:
                 cell.font = font
             if fill:

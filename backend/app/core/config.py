@@ -35,6 +35,17 @@ class Settings(BaseSettings):
     oracle_base_url: str = "https://example.fa.oraclecloud.com"
     oracle_api_version: str = "11.13.18.05"
     oracle_dry_run: bool = True
+    # Oracle metadata discovery (oracle_templates/discovery.py): read-only
+    # REST "describe" calls against oracle_base_url. Off until a base URL
+    # and both credentials are set; the credentials never leave the server.
+    oracle_metadata_username: str | None = None
+    oracle_metadata_password: str | None = None
+    # The REST family the target resources live under: fscmRestApi (ERP,
+    # Procurement, Projects, Enterprise Contracts) or crmRestApi (CX).
+    oracle_metadata_rest_root: str = "fscmRestApi"
+    # Extra field-name aliases for Oracle mapping suggestions, shaped like
+    # oracle_templates/aliases.json.
+    oracle_mapping_aliases_path: str | None = None
 
     frontend_url: str = "http://localhost:3000"
 

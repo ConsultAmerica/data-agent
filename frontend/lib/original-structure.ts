@@ -97,6 +97,27 @@ export interface LayoutField {
   /** Printed again at the top of a later page (a running header). */
   repeated_header?: boolean;
   source_location?: SourceLocation;
+  /** A form choice box: "Selected" or "Not Selected". `extracted_value` keeps the form's own state. */
+  choice?: string;
+  /** A form box's own numbering and name, its instructions removed; `label` keeps the original wording. */
+  form_item?: FormItem;
+  /** A choice box's state as read from the form, with its raw value. */
+  form_state?: { state: "selected" | "not_selected" | "unrecognized"; raw: string; on_state: string | null };
+  /** The text extractor's second reading of a form's boxes or wording:
+   * kept as a record, not shown in the Original File (the form's boxes are). */
+  form_duplicate?: { code: string; message: string };
+}
+
+/** A form box's item: its number as the page prints it, and where that number came from. */
+export interface FormItem {
+  number: string;
+  name: string;
+  /** printed: the caption in the box's cell; form_field: the box's own description; none: no number. */
+  number_source?: "printed" | "form_field" | "none";
+  /** The box's description gives another number than the printed form. */
+  described_as?: string;
+  /** The printed caption of the item ("Type of Solicitation"). */
+  caption?: string;
 }
 
 export interface CompositePart {
@@ -169,6 +190,10 @@ export interface LayoutTable {
    * "inherited": taken from the nearest block before it. */
   context_source?: "printed" | "inherited" | null;
   shared_columns?: SharedColumn[];
+  /** A form's own numbered table (item 11 Table of Contents). */
+  item?: { number: string; name: string };
+  /** Read from the form's boxes; `folded`: printed in two halves side by side, read left then right. */
+  form_table?: { folded: boolean };
 }
 
 export interface LayoutSection {
@@ -201,6 +226,8 @@ export interface OriginalStructure {
     unplaced: number;
     /** Empty "fields" with no printed label, left out of the view. */
     artifacts_hidden?: number;
+    /** Text-extractor rows repeating a form's boxes or wording, left out of the view. */
+    form_duplicates_hidden?: number;
     quality?: Record<QualityCode, number>;
     cell_issues?: Record<QualityCode, number>;
   };

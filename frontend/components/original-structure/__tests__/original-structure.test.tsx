@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import OriginalStructureView, { FIELD_COLUMNS, fieldPlacement } from "@/components/original-structure/original-structure-view";
+import OriginalStructureView, { FIELD_COLUMNS, fieldLine } from "@/components/original-structure/original-structure-view";
 import type { LayoutField, LayoutTable, OriginalStructure } from "@/lib/original-structure";
 import { RecordSelectionProvider } from "@/lib/record-selection";
 
@@ -87,14 +87,14 @@ describe("OriginalStructureView", () => {
     const grid = (await screen.findAllByTestId("layout-field-grid"))[0];
     expect(within(grid).getAllByRole("columnheader").map((th) => th.textContent)).toEqual([...FIELD_COLUMNS]);
     expect(FIELD_COLUMNS.slice(-3)).toEqual(["Type", "Found By", "Source Page"]);
+    expect(FIELD_COLUMNS.slice(0, 3)).toEqual(["Item #", "Field Name", "Extracted Value"]);
     const rows = within(grid).getAllByTestId("layout-field-row");
-    // The item number has its own column; each item's name is printed once,
-    // as the backend layout decided it.
-    expect(within(grid).getAllByTestId("item-number").map((c) => c.textContent)).toEqual(["1.", "2.", "9a."]);
-    expect(within(grid).getAllByTestId("item-category").map((c) => c.textContent)).toEqual(["Contractor Information", "Contract Information", "Prime Contractor"]);
-    // Sub-fields are sub-attributes; an item that is its own field has none.
-    expect(within(grid).getAllByTestId("sub-attribute").map((c) => c.textContent)).toEqual(["Legal Entity", "Contract Number", ""]);
-    expect(within(rows[0]).getAllByRole("cell")[7]).toHaveTextContent("Form line");
+    // An item with sub-fields opens with its number and name on a row of
+    // their own; an item that is one field is one row.
+    expect(within(grid).getAllByTestId("item-parent").map((r) => r.textContent)).toEqual(["1.Contractor Information", "2.Contract Information"]);
+    expect(rows.map((row) => [within(row).getByTestId("item-number").textContent, within(row).getByTestId("field-name").textContent]))
+      .toEqual([["", "Legal Entity"], ["", "Contract Number"], ["9a.", "Prime Contractor"]]);
+    expect(within(rows[0]).getAllByRole("cell")[6]).toHaveTextContent("Form line");
     // No Data Quality column; the grid says a blank is blank in its value cell.
     expect(FIELD_COLUMNS).not.toContain("Data Quality");
     // Blank printed fields are shown, not hidden, and say they are blank in the source.
@@ -104,13 +104,77 @@ describe("OriginalStructureView", () => {
   });
 
   it("places fields by the item the backend sent, never by re-reading the label", () => {
-    expect(fieldPlacement({ record_key: "a", label: "3. Briefed Through", field_name: "Briefed Through", item: item("3.", "Briefed Through", false) }))
-      .toEqual({ key: "item:s1:3.:Briefed Through", number: "3.", name: "Briefed Through", detail: "" });
-    expect(fieldPlacement({ record_key: "b", label: "Contract Number", field_name: "Contract Number", item: item("2.", "Contract Information") }))
-      .toEqual({ key: "item:s1:2.:Contract Information", number: "2.", name: "Contract Information", detail: "Contract Number" });
+    // An item that is one field: one row with its number.
+    expect(fieldLine({ label: "3. Briefed Through", field_name: "Briefed Through", item: item("3.", "Briefed Through", false) }, null))
+      .toEqual({ caption: null, number: "3.", name: "Briefed Through", indent: false });
+    // An item with sub-fields: a caption row first, then the sub-field set in.
+    const contract = item("2.", "Contract Information");
+    expect(fieldLine({ label: "Contract Number", field_name: "Contract Number", item: contract }, null))
+      .toEqual({ caption: { id: contract.id, number: "2.", name: "Contract Information" }, number: "", name: "Contract Number", indent: true });
+    expect(fieldLine({ label: "Contract Name", field_name: "Contract Name", item: contract }, contract.id))
+      .toEqual({ caption: null, number: "", name: "Contract Name", indent: true });
+    // Form boxes sharing a number: the number once, on the first.
+    const box = { id: "item:s1:11:form", number: "11", name: "", has_subfields: false };
+    expect(fieldLine({ label: "11 Enter the Page numbers for Section A", field_name: "Page Numbers for Section A", item: box }, null).number).toBe("11");
+    expect(fieldLine({ label: "11 Enter the Page numbers for Section B", field_name: "Page Numbers for Section B", item: box }, box.id).number).toBe("");
     // A numbered-looking label without an item from the backend stays as printed.
-    expect(fieldPlacement({ record_key: "c", label: "4. Contract Type", field_name: "4. Contract Type", item: null }))
-      .toEqual({ key: "c", number: "", name: "4. Contract Type", detail: "" });
+    expect(fieldLine({ label: "4. Contract Type", field_name: "4. Contract Type", item: null }, null))
+      .toEqual({ caption: null, number: "", name: "4. Contract Type", indent: false });
+  });
+
+  it("shows a form box under its own name, without the instruction, and a ticked box as Selected", async () => {
+    const box = { id: "item:s1:2:form", number: "2", name: "", has_subfields: false };
+    const tick = { id: "item:s1:4:form", number: "4", name: "", has_subfields: false };
+    const form = { ...data, unplaced: [], sections: [{ ...data.sections[0], items: [
+      field({ id: "c", label: "2 Enter the Contract Number", field_name: "Contract Number", item: box, document_value: "FA300224C0008",
+        extracted_value: "FA300224C0008", effective_value: "FA300224C0008", found_by: "form widget" }),
+      field({ id: "t", label: '4 Click here to select, "Negotiated (RFP)"', field_name: "Negotiated (RFP)", item: tick, document_value: "1",
+        extracted_value: "1", effective_value: "1", choice: "Selected", found_by: "form widget" }),
+    ] }] };
+    render(<OriginalStructureView documentId="d1" documentName="brief.pdf" pageCount={6} stagingProfileId={null} structure={form} />);
+    const rows = await screen.findAllByTestId("layout-field-row");
+    expect(rows.map((row) => within(row).getAllByRole("cell").slice(0, 3).map((c) => c.textContent)))
+      .toEqual([["2", "Contract Number", "FA300224C0008"], ["4", "Negotiated (RFP)", "Selected"]]);
+    // The form's own wording is kept, as the field name's tooltip and in the record.
+    expect(within(rows[0]).getByTestId("field-name")).toHaveAttribute("title", "Printed: 2 Enter the Contract Number");
+  });
+
+  it("numbers form boxes as the page prints them, shows unticked choices, a form's tables, and hides its repeated readings", async () => {
+    const issued = { id: "item:s1:7:form", number: "7", name: "Issued By", has_subfields: true };
+    const type = { id: "item:s1:4:form", number: "4", name: "Type of Solicitation", has_subfields: true };
+    const form: OriginalStructure = { ...data, unplaced: [], stats: { ...data.stats, form_duplicates_hidden: 1 }, sections: [{ ...data.sections[0], items: [
+      field({ id: "s", label: '4 Click here to select, "Sealed Bid (IFB)"', field_name: "Sealed Bid (IFB)", item: type, found_by: "form widget", blank: true,
+        choice: "Not Selected", form_state: { state: "not_selected", raw: "", on_state: "1" }, form_item: { number: "4", name: "Sealed Bid (IFB)", number_source: "printed" } }),
+      field({ id: "n", label: '4 Click here to select, "Negotiated (RFP)"', field_name: "Negotiated (RFP)", item: type, found_by: "form widget",
+        document_value: "1", extracted_value: "1", effective_value: "1", choice: "Selected", form_item: { number: "4", name: "Negotiated (RFP)", number_source: "printed" } }),
+      field({ id: "c", label: "Enter the Issued By Code", field_name: "Issued By Code", item: issued, found_by: "form widget",
+        document_value: "FA3002", extracted_value: "FA3002", effective_value: "FA3002", form_item: { number: "7", name: "Issued By Code", number_source: "printed" } }),
+      field({ id: "i", label: "5 Enter the info for who issued this solicitation", field_name: "Issued By", item: issued, found_by: "form widget",
+        document_value: "338 ESS CC", extracted_value: "338 ESS CC", effective_value: "338 ESS CC", form_item: { number: "7", name: "Issued By", number_source: "printed", described_as: "5" } }),
+      field({ id: "d", label: "TELEPHONE NUMBER", extracted_value: "208-999-8966", effective_value: "208-999-8966", placed_by_page: true,
+        form_duplicate: { code: "form_value", message: "Repeats a form box's value" } }),
+      { kind: "table", id: "toc", record_key: "form-table:1:11", title: "Table of Contents", headers: ["(X)", "SECTION", "DESCRIPTION", "PAGE(S)"],
+        headers_printed: true, pages: [1], continued: false, detection_method: "pdf_form_grid", row_count: 1,
+        item: { number: "11", name: "Table of Contents" }, form_table: { folded: true },
+        rows: [{ id: "r", record_key: "form-table:1:11:row:0", page: 1, cells: ["Not Selected", "K", "REPRESENTATIONS", ""] }] },
+    ] }] };
+    render(<OriginalStructureView documentId="d1" documentName="brief.pdf" pageCount={6} stagingProfileId={null} structure={form} />);
+    const grid = (await screen.findAllByTestId("layout-field-grid"))[0];
+    // Item captions as printed, numbers once, sub-fields under them.
+    expect(within(grid).getAllByTestId("item-parent").map((r) => r.textContent)).toEqual(["4Type of Solicitation", "7Issued By"]);
+    const rows = within(grid).getAllByTestId("layout-field-row");
+    expect(rows.map((row) => within(row).getAllByRole("cell").slice(0, 3).map((c) => c.textContent))).toEqual([
+      ["", "Sealed Bid (IFB)", "Not Selected"], ["", "Negotiated (RFP)", "Selected"], ["", "Issued By Code", "FA3002"], ["", "Issued By", "338 ESS CC"],
+    ]);
+    // Where the number came from, when the box's own description disagrees.
+    expect(within(rows[3]).getByTestId("field-name").getAttribute("title")).toContain("Item 7 as printed on the form; the box's own description says 5");
+    // The extractor's repeat of a box isn't a row; the count says so.
+    expect(screen.queryByText("208-999-8966")).toBeNull();
+    expect(screen.getByTestId("form-duplicates-hidden")).toHaveTextContent("1 repeated form reading hidden");
+    // The form's table: its item number, printed columns and unticked boxes.
+    expect(screen.getByTestId("table-item-number")).toHaveTextContent("11");
+    const table = screen.getByTestId("layout-table");
+    expect(within(table).getByText("Not Selected")).toBeInTheDocument();
   });
 
   it("shows a table's contract once above it and marks cells worth a second look", async () => {
@@ -146,8 +210,9 @@ describe("OriginalStructureView", () => {
     const categories = within(grid).getAllByTestId("item-category");
     expect(categories).toHaveLength(1);
     expect(categories[0]).toHaveTextContent("Acquisition Agency");
-    expect(categories[0]).toHaveAttribute("rowspan", "3");
-    expect(within(grid).getByTestId("item-number")).toHaveTextContent("10.");
+    // The number once, on the item's own row; its fields follow, set in.
+    expect(within(grid).getAllByTestId("item-number").map((c) => c.textContent)).toEqual(["10.", "", "", ""]);
+    expect(within(grid).getAllByTestId("field-name").map((c) => c.textContent)).toEqual(["Agency", "Address", "Phone"]);
   });
 
   it("gives the grid the full width until a record is selected", async () => {
@@ -254,12 +319,11 @@ describe("Original File grouping", () => {
     show();
     const grid = (await screen.findAllByTestId("layout-field-grid"))[1];
     const parts = within(grid).getAllByTestId("composite-part");
-    expect(parts.map((row) => within(row).getAllByRole("cell").slice(1, 3).map((c) => c.textContent))).toEqual([
-      ["01/01/2025", "↳ Start Date"], ["12/31/2025", "↳ End Date"],
+    expect(parts.map((row) => within(row).getAllByRole("cell").slice(2, 4).map((c) => c.textContent))).toEqual([
+      ["Start Date", "01/01/2025"], ["End Date", "12/31/2025"],
     ]);
+    // The field's own row keeps the printed text; its parts carry the values.
     expect(within(grid).getByTestId("composite-source")).toHaveTextContent("Printed as 01/01/2025 - 12/31/2025");
-    // The field's name spans its own row and its parts.
-    expect(within(grid).getByTestId("item-category")).toHaveAttribute("rowspan", "3");
     // A part is not a record of its own: it opens the field.
     fireEvent.click(parts[1]);
     expect(screen.getByTestId("layout-record-details")).toHaveTextContent("Original labelPeriod of Performance");

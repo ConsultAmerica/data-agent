@@ -8,6 +8,38 @@ export interface TemplateColumn {
   technical_name: string;
   display_label: string | null;
   required: boolean | null;
+  /** Documented by the template's attribute definitions or Oracle metadata; absent when the source doesn't say. */
+  data_type?: string | null;
+  declared_type?: string | null;
+  max_length?: number | null;
+  precision?: number | null;
+  scale?: number | null;
+  lookup_values?: string[] | null;
+  lookup_type?: string | null;
+  description?: string | null;
+}
+
+export type CatalogStatus = "verified" | "draft" | "unsupported" | "stale";
+export type IntegrationMethod = "import_management" | "fbdi" | "rest" | "other";
+
+/** Where a target sits in Oracle Fusion (backend oracle_templates/catalog.py). */
+export interface CatalogEntry {
+  application: string | null;
+  integration_method: IntegrationMethod | null;
+  integration_method_label: string | null;
+  oracle_release: string | null;
+  object_code: string | null;
+  parent_object: string | null;
+  user_keys: string[];
+  description: string | null;
+  /** uploaded_template | metadata_api */
+  source: string;
+  verified: boolean;
+  verified_by: string | null;
+  verified_at: string | null;
+  status: CatalogStatus;
+  status_label: string;
+  status_reason: string | null;
 }
 
 export interface OracleTemplate {
@@ -30,10 +62,36 @@ export interface OracleTemplate {
   profile_count: number;
   /** The upload matched a template already stored (identical bytes). */
   reused?: boolean;
+  catalog?: CatalogEntry | null;
+  required_columns?: string[];
+}
+
+export interface CatalogObject {
+  template: OracleTemplate;
+  versions: number[];
+}
+
+export interface OracleCatalog {
+  /** False: no target is registered ("Oracle import template not configured"). */
+  configured: boolean;
+  message: string | null;
+  applications: { application: string; objects: CatalogObject[] }[];
+  application_names: string[];
+  integration_methods: Record<string, string>;
+  transformations: Record<string, string>;
+  discovery: DiscoveryStatus;
+}
+
+export interface DiscoveryStatus {
+  configured: boolean;
+  provider: string;
+  message: string;
 }
 
 export type Shape = "single" | "pair" | "column";
-export type Transform = "as_is" | "trim" | "upper" | "date_iso" | "number";
+export type Transform =
+  | "as_is" | "trim" | "upper" | "lower" | "title" | "date_iso" | "number" | "currency"
+  | "default" | "lookup" | "conditional" | "split" | "concat";
 
 export interface SourceRef {
   kind: "field" | "constant" | "none";
@@ -51,6 +109,10 @@ export interface ColumnMapping {
   transform?: Transform;
   method?: string | null;
   confidence?: number | null;
+  /** The transformation's settings: {format}, {decimals, currency}, {value}, {map, fallback}, {when, value, then, else}, {part} or {separator, index}, {separator}. */
+  options?: Record<string, unknown>;
+  /** Further sources for "concat". */
+  sources?: SourceRef[];
 }
 
 export interface MappingSpec {
@@ -60,6 +122,8 @@ export interface MappingSpec {
   parent?: { profile_id: number; links: [string, string][] } | null;
 }
 
+export type ProfileStatus = "draft" | "active" | "archived";
+
 export interface MappingProfile {
   id: number;
   template_id: number;
@@ -67,10 +131,55 @@ export interface MappingProfile {
   staging_profile_id: string | null;
   spec: MappingSpec;
   version: number;
-  history: { version: number; actor: string; at: string }[];
+  history: { version: number; actor: string; at: string; status?: string; name?: string }[];
   updated_by: string;
   updated_at: string;
   notes: string | null;
+  status?: ProfileStatus;
+  created_by?: string | null;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  source_document_type?: string | null;
+  /** The template version the profile is pinned to. */
+  template_version?: number | null;
+  /** A newer version of the target exists; the profile stays on its own until moved. */
+  schema_update_available?: boolean;
+}
+
+export interface MappingChange {
+  column: string;
+  change: "added" | "removed" | "changed";
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+}
+
+export interface VersionCompare {
+  profile_id: number;
+  from_version: number;
+  to_version: number;
+  changes: MappingChange[];
+  settings: string[];
+}
+
+export interface AuditEvent {
+  action: string;
+  profile_version: number | null;
+  actor_name: string;
+  created_at: string;
+  detail: Record<string, unknown> | null;
+}
+
+export interface ClauseRecord {
+  clause_id: string;
+  title: string | null;
+  regulation_family: "FAR" | "DFARS" | "Agency supplement" | "Other";
+  contract_number: string | null;
+  page: number | null;
+  evidence: string | null;
+  text: string | null;
+  dataset_id: string;
+  record_id: string;
+  also_in: string[];
 }
 
 export interface SourceField {
@@ -83,6 +192,10 @@ export interface SourceField {
   highlight: string | null;
   anchor: string | null;
   review_status: string | null;
+  /** The document section it was read in. */
+  section?: string | null;
+  /** Extraction quality: passed | failed | not_checked (apart from the mapping's own validity). */
+  quality?: string | null;
 }
 
 export interface Suggestion {
@@ -91,6 +204,10 @@ export interface Suggestion {
   method: string;
   confidence: number;
   reason: string;
+  /** The target attribute is required. */
+  required?: boolean;
+  /** Always true: a suggestion is a proposal until a person accepts it. */
+  needs_approval?: boolean;
 }
 
 export interface Issue {
@@ -107,7 +224,11 @@ export interface PreviewCell {
   problem: string | null;
   page: number | null;
   highlight: string | null;
+  /** The source value before its transformation. */
+  source_value?: string | null;
 }
+
+export type ColumnState = "Valid" | "Warning" | "Error" | "Needs Review" | "Not Configured";
 
 export interface Preview {
   template_id: number;
@@ -119,6 +240,11 @@ export interface Preview {
   issue_counts: Record<"error" | "warning" | "info", number>;
   import_ready: boolean;
   unmapped_fields: SourceField[];
+  column_states?: Record<string, ColumnState>;
+  /** How each configured attribute's value is made, in words. */
+  transforms?: Record<string, string>;
+  schema_status?: CatalogStatus;
+  parent?: { profile_id: number; name: string; headers: string[]; rows: PreviewCell[][]; total_rows: number } | null;
 }
 
 /** Same field? (pair rows by their key, others by dataset + field). */
@@ -144,14 +270,79 @@ export async function getTemplate(id: number): Promise<OracleTemplate> {
 
 export async function uploadTemplate(
   file: File,
-  options: { objectName?: string; environment?: string; sheet?: string } = {},
+  options: {
+    objectName?: string; environment?: string; sheet?: string;
+    application?: string; integrationMethod?: string; oracleRelease?: string; objectCode?: string; parentObject?: string; userKeys?: string;
+  } = {},
 ): Promise<OracleTemplate> {
   const form = new FormData();
   form.append("file", file);
   if (options.objectName?.trim()) form.append("object_name", options.objectName.trim());
   if (options.environment?.trim()) form.append("environment", options.environment.trim());
   if (options.sheet?.trim()) form.append("sheet", options.sheet.trim());
+  if (options.application?.trim()) form.append("application", options.application.trim());
+  if (options.integrationMethod?.trim()) form.append("integration_method", options.integrationMethod.trim());
+  if (options.oracleRelease?.trim()) form.append("oracle_release", options.oracleRelease.trim());
+  if (options.objectCode?.trim()) form.append("object_code", options.objectCode.trim());
+  if (options.parentObject?.trim()) form.append("parent_object", options.parentObject.trim());
+  if (options.userKeys?.trim()) form.append("user_keys", options.userKeys.trim());
   return apiFetch("/api/oracle/templates", { method: "POST", body: form });
+}
+
+export async function getCatalog(): Promise<OracleCatalog> {
+  return apiFetch("/api/oracle/catalog");
+}
+
+export interface CatalogInput {
+  application: string;
+  integration_method: IntegrationMethod;
+  oracle_release?: string | null;
+  object_code?: string | null;
+  parent_object?: string | null;
+  user_keys?: string[];
+  description?: string | null;
+}
+
+export async function updateCatalog(templateId: number, body: CatalogInput): Promise<OracleTemplate> {
+  return apiFetch(`/api/oracle/templates/${templateId}/catalog`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function verifyTemplate(templateId: number): Promise<OracleTemplate> {
+  return apiFetch(`/api/oracle/templates/${templateId}/verify`, { method: "POST" });
+}
+
+export async function registerAttributes(templateId: number, file: File): Promise<OracleTemplate> {
+  const form = new FormData();
+  form.append("file", file);
+  return apiFetch(`/api/oracle/templates/${templateId}/attributes`, { method: "POST", body: form });
+}
+
+export async function registerDiscovered(body: { resource: string; application: string; object_name?: string }): Promise<OracleTemplate> {
+  return apiFetch("/api/oracle/discovery/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function profileAction(profileId: number, action: "activate" | "archive" | "duplicate"): Promise<MappingProfile> {
+  return apiFetch(`/api/oracle/profiles/${profileId}/${action}`, { method: "POST" });
+}
+
+export async function compareVersions(profileId: number, fromVersion: number, toVersion: number): Promise<VersionCompare> {
+  return apiFetch(`/api/oracle/profiles/${profileId}/compare?from_version=${fromVersion}&to_version=${toVersion}`);
+}
+
+export async function profileHistory(profileId: number): Promise<AuditEvent[]> {
+  return apiFetch(`/api/oracle/profiles/${profileId}/history`);
+}
+
+export async function documentClauses(documentId: string): Promise<{ document_id: string; clauses: ClauseRecord[]; families: Record<string, number> }> {
+  return apiFetch(`/api/documents/${documentId}/oracle/clauses`);
 }
 
 export async function retireTemplate(id: number): Promise<OracleTemplate> {
@@ -170,7 +361,7 @@ export async function listAllProfiles(stagingProfileId?: string | null): Promise
 export async function saveProfile(
   templateId: number,
   profileId: number | null,
-  body: { name: string; staging_profile_id?: string | null; spec: MappingSpec; notes?: string | null },
+  body: { name: string; staging_profile_id?: string | null; spec: MappingSpec; notes?: string | null; source_document_type?: string | null },
 ): Promise<MappingProfile> {
   const init = { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
   return profileId == null

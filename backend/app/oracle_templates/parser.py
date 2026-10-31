@@ -267,3 +267,191 @@ def parse_template(filename: str, data: bytes, *, sheet: str | None = None) -> P
             workbook.close()
 
     raise TemplateError("Upload the template as CSV, XLSX or XLSM.")
+
+
+# ---------------------------------------------------------------- attribute definitions
+#
+# Official templates often document each attribute on a sheet of its own
+# (name, data type, length, required, lookup) — FBDI workbooks do, and an
+# administrator can upload the same table from Oracle's documentation. It
+# is read only when its header names an attribute column and at least one
+# property column; nothing is inferred from sample data.
+
+_ATTRIBUTE_NAME = re.compile(
+    r"(?i)^(attribute|attribute name|column|column name|technical name|name|field|field name|interface column)$"
+)
+_ATTRIBUTE_PROPERTIES = {
+    "data_type": re.compile(r"(?i)^(data ?type|type|format)$"),
+    "max_length": re.compile(r"(?i)^(length|max(imum)? ?length|size|width)$"),
+    "precision": re.compile(r"(?i)^precision$"),
+    "scale": re.compile(r"(?i)^(scale|decimals|decimal places)$"),
+    "required": re.compile(r"(?i)^(required|mandatory|is required)$"),
+    "lookup": re.compile(r"(?i)^(lookup|lookup type|lookup values|valid values|allowed values|values)$"),
+    "description": re.compile(r"(?i)^(description|comments?|notes?|help text)$"),
+}
+_TYPES = (
+    (re.compile(r"(?i)^(varchar2?|nvarchar2?|char|nchar|string|text|clob|alphanumeric)\b"), "string"),
+    (re.compile(r"(?i)^(timestamp|datetime|date ?time)\b"), "datetime"),
+    (re.compile(r"(?i)^date\b"), "date"),
+    (re.compile(r"(?i)^(integer|int|long|bigint|smallint)\b"), "integer"),
+    (re.compile(r"(?i)^(number|numeric|decimal|float|double|bigdecimal|amount|currency)\b"), "number"),
+    (re.compile(r"(?i)^(boolean|bool|flag|y/n|yes/no)\b"), "boolean"),
+)
+_SIZE = re.compile(r"\(\s*(\d+)\s*(?:,\s*(\d+)\s*)?(?:char|byte)?\s*\)", re.I)
+_YES = {"y", "yes", "true", "required", "mandatory", "x", "1"}
+_NO = {"n", "no", "false", "optional", "0"}
+
+
+def _int(text: str) -> int | None:
+    match = re.search(r"\d+", text or "")
+    return int(match.group()) if match else None
+
+
+def _definition(cells: dict[str, str]) -> dict:
+    definition: dict = {}
+    raw_type = cells.get("data_type", "").strip()
+    if raw_type:
+        kind = next((name for pattern, name in _TYPES if pattern.search(raw_type)), None)
+        definition["data_type"] = kind or "string"
+        definition["declared_type"] = raw_type
+        size = _SIZE.search(raw_type)
+        if size and kind == "number":
+            definition["precision"] = int(size.group(1))
+            if size.group(2) is not None:
+                definition["scale"] = int(size.group(2))
+        elif size and kind != "integer":
+            definition["max_length"] = int(size.group(1))
+        if kind == "integer":
+            definition["data_type"], definition["scale"] = "number", 0
+    for key in ("max_length", "precision", "scale"):
+        value = _int(cells.get(key, ""))
+        if value is not None:
+            definition[key] = value
+    required = cells.get("required", "").strip().lower()
+    if required in _YES:
+        definition["required"] = True
+    elif required in _NO:
+        definition["required"] = False
+    lookup = cells.get("lookup", "").strip()
+    if lookup:
+        values = [v.strip() for v in re.split(r"[;|\n]+|,\s*", lookup) if v.strip()]
+        if len(values) >= 2:
+            definition["lookup_values"] = values
+        else:
+            definition["lookup_type"] = lookup
+    if cells.get("description", "").strip():
+        definition["description"] = cells["description"].strip()
+    return definition
+
+
+def _definitions_from_rows(rows: list[list[str]]) -> dict[str, dict] | None:
+    for index, row in enumerate(rows[:_SCAN_ROWS]):
+        names = [cell.strip() for cell in row]
+        name_at = next((i for i, cell in enumerate(names) if _ATTRIBUTE_NAME.match(cell)), None)
+        if name_at is None:
+            continue
+        properties = {
+            key: next((i for i, cell in enumerate(names) if i != name_at and pattern.match(cell)), None)
+            for key, pattern in _ATTRIBUTE_PROPERTIES.items()
+        }
+        if not any(position is not None for key, position in properties.items() if key != "description"):
+            continue
+        definitions: dict[str, dict] = {}
+        for data in rows[index + 1:]:
+            name = data[name_at].strip() if name_at < len(data) else ""
+            if not name:
+                continue
+            cells = {key: (data[pos] if pos is not None and pos < len(data) else "") for key, pos in properties.items()}
+            definition = _definition(cells)
+            if definition:
+                definitions[name.strip("*").strip()] = definition
+        return definitions or None
+    return None
+
+
+def _all_rows(sheet, limit: int = 5000) -> list[list[str]]:
+    return [_trimmed(list(row)) for row in sheet.iter_rows(max_row=limit, values_only=True)]
+
+
+def template_definitions(filename: str, data: bytes, template_sheet: str | None) -> dict[str, dict]:
+    """Attribute definitions printed in the template workbook itself, on a
+    sheet other than the one holding the header rows."""
+
+    if PurePath(filename).suffix.lower() not in {".xlsx", ".xlsm"}:
+        return {}
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True, keep_vba=False)
+    try:
+        for name in workbook.sheetnames:
+            if name == template_sheet:
+                continue
+            found = _definitions_from_rows(_all_rows(workbook[name]))
+            if found:
+                return found
+    finally:
+        workbook.close()
+    return {}
+
+
+def parse_attribute_definitions(filename: str, data: bytes) -> dict[str, dict]:
+    """A table of attribute definitions an administrator uploaded (CSV or
+    workbook): attribute name, then any of data type, length, precision,
+    scale, required, lookup and description."""
+
+    if not data:
+        raise TemplateError("The file is empty.")
+    if len(data) > MAX_TEMPLATE_BYTES:
+        raise TemplateError("Definition files are limited to 5 MB.")
+    suffix = PurePath(filename).suffix.lower()
+    if suffix in {".csv", ".txt", ".tsv"}:
+        text = data.decode("utf-8-sig", errors="replace")
+        try:
+            dialect = csv.Sniffer().sniff(text[:20000], delimiters=",;\t|")
+        except csv.Error:
+            dialect = csv.excel
+        found = _definitions_from_rows([_trimmed(row) for row in csv.reader(io.StringIO(text), dialect)])
+    elif suffix in {".xlsx", ".xlsm"}:
+        from openpyxl import load_workbook
+
+        try:
+            workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True, keep_vba=False)
+        except Exception as exc:  # noqa: BLE001
+            raise TemplateError("The workbook could not be read.") from exc
+        try:
+            found = next(
+                (d for name in workbook.sheetnames if (d := _definitions_from_rows(_all_rows(workbook[name])))), None
+            )
+        finally:
+            workbook.close()
+    else:
+        raise TemplateError("Upload the attribute definitions as CSV, XLSX or XLSM.")
+    if not found:
+        raise TemplateError(
+            "No attribute definitions found: the file needs a header row with an attribute name column "
+            "and at least one of Data Type, Length, Precision, Scale, Required or Lookup."
+        )
+    return found
+
+
+def apply_definitions(columns: list[dict], definitions: dict[str, dict]) -> tuple[list[dict], list[str]]:
+    """Columns with their documented properties merged in, and a warning for
+    each definition naming no column of the template. A definition's
+    "required" fills an unknown (None) required mark only."""
+
+    merged = [dict(column) for column in columns]
+    by_name = {column["technical_name"].strip().strip("*").strip().lower(): column for column in merged}
+    by_label = {(column.get("display_label") or "").strip().lower(): column for column in merged if column.get("display_label")}
+    warnings: list[str] = []
+    for name, definition in definitions.items():
+        column = by_name.get(name.lower()) or by_label.get(name.lower())
+        if column is None:
+            warnings.append(f"The definitions name {name!r}, which is not an attribute of this template.")
+            continue
+        for key, value in definition.items():
+            if key == "required":
+                if column.get("required") is None:
+                    column["required"] = value
+                continue
+            column[key] = value
+    return merged, warnings

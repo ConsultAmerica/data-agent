@@ -720,7 +720,7 @@ function OracleTab({ documentId, documentName, mappings }: { documentId: string;
         )}
         <div className="mt-3 flex flex-wrap gap-2">
           <Link href={`/mapping/designer?document=${documentId}`} className="btn-secondary inline-flex items-center gap-1 px-2.5 py-1 text-xs">
-            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />Open in Mapping Studio
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />Map to Oracle Fusion
           </Link>
           <button type="button" className="btn-secondary px-2.5 py-1 text-xs" aria-pressed={preview} onClick={() => setPreview((v) => !v)}>
             {preview ? "Hide Oracle preview" : "Preview / send to Oracle"}
