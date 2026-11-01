@@ -10,6 +10,8 @@ beforeEach(() => window.localStorage.setItem("dx-workspace-mode", "advanced"));
 let search = new URLSearchParams();
 const replace = vi.fn();
 
+// The document check has its own tests (document-check-summary.test.tsx).
+vi.mock("@/components/verification/document-check-summary", () => ({ default: () => null }));
 vi.mock("@/lib/verification", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/verification")>()),
   getBusinessData: vi.fn(() => Promise.reject(new Error("not needed"))),

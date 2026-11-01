@@ -47,6 +47,19 @@ _SECTIONING = {"section", "article", "aside", "nav", "header", "footer"}
 _HEADINGS = {"h1": 1, "h2": 2, "h3": 3, "h4": 4, "h5": 5, "h6": 6}
 _EMPHASIS = {"b", "strong", "em", "label", "span", "dfn", "th"}
 _CONTROLS = {"input", "select", "textarea", "output"}
+# A blank to write on ("__________"): an empty cell, not a value.
+_FILL_IN = re.compile(r"[_\s]*_{3,}[_\s]*")
+_PLACEHOLDER = re.compile(r"\[[^\]]*\]")
+_NUMBERISH = re.compile(r"[\d$€£%.,\s()+-]+")
+
+
+def _cell_text(cell) -> str:
+    if cell is None:
+        return ""
+    text = normalize_space(element_text(cell))
+    return "" if _FILL_IN.fullmatch(text) else text
+
+
 _INLINE_SEP = re.compile(r"^(?P<label>[^:\n]{1,60}?[A-Za-z)#.])\s*:\s+(?P<value>\S[\s\S]*)$")
 
 
@@ -128,6 +141,7 @@ class HtmlStructureExtractor:
                         parent.text = (parent.text or "") + bad.tail
                 parent.remove(bad)
         self.tree = self.root.getroottree()
+        self.order = {el: index for index, el in enumerate(self.root.iter())}
         self.claimed: set = set()
         self.regions: list[StructuredRegion] = []
         self.fields: list[FieldCandidate] = []
@@ -149,6 +163,7 @@ class HtmlStructureExtractor:
             dom_path=self.tree.getpath(el),
             element_id=el.get("id"),
             section_path=self._section_path(el),
+            document_order=self.order.get(el),
             **extra,
         )
 
@@ -245,9 +260,46 @@ class HtmlStructureExtractor:
             expanded.extend([None] * (span - 1))
         return expanded
 
+    def _fill_in_header(self, head: list, body: list) -> tuple[list, list, list[str]]:
+        """A form's fill-in table printed without <th> cells: title rows
+        spanning the table, then a row of column labels over blank lines to
+        write on. The labels are its header, the titles its caption."""
+
+        width = max([len(self._cells(tr)) for tr in head + body] or [0])
+
+        def texts(tr) -> list[str]:
+            return [_cell_text(c) for c in self._cells(tr) if c is not None]
+
+        def title(tr) -> str | None:
+            # One line of text in the first cell, the rest of the row empty.
+            cells = texts(tr)
+            return cells[0] if width > 1 and cells and cells[0] and not any(cells[1:]) else None
+
+        titles: list[str] = []
+        if head:
+            # A <thead> holding only a title spanning the table.
+            if not all(title(tr) for tr in head):
+                return head, body, []
+            titles = [title(tr) or "" for tr in head]
+        start = 0
+        while start < len(body) and title(body[start]):
+            start += 1
+        if start < len(body) - 1:
+            labels = texts(body[start])
+            rest = body[start + 1:]
+            if (
+                labels
+                and all(t and len(t) <= 160 and not _NUMBERISH.fullmatch(t) for t in labels)
+                # Below it only blanks, or the drafter's "[insert …]" notes.
+                and all(not t or _PLACEHOLDER.fullmatch(t) for tr in rest for t in texts(tr))
+            ):
+                return [body[start]], rest, titles + [title(tr) or "" for tr in body[:start]]
+        return ([], body, titles) if head and titles else (head, body, [])
+
     def _table(self, table) -> None:
         head, body, foot = self._table_rows(table)
         self._claim(table)
+        head, body, titles = self._fill_in_header(head, body)
 
         # A header-less two-column table of <th>/label → <td>/value rows is
         # a key/value layout, not a data table.
@@ -268,7 +320,7 @@ class HtmlStructureExtractor:
         self.table_index += 1
         region_id = self._id("table")
         header_cells_el = self._cells(head[-1]) if head else []
-        headers = [normalize_space(element_text(c)) if c is not None else "" for c in header_cells_el]
+        headers = [_cell_text(c) for c in header_cells_el]
         body_rows = body + foot
         width = max([len(headers)] + [len(self._cells(tr)) for tr in body_rows] or [0])
         if not headers:
@@ -291,7 +343,7 @@ class HtmlStructureExtractor:
             cells = []
             row_id = f"{region_id}:r{r}"
             for c, cell in enumerate(self._cells(tr) + [None] * (width - len(self._cells(tr)))):
-                text = normalize_space(element_text(cell)) if cell is not None else ""
+                text = _cell_text(cell)
                 cell_id = f"{row_id}:c{c}"
                 locator = (
                     self._locator(cell, table_index=index, row_index=r, column_index=c)
@@ -322,6 +374,8 @@ class HtmlStructureExtractor:
         explicit_header = bool(head) and any(h for h in headers)
         accepted = assessment.table_acceptance_status == "accepted" or (explicit_header and rows)
         caption = table.find("caption")
+        caption_text = normalize_space(element_text(caption)) if caption is not None else ""
+        caption_text = " — ".join([t for t in [caption_text, *titles] if t]) or None
         candidate = TableCandidate(
             candidate_id=region_id,
             region_id=region_id,
@@ -330,6 +384,7 @@ class HtmlStructureExtractor:
             extraction_method="dom",
             headers=headers,
             header_cells=header_cells,
+            caption=caption_text,
             rows=rows,
             structure_score=round(assessment.table_structure_score, 3),
             acceptance="accepted" if accepted else "rejected",
@@ -347,7 +402,7 @@ class HtmlStructureExtractor:
             StructuredRegion(
                 region_id=region_id,
                 region_type="TABLE",
-                text=normalize_space(element_text(caption)) if caption is not None else " | ".join(headers),
+                text=caption_text or " | ".join(headers),
                 normalized_text=" | ".join(headers).lower(),
                 source_locator=candidate.source_locator,
                 children=[f"{region_id}:r{r}" for r in range(len(rows))],

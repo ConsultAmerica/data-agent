@@ -1562,13 +1562,62 @@ body {
   color: var(--foreground);
 }
 
+/* A thin, quiet scrollbar; the edges fade only when more items are hidden
+   past them, so the list never looks cut off mid-row. */
 .workspace-sidebar-nav {
+  --sidebar-fade: 1.5rem;
   min-height: 0;
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  scrollbar-gutter: stable;
+  transition: scrollbar-color 160ms ease;
 }
 
-.workspace-sidebar-list {
+.workspace-sidebar-nav:hover,
+.workspace-sidebar-nav:focus-within {
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 40%, transparent) transparent;
+}
+
+.workspace-sidebar-nav::-webkit-scrollbar {
+  width: 6px;
+}
+
+.workspace-sidebar-nav::-webkit-scrollbar-button {
+  display: none;
+}
+
+.workspace-sidebar-nav::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: transparent;
+}
+
+.workspace-sidebar-nav:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 40%, transparent);
+}
+
+.workspace-sidebar-nav[data-fade-top] {
+  mask-image: linear-gradient(to bottom, transparent, #000 var(--sidebar-fade));
+}
+
+.workspace-sidebar-nav[data-fade-bottom] {
+  mask-image: linear-gradient(to top, transparent, #000 var(--sidebar-fade));
+}
+
+.workspace-sidebar-nav[data-fade-top][data-fade-bottom] {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--sidebar-fade),
+    #000 calc(100% - var(--sidebar-fade)),
+    transparent
+  );
+}
+
+.workspace-sidebar-list,
+.workspace-sidebar-sublist {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
@@ -1578,15 +1627,56 @@ body {
 }
 
 .workspace-sidebar-group {
-  margin: 0.6rem 0.5rem 0.2rem;
+  display: flex;
+  width: calc(100% - 0.5rem);
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.55rem 0.25rem 0.15rem;
+  border-radius: 0.4rem;
+  padding: 0.25rem 0.4rem;
   font-size: 0.65rem;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  text-align: left;
   color: var(--text-muted);
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.workspace-sidebar-group:hover {
+  background: var(--surface-soft);
+  color: var(--foreground);
+}
+
+.workspace-sidebar-group-chevron {
+  margin-left: auto;
+  height: 0.8rem;
+  width: 0.8rem;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: transform 160ms ease, opacity 120ms ease;
+}
+
+.workspace-sidebar-group:hover .workspace-sidebar-group-chevron,
+.workspace-sidebar-group:focus-visible .workspace-sidebar-group-chevron,
+.workspace-sidebar-group[aria-expanded="false"] .workspace-sidebar-group-chevron {
+  opacity: 1;
+}
+
+.workspace-sidebar-group[aria-expanded="false"] .workspace-sidebar-group-chevron {
+  transform: rotate(-90deg);
+}
+
+.workspace-sidebar-group-dot {
+  height: 0.4rem;
+  width: 0.4rem;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  background: var(--warning);
 }
 
 .workspace-sidebar-link {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.65rem;
@@ -1596,6 +1686,24 @@ body {
   font-weight: 500;
   color: var(--text-secondary);
   transition: background 120ms ease, color 120ms ease;
+}
+
+/* The active marker: a rounded bar that grows in, rather than a flat edge. */
+.workspace-sidebar-link::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 1.1rem;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--primary);
+  transform: translateY(-50%) scaleY(0);
+  transition: transform 180ms ease;
+}
+
+.workspace-sidebar-link-active::before {
+  transform: translateY(-50%) scaleY(1);
 }
 
 .workspace-sidebar-collapsed .workspace-sidebar-link {
@@ -1608,14 +1716,127 @@ body {
   color: var(--foreground);
 }
 
+.workspace-sidebar-link:active {
+  transform: scale(0.985);
+}
+
+.workspace-sidebar-link:focus-visible,
+.workspace-sidebar-group:focus-visible,
+.workspace-sidebar-toggle:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
 .workspace-sidebar-link-active {
   background: var(--primary-soft);
   color: var(--primary);
-  box-shadow: inset 3px 0 0 var(--primary);
+  font-weight: 600;
 }
 
 .workspace-sidebar-collapsed .workspace-sidebar-link-active {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 35%, transparent);
+}
+
+.workspace-sidebar-collapsed .workspace-sidebar-link::before {
+  display: none;
+}
+
+/* Icon slot: the icon swaps for a spinner while its route is loading. */
+.workspace-sidebar-icon {
+  position: relative;
+  display: inline-flex;
+  height: 1rem;
+  width: 1rem;
+  flex-shrink: 0;
+}
+
+.workspace-sidebar-icon > svg {
+  transition: opacity 120ms ease;
+}
+
+.workspace-sidebar-pending {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  color: var(--primary);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.workspace-sidebar-pending[data-pending] {
+  /* A short delay so fast (prefetched) navigations never flash it. */
+  animation: workspace-pending-in 120ms ease 120ms forwards;
+}
+
+.workspace-sidebar-icon:has(> .workspace-sidebar-pending[data-pending]) > svg {
+  opacity: 0;
+  transition-delay: 120ms;
+}
+
+@keyframes workspace-pending-in {
+  to {
+    opacity: 1;
+  }
+}
+
+.workspace-sidebar-badge {
+  flex-shrink: 0;
+  min-width: 1.25rem;
+  border-radius: 9999px;
+  padding: 0.05rem 0.4rem;
+  text-align: center;
+  font-size: 0.65rem;
+  font-weight: 600;
+  line-height: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-sidebar-badge-attention {
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--warning);
+}
+
+.workspace-sidebar-badge-live {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+
+.workspace-sidebar-badge-dot {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  height: 0.45rem;
+  width: 0.45rem;
+  border-radius: 9999px;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.workspace-sidebar-badge-dot.workspace-sidebar-badge-attention {
+  background: var(--warning);
+}
+
+.workspace-sidebar-badge-dot.workspace-sidebar-badge-live {
+  background: var(--primary);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .workspace-sidebar-badge-live:not(.workspace-sidebar-badge-dot)::before {
+    content: "";
+    display: inline-block;
+    height: 0.35rem;
+    width: 0.35rem;
+    margin-right: 0.25rem;
+    border-radius: 9999px;
+    background: currentColor;
+    vertical-align: 0.05rem;
+    animation: workspace-live-pulse 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes workspace-live-pulse {
+  50% {
+    opacity: 0.25;
+  }
 }
 
 .workspace-sidebar-footnote {
@@ -1639,6 +1860,13 @@ body {
   }
   .workspace-sidebar-tooltip {
     animation: none;
+  }
+  .workspace-sidebar-link::before,
+  .workspace-sidebar-group-chevron {
+    transition: none;
+  }
+  .workspace-sidebar-link:active {
+    transform: none;
   }
 }
 

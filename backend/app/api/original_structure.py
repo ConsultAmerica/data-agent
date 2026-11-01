@@ -42,9 +42,16 @@ async def get_original_structure(
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found.")
     try:
-        return await run_in_threadpool(original_layout_for, database, document)
+        layout = await run_in_threadpool(original_layout_for, database, document)
     except DocumentStorageError as exc:
         raise HTTPException(status_code=409, detail=f"The source file isn't available: {exc}") from exc
+    # Each field's printed label, display label and meaning for the
+    # document's current type (nothing is recorded by reading it).
+    from app.classification.service import current
+    from app.document_validation.labels import annotate_labels
+
+    row = current(database, document.id)
+    return annotate_labels(layout, row.family if row is not None else None)
 
 
 @router.get("/{document_id}/original-structure/export.xlsx")

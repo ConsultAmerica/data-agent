@@ -43,6 +43,11 @@ def mark_interrupted(job: ExtractionJob, now: datetime | None = None) -> None:
     job.status = "failed"
     job.error_message = INTERRUPTED_MESSAGE
     job.completed_at = now or datetime.now(timezone.utc)
+    job.result_json = {
+        **(job.result_json or {}),
+        "failure": {"stage": job.stage, "reason": "interrupted", "retryable": True,
+                    "message": INTERRUPTED_MESSAGE, "at": job.completed_at.isoformat()},
+    }
 
 
 def _touch(job_id: int) -> None:

@@ -20,6 +20,8 @@ vi.mock("@/components/smart-view/oracle-status", async (importOriginal) => ({
 vi.mock("@/components/classification/classification-panel", () => ({ default: () => <div>classification panel</div> }));
 vi.mock("@/components/review/document-audit-trail", () => ({ default: () => <div>audit trail</div> }));
 vi.mock("@/components/validation/document-validation-panel", () => ({ default: () => <div>rules</div> }));
+// The document check has its own tests (document-check-summary.test.tsx).
+vi.mock("@/components/verification/document-check-summary", () => ({ default: () => null }));
 
 const { reviewMock, exportMock, findMock } = vi.hoisted(() => ({
   reviewMock: vi.fn(() => Promise.resolve({ results: [{ record_key: "k", ok: true }], reviewed: 1 })),

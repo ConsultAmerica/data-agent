@@ -10,6 +10,10 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }),
 }));
 
+vi.mock("@/lib/documents", () => ({
+  getDocumentStatusCounts: () => Promise.resolve({ total: 0, by_status: {} }),
+}));
+
 vi.mock("@/components/global-search", () => ({
   default: () => null,
   useGlobalSearchShortcut: () => undefined,

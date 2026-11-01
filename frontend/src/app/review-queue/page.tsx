@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { CheckCheck, FileStack, Flag, ListChecks, RefreshCw, SearchX, ShieldAlert } from "lucide-react";
 
 import ContentSection from "@/components/layout/ContentSection";
 import ConsoleHeader from "@/components/layout/ConsoleHeader";
 import EmptyState from "@/components/ui/empty-state";
+import { RefetchStrip } from "@/components/ui/skeleton";
 import FieldReviewList from "@/components/review-queue/field-review-list";
 import QueueFilterBar from "@/components/review-queue/queue-filter-bar";
 import {
@@ -56,6 +58,7 @@ function sameField(a: ReviewQueueFieldItem, b: { document_id: string; metadata_f
 
 export default function ReviewQueuePage() {
   const reviewEnabled = useReviewMutationsEnabled();
+  const router = useRouter();
   const [entries, setEntries] = useState<ReviewQueueEntry[]>([]);
   const [fieldItems, setFieldItems] = useState<ReviewQueueFieldDetail[]>([]);
   const [assigneeInfo, setAssigneeInfo] = useState<AssigneesResult | null>(null);
@@ -266,13 +269,13 @@ export default function ReviewQueuePage() {
       if (event.key === "n" || event.key === "N") {
         const next = tableItems[0];
         if (next) {
-          window.location.assign(`/documents/${next.document_id}?view=qa`);
+          router.push(`/documents/${next.document_id}?view=qa`);
         }
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tableItems]);
+  }, [tableItems, router]);
 
   return (
     <>
@@ -414,8 +417,13 @@ export default function ReviewQueuePage() {
         </div>
       )}
 
-      {!loading && flaggedItems.length > 0 && (
-        <>
+      {/* A refresh keeps the list on screen (dimmed) rather than blanking it. */}
+      {flaggedItems.length > 0 && (
+        <div
+          className={`relative transition-opacity duration-150 ${loading ? "pointer-events-none opacity-60" : ""}`}
+          aria-busy={loading}
+        >
+          <RefetchStrip active={loading} label="Refreshing the review queue…" />
           {tableItems.length !== flaggedItems.length && (
             <p className="mb-2 text-xs tabular-nums text-text-secondary">
               <span className="font-medium text-foreground">{tableItems.length}</span> of {flaggedItems.length} flagged values match these filters.
@@ -430,7 +438,7 @@ export default function ReviewQueuePage() {
             currentActor={assigneeInfo?.current_actor ?? ""}
             onAssigned={handleAssigned}
           />
-        </>
+        </div>
       )}
 
       {loading && entries.length === 0 && (
@@ -512,9 +520,12 @@ export default function ReviewQueuePage() {
                     className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-[var(--color-row-hover)]"
                   >
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-foreground">
+                      <Link
+                        href={`/documents/${entry.document_id}?view=qa`}
+                        className="block truncate text-sm font-medium text-foreground hover:text-primary hover:underline"
+                      >
                         {entry.original_filename}
-                      </p>
+                      </Link>
                       <p className="text-xs text-text-secondary">
                         {entry.document_type ?? "Unclassified"} ·{" "}
                         {new Date(entry.uploaded_at).toLocaleDateString()}

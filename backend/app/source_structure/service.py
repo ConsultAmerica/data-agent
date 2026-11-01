@@ -38,7 +38,7 @@ from app.source_structure.reading_order import reconstruct_page
 
 # Bump whenever extraction rules change; stored structures from an older
 # version are rebuilt on next use.
-EXTRACTOR_VERSION = 13  # 13: two-column form groups judged by column distance (right-aligned item numbers); lettered section headings ("A.  General Information") printed as two runs; 12: form rows written on drawn underlines (ruled_form_row) with their group caption; 11: per-line font sizes on text regions; 10: two-column pages (sidebar + main column) read column by column; 9: flowing documents (DOCX) read every laid-out page; 8: narrative regions keep their full text (up to 20,000 characters), read as document sections; 7: raster tables split rows at printed row rules; 6: OCR-pass disagreement (ocr_contested) on fields/cells/regions; 5: OCR word confidence on fields/cells/regions, background-suppressed OCR fusion; 2: continuation metadata, quality flags; 3: typography block breaks, address blocks with Attn lines; 4: invoice-fixture fixes (abbreviation labels, skew-aware OCR rows, fused/above headers, multi-pair runs), whitespace/filler label pairing, identifier typing, OCR caps headings
+EXTRACTOR_VERSION = 16  # 16: HTML elements carry their document order (tables under the heading they follow); 15: HTML fill-in tables: underscore blanks read as empty cells, a label row over blank rows is the header, title rows above it the caption; 14: raster pages: ruled forms (dividers that change row to row) read box by box, caption over value (ruled_form_box), not as one table; ruled tables cut to their frame (no screenshot page edges or toolbar) and read cell by cell; 13: two-column form groups judged by column distance (right-aligned item numbers); lettered section headings ("A.  General Information") printed as two runs; 12: form rows written on drawn underlines (ruled_form_row) with their group caption; 11: per-line font sizes on text regions; 10: two-column pages (sidebar + main column) read column by column; 9: flowing documents (DOCX) read every laid-out page; 8: narrative regions keep their full text (up to 20,000 characters), read as document sections; 7: raster tables split rows at printed row rules; 6: OCR-pass disagreement (ocr_contested) on fields/cells/regions; 5: OCR word confidence on fields/cells/regions, background-suppressed OCR fusion; 2: continuation metadata, quality flags; 3: typography block breaks, address blocks with Attn lines; 4: invoice-fixture fixes (abbreviation labels, skew-aware OCR rows, fused/above headers, multi-pair runs), whitespace/filler label pairing, identifier typing, OCR caps headings
 
 _HTML_SUFFIXES = {".html", ".htm"}
 _RASTER_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
@@ -94,9 +94,27 @@ def _build_pdf(document: Document, pages: list[DocumentPage], file_path: Path | 
                 continue
             grids = []
             if method == "ocr" and fitz_page is not None:
+                from app.source_structure.form_box_ocr import read_box_words
                 from app.source_structure.raster_tables import detect_raster_grids
 
                 grids = detect_raster_grids(fitz_page)
+                for position, grid in enumerate(grids):
+                    boxes = grid.form_boxes()
+                    if boxes:
+                        # A ruled form: each box read on its own, then
+                        # reconciled with the page pass and its text.
+                        grid.box_words = read_box_words(fitz_page, boxes, language=settings.ocr_language)
+                        grid.page_text = page.final_text or ""
+                        continue
+                    # A ruled table, cut to its frame: each cell read on its
+                    # own (figures right-aligned against a rule are what a
+                    # page pass loses first).
+                    framed = grid.framed()
+                    cells = framed.cells()
+                    if cells:
+                        framed.box_words = read_box_words(fitz_page, cells, language=settings.ocr_language)
+                        framed.cell_boxes = cells
+                        grids[position] = framed
             structure = extract_page_structure(
                 page_number=page.page_number,
                 words=words,

@@ -1,0 +1,108 @@
+{
+  "_comment": "By document type. `labels`: abbreviated spellings of a label, written out ({display label: [spellings]}) — the display label never loses a word. `meanings`: other labels a document prints for the same business field ({meaning: [labels]}) — the label is shown as printed and only its meaning is recorded. Spellings are matched whole, lower case, without periods or colons. `common.abbreviations` are safe in any document; anything that could mean something else (P.O. Box) belongs to a document type.",
+  "common": {
+    "abbreviations": {"acct": "Account", "amt": "Amount", "qty": "Quantity", "addr": "Address"},
+    "number_suffixes": ["no", "nbr", "num", "#"]
+  },
+  "types": {
+    "invoice": {
+      "families": ["invoice", "credit_note", "receipt", "quotation"],
+      "labels": {
+        "Invoice Number": ["invoice no", "inv no", "invoice #", "inv #", "invoice num", "invoice nbr"],
+        "Invoice Date": ["inv date"],
+        "Purchase Order Number": ["po no", "p o no", "po #", "po num", "purchase order no"],
+        "Transaction Date": ["trans date", "txn date"]
+      },
+      "meanings": {
+        "Purchase Order Number": ["po number", "customer po", "customer po number"],
+        "Total": ["total due", "amount due", "balance due", "grand total", "invoice total"],
+        "Due Date": ["payment due", "pay by"],
+        "Supplier": ["vendor", "seller", "remit to"],
+        "Customer": ["bill to", "sold to", "buyer"],
+        "Merchant": ["store", "merchant name"]
+      }
+    },
+    "purchase_order": {
+      "families": ["purchase_order"],
+      "labels": {
+        "Purchase Order Number": ["po no", "p o no", "po #", "po num", "purchase order no"],
+        "Order Number": ["order no", "order #"],
+        "PO Date": ["po dt"]
+      },
+      "meanings": {
+        "Purchase Order Number": ["po number", "order number", "order no"],
+        "PO Date": ["order date", "date of order"],
+        "Supplier": ["vendor", "seller"],
+        "Buyer": ["bill to", "ordered by", "purchaser"],
+        "Total": ["order total", "grand total", "po total"]
+      }
+    },
+    "bank_statement": {
+      "families": ["bank_statement", "statement"],
+      "labels": {
+        "Account Number": ["acct no", "acct #", "account no", "a/c no", "a/c number", "acct number"],
+        "Opening Balance": ["opening bal"],
+        "Closing Balance": ["closing bal"]
+      },
+      "meanings": {
+        "Account Holder": ["account name", "customer name"],
+        "Statement Period": ["period", "statement dates", "for the period"],
+        "Opening Balance": ["beginning balance", "previous balance", "balance brought forward"],
+        "Closing Balance": ["ending balance", "new balance", "balance carried forward"]
+      }
+    },
+    "financial_statement": {
+      "families": ["financial_statement", "financial_report"],
+      "labels": {
+        "Debit": ["dr"],
+        "Credit": ["cr"]
+      },
+      "meanings": {
+        "Reporting Entity": ["entity", "company"],
+        "Reporting Period": ["period", "period ended", "for the period ended", "fiscal year"],
+        "Account": ["account name", "gl account"],
+        "Debit": ["debits"],
+        "Credit": ["credits"]
+      }
+    },
+    "passport": {
+      "families": ["passport", "identity_card", "driving_licence"],
+      "labels": {
+        "Passport Number": ["passport no", "passport #", "passport num"],
+        "Document Number": ["document no", "doc no"],
+        "Date of Birth": ["dob"],
+        "Expiration Date": ["exp date"]
+      },
+      "meanings": {
+        "Passport Number": ["document no", "document number"],
+        "Date of Birth": ["birth date"],
+        "Expiration Date": ["date of expiry", "expiry date", "expires"],
+        "Nationality": ["citizenship"],
+        "Name": ["surname and given names", "full name"]
+      }
+    },
+    "contract": {
+      "families": ["government_contract", "contract", "master_services_agreement", "supplier_agreement", "sow", "amendment"],
+      "labels": {
+        "Contract Number": ["contract no", "contract #", "contract num"],
+        "Solicitation Number": ["solicitation no", "solicitation #"],
+        "Agreement Number": ["agreement no", "agreement #"],
+        "Award Number": ["award no"],
+        "Effective Date": ["eff date", "effective dt"]
+      },
+      "meanings": {
+        "Contract Number": ["award number", "award no", "prime contract no", "piid", "agreement number"],
+        "Contract Value": ["total contract value", "contract amount"],
+        "Contractor": ["offeror", "vendor name", "legal entity", "name of offeror", "supplier", "service provider"]
+      }
+    },
+    "far_regulation": {
+      "families": ["far_regulation"],
+      "labels": {
+        "Clause Number": ["clause no", "clause #"],
+        "Effective Date": ["eff date"]
+      },
+      "meanings": {}
+    }
+  }
+}

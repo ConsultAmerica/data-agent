@@ -246,6 +246,11 @@ def process_fitz_pages(
 
     pdf: fitz.Document | None = None
     table_prefetch: TablePrefetch | None = None
+    # Scanned pages are read by an OCR worker process, kept for this
+    # document's pages and stopped after them.
+    from app.services import ocr_worker
+
+    ocr_worker.begin()
 
     try:
         pdf = fitz.open(file_path)
@@ -633,6 +638,7 @@ def process_fitz_pages(
         ) from exc
 
     finally:
+        ocr_worker.end()
         if table_prefetch is not None:
             table_prefetch.close()
         if pdf is not None:

@@ -8,6 +8,9 @@ joined to extraction and review — so the UI tabs and every export agree:
 - Find: targeted extraction of one named value.
 - All Extracted Fields (CSV, the Original Structure export's rows) and
   Structured JSON exports.
+- Upload validation: processing stages, file checks, type, labels,
+  completeness, tab / Excel consistency and mapping readiness
+  (app/document_validation).
 
 Workspace isolation is enforced by the router dependency
 (enforce_document_access, mounted in app/main.py).
@@ -19,10 +22,11 @@ import csv
 import io
 from datetime import datetime
 from pathlib import PurePath
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -32,6 +36,8 @@ from app.api.downloads import attachment_header, excel_csv
 from app.core.auth import ActorContext, require_permission
 from app.core.config import get_settings
 from app.database.dependencies import get_database
+from app.document_validation.labels import annotate_labels
+from app.document_validation.service import document_validation, forget
 from app.models.document import Document
 from app.services.document_storage import DocumentStorageError
 from app.skills.business_data import build_business_data
@@ -61,6 +67,7 @@ def workspace_context(database: Session, document: Document) -> dict[str, Any]:
     except DocumentStorageError as exc:
         raise HTTPException(status_code=409, detail=f"The source file isn't available: {exc}") from exc
     classification = _state(database, document).model_dump(mode="json")
+    annotate_labels(layout, classification.get("family"))
     record_skill_versions(database)
     business = build_business_data(layout, classification)
     return {"layout": layout, "classification": classification, "business": business}
@@ -99,6 +106,43 @@ def get_validation_summary(
 ) -> dict[str, Any]:
     context = workspace_context(database, _document(database, document_id))
     return validation_summary(context["business"], context["layout"])
+
+
+@router.get("/{document_id}/upload-validation")
+async def get_upload_validation(
+    document_id: str,
+    database: Session = Depends(get_database),
+    actor: ActorContext = Depends(require_permission("documents.view")),
+) -> dict[str, Any]:
+    """Processing stages, file checks, document type, labels, label-to-value
+    association, completeness, Original File / Excel consistency and Oracle
+    mapping readiness — rebuilt only when the document changed."""
+
+    document = _document(database, document_id)
+    return await run_in_threadpool(document_validation, database, document, actor=actor)
+
+
+class RevalidateIn(BaseModel):
+    # "file" re-reads the stored file's own checks; the rest is rebuilt from
+    # the current extraction, reviews and type whenever they change.
+    parts: list[Literal["file", "all"]] = Field(default_factory=lambda: ["all"])
+
+
+@router.post("/{document_id}/upload-validation/revalidate")
+async def revalidate(
+    document_id: str,
+    payload: RevalidateIn,
+    database: Session = Depends(get_database),
+    actor: ActorContext = Depends(require_permission("documents.view")),
+) -> dict[str, Any]:
+    """Validate again now, after a correction or a change of type."""
+
+    document = _document(database, document_id)
+    forget(document.id)
+    report = await run_in_threadpool(
+        lambda: document_validation(database, document, refresh_file="file" in payload.parts, actor=actor)
+    )
+    return {**report, "revalidated": payload.parts}
 
 
 @router.get("/{document_id}/document-dates")

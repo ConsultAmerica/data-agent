@@ -62,6 +62,7 @@ from app.database.migrate import (
     ensure_target_correction_columns,
     run_alembic_upgrade,
 )
+from app.database.oracle_mapping_columns import ensure_oracle_mapping_columns
 from app.database.playbook_columns import ensure_clause_playbook_rule_columns
 from app.database.rls import RlsLockdownError, lock_down_public_schema
 from app.database.session import SessionLocal, engine
@@ -545,6 +546,7 @@ async def create_database_tables() -> None:
     ensure_extraction_job_columns(engine)
     ensure_detected_target_columns(engine)
     ensure_clause_playbook_rule_columns(engine)
+    ensure_oracle_mapping_columns(engine)
 
     # Supabase serves public tables over PostgREST; the app never uses it.
     try:

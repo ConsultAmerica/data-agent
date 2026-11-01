@@ -83,6 +83,15 @@ describe("Oracle pre-send checklist", () => {
     const noRole = buildOracleChecklist({ ...preview, actor: { can_send: false } });
     expect(noRole.find((item) => item.id === "role")?.passed).toBe(false);
   });
+
+  it("says once why a document Oracle Procurement can't take is blocked, without header checks", () => {
+    const reason = "This is FAR regulation text, not a contract, invoice or purchase order.";
+    const items = buildOracleChecklist({ ...preview, oracle_scope: { applicable: false, family: "far_regulation", reason } });
+    expect(items.map((item) => item.id)).toEqual(["role", "scope"]);
+    expect(items.find((item) => item.id === "scope")).toMatchObject({ passed: false, detail: reason });
+    expect(items.some((item) => item.group === "metadata")).toBe(false);
+    expect(checklistPasses(items)).toBe(false);
+  });
 });
 
 describe("citationsByDocument", () => {

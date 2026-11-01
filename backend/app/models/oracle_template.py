@@ -39,6 +39,12 @@ class OracleTemplate(Base):
     owner_workspace: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     uploaded_by: Mapped[str] = mapped_column(String(120), nullable=False)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    # Where the target sits in Oracle Fusion (oracle_templates/catalog.py):
+    # application, integration method, release, object code, parent object,
+    # user keys, the metadata's source, and whether an administrator
+    # verified it. None for templates uploaded before the catalog existed
+    # (read as an unverified uploaded template).
+    catalog: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class OracleMappingProfile(Base):
@@ -71,3 +77,33 @@ class OracleMappingProfile(Base):
     updated_by: Mapped[str] = mapped_column(String(120), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # draft | active | archived. Saving an active profile makes a new draft
+    # version: an approval never carries over to changed mappings.
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft", index=True)
+    created_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    approved_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The document type it was made for, as shown ("Contract").
+    source_document_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+
+class OracleMappingAuditEvent(Base):
+    """Append-only history of mapping profiles and of the target catalog:
+    who created, changed, approved, archived or registered what, and when.
+    A profile event names the profile version it produced."""
+
+    __tablename__ = "oracle_mapping_audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # No foreign keys: the history outlives what it describes.
+    profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    template_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    profile_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # created | saved | duplicated | activated | archived | reverted_to_draft |
+    # catalog_updated | verified | attributes_registered | discovered
+    action: Mapped[str] = mapped_column(String(40), nullable=False)
+    actor_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    actor_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    owner_workspace: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, index=True)

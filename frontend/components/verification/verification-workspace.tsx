@@ -11,6 +11,7 @@ import DocumentAuditTrail from "@/components/review/document-audit-trail";
 import { MAPPING_LABEL, MAPPING_TONE, useOracleMappings } from "@/components/smart-view/oracle-status";
 import type { SourceViewRequest } from "@/components/source-verification-panel";
 import BusinessDataView from "@/components/verification/business-data-view";
+import DocumentCheckSummary from "@/components/verification/document-check-summary";
 import type { Density } from "@/components/verification/field-card";
 import RecordDetails from "@/components/verification/record-details";
 import ReviewSelectedBar from "@/components/verification/review-selected-bar";
@@ -521,6 +522,11 @@ function Workspace({
       {error && <p className="mt-3 rounded-lg border border-danger/30 bg-danger/5 p-3 text-sm text-danger" role="alert">{error}</p>}
 
       {!external && (
+        // Upload and extraction quality; reloads with the workspace's data.
+        <DocumentCheckSummary documentId={documentId} refreshKey={structure} onClassificationChanged={onClassificationChanged} />
+      )}
+
+      {!external && (
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs" data-testid="review-counts">
           {([
             ["missing", "Missing values", counts.missing, "text-danger"],
@@ -720,7 +726,7 @@ function OracleTab({ documentId, documentName, mappings }: { documentId: string;
         )}
         <div className="mt-3 flex flex-wrap gap-2">
           <Link href={`/mapping/designer?document=${documentId}`} className="btn-secondary inline-flex items-center gap-1 px-2.5 py-1 text-xs">
-            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />Open in Mapping Studio
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />Map to Oracle Fusion
           </Link>
           <button type="button" className="btn-secondary px-2.5 py-1 text-xs" aria-pressed={preview} onClick={() => setPreview((v) => !v)}>
             {preview ? "Hide Oracle preview" : "Preview / send to Oracle"}

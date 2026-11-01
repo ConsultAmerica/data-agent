@@ -32,6 +32,7 @@ import ConsoleHeader from "@/components/layout/ConsoleHeader";
 import { ErrorState } from "@/components/layout/StatusState";
 import DensityToggle from "@/components/ui/density-toggle";
 import SharedEmptyState from "@/components/ui/empty-state";
+import { RefetchStrip } from "@/components/ui/skeleton";
 import { HIGH_BAND_MIN } from "@/lib/confidence-policy";
 import {
   acceptReviewQueueFields,
@@ -137,6 +138,8 @@ export default function DocumentsHome() {
     null,
   );
   const [loading, setLoading] = useState(true);
+  // After the first answer, reloads refresh in place instead of blanking the table.
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Map<string, DocumentSummary>>(new Map());
   const [menuFor, setMenuFor] = useState<string | null>(null);
@@ -243,7 +246,10 @@ export default function DocumentsHome() {
           setError(err instanceof Error ? err.message : "Unable to load documents.");
         }
       } finally {
-        if (active) setLoading(false);
+        if (active) {
+          setLoading(false);
+          setHasLoaded(true);
+        }
       }
     }
 
@@ -253,6 +259,7 @@ export default function DocumentsHome() {
     };
   }, [filter, debouncedQuery, offset, reloadKey, family, profileId, category, lifecycle, sortBy, sortDir]);
 
+  const refreshing = loading && hasLoaded;
   const from = total === 0 ? 0 : offset + 1;
   const to = Math.min(offset + PAGE_SIZE, total);
   const pageIds = useMemo(() => documents.map((document) => document.document_id), [documents]);
@@ -653,9 +660,17 @@ export default function DocumentsHome() {
         </div>
       )}
 
+      {/* Refetches (filters, search, paging) keep the current rows on screen,
+          dimmed under a progress strip; the skeleton is for the first load only. */}
+      <div className="relative">
+        <RefetchStrip active={refreshing} label="Updating documents…" />
+      </div>
       {/* Its own scroller, capped to the screen, so the header stays visible while rows scroll. */}
-      <div className="relative max-h-[calc(100vh-15rem)] min-h-[12rem] overflow-auto">
-        {loading ? (
+      <div
+        className={`relative max-h-[calc(100vh-15rem)] min-h-[12rem] overflow-auto transition-opacity duration-150 ${refreshing ? "opacity-60" : ""}`}
+        aria-busy={loading}
+      >
+        {loading && !hasLoaded ? (
           <TableSkeleton />
         ) : documents.length === 0 ? (
           <EmptyState hasFilters={filtersActive} onClear={clearFilters} />

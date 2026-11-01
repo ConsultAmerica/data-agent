@@ -236,19 +236,21 @@ def test_original_document_structure_export_is_one_editable_sheet_in_document_or
     # field columns.
     titles = [r[0] for r in values if r[0] and str(r[0]).startswith(("A. ", "B. ", "C. "))]
     assert any(t.startswith("C. Summary of Contract Modifications") for t in titles)
-    header = ["Item #", "Section / Field Name", "Extracted Value", "Field Details / Sub-Attributes"]
-    assert values.index(next(r for r in values if r[:4] == header)) > 0
+    header = ["Item #", "Field Name", "Extracted Value"]
+    assert values.index(next(r for r in values if r[:3] == header)) > 0
 
-    # Item # and the item name once; each sub-field on its own row with the
-    # parent cells left blank.
+    # Item # | Field Name | Extracted Value: an item with sub-fields opens
+    # with its number and name on a row of their own; each sub-field follows,
+    # its number cell blank. Nothing is merged into one cell.
     first = next(i for i, r in enumerate(values) if r[:2] == ["10.", "Acquisition Agency"])
-    assert values[first][2:4] == ["DOD Space Force", "Agency"]
-    assert values[first + 1][:4] == [None, None, None, "Address"]
+    assert values[first][2] is None
+    assert values[first + 1][:3] == [None, "Agency", "DOD Space Force"]
+    assert values[first + 2][:3] == [None, "Address", None]
     assert sum(1 for r in values if r[0] == "10.") == 1
     assert sum(1 for r in values if r[1] == "Acquisition Agency") == 1
-    # An item that is its own field has no sub-attribute.
+    # An item that is one field is one row.
     briefed = next(r for r in values if r[0] == "3.")
-    assert briefed[1:4] == ["Briefed Through", "MOD#12 - 07/15/2026", None]
+    assert briefed[1:3] == ["Briefed Through", "MOD#12 - 07/15/2026"]
 
     # Native tables keep their printed headers, columns and row order, with
     # no columns added.
@@ -277,7 +279,7 @@ def test_the_export_loses_no_record(brief_id: str) -> None:
     layout = client.get(f"/api/documents/{brief_id}/original-structure").json()
     rows = original_rows(layout)
     # One row per field (placed or not) and per table row, in order.
-    assert sum(1 for r in rows if r.kind == "field") == len(_fields(layout)) + len(layout["unplaced"])
+    assert sum(1 for r in rows if r.kind in ("field", "subfield")) == len(_fields(layout)) + len(layout["unplaced"])
     assert [r.values for r in rows if r.kind == "table_row"] == [
         row.get("reviewed_cells") or row["cells"] for t in _tables(layout) for row in t["rows"]
     ]
@@ -390,7 +392,7 @@ def test_values_that_are_not_confirmed_carry_a_note_and_are_never_changed() -> N
                    "cell_issues": [{"column": 1, "quality": "unreadable", "message": "Unreadable source value"}]}]},
     ]}], "unplaced": []}
     rows = original_rows(layout)
-    by_label = {row.values[1]: row for row in rows if row.kind == "field"}
+    by_label = {row.values[1]: row for row in rows if row.kind in ("field", "subfield")}
     assert by_label["Cage"].notes == {} and by_label["Fax"].notes == {} and by_label["Fax"].values[2] == ""
     assert by_label["Phone"].values[2] == "#####" and by_label["Phone"].notes[2] == "Unreadable source value"
     assert by_label["Email"].notes[2] == "Unverified OCR result (OCR confidence 0.61)"
@@ -425,10 +427,10 @@ def test_a_split_value_keeps_its_printed_text_and_writes_each_part_once() -> Non
               "parts": [{"label": "Start Date", "value": "01/01/2025"}, {"label": "End Date", "value": "12/31/2025"}]}
     rows = original_rows({"sections": [{"title": "B. Contract", "level": 1, "items": [period]}], "unplaced": []})
     parent = next(r for r in rows if r.kind == "field")
-    assert parent.values == ["", "Period of Performance", "", ""]
+    assert parent.values == ["", "Period of Performance", ""]
     assert parent.notes == {2: "Printed as 01/01/2025 - 12/31/2025; split into Start Date and End Date"}
     assert [r.values for r in rows if r.kind == "part"] == [
-        ["", "", "01/01/2025", "↳ Start Date"], ["", "", "12/31/2025", "↳ End Date"]]
+        ["", "Start Date", "01/01/2025"], ["", "End Date", "12/31/2025"]]
 
 
 def test_a_column_naming_one_contract_for_every_row_is_shown_once_above_the_table() -> None:
@@ -655,6 +657,357 @@ def test_a_letterhead_repeated_on_every_page_is_one_section_and_its_table_carrie
     assert [(i["label"], i["page"]) for i in repeats] == [("Invoice No.", 2), ("Invoice No.", 3)]
 
 
+def test_form_instructions_are_removed_from_field_names_and_meaningful_names_kept() -> None:
+    from app.source_structure.original_layout import form_label
+
+    # (item number, field name, is a tick box)
+    assert form_label("2 Enter the Contract Number") == ("2", "Contract Number", False)
+    assert form_label("3 Enter the Solicitation Number") == ("3", "Solicitation Number", False)
+    assert form_label("Enter the Contractor Name") == ("", "Contractor Name", False)
+    assert form_label("1 Enter the Rating for this solicitation, offer, and award") == ("1", "Rating", False)
+    assert form_label("5 Enter the Date Issued (enter 2 digit month, 2 digit day and 4 digit year)") == ("5", "Date Issued", False)
+    assert form_label('4 Click here to select, "Negotiated (RFP)" for the Type of Solicitation') == ("4", "Negotiated (RFP)", True)
+    assert form_label("15b Enter The Offeror's Telephone Number") == ("15B", "Offeror's Telephone Number", False)
+    assert form_label("20 (To be completed by the Government) Enter the accepted dollar amount") == ("20", "Accepted Dollar Amount", False)
+    assert form_label("14 Enter the first Amendment Number (if applicable) (the offeror acknowledges receipt of "
+                      "amendments to the SOLICITATION for offerors and related documents)") == ("14", "First Amendment Number", False)
+    # Not an instruction: kept word for word.
+    for name in ["Code of Federal Regulations", "Contract Number", "Selected Items", "Entered Date"]:
+        assert form_label(name) == ("", name, False)
+
+
+def _filled_form_pdf() -> bytes:
+    """A one-page fillable form in the shape of an SF33 cover: numbered
+    boxes whose descriptions are instructions, a ticked choice, a box with
+    no number, and printed text that repeats one box's value."""
+
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((72, 60), "SOLICITATION, OFFER AND AWARD", fontsize=14, fontname="hebo")
+
+    def box(label, value, rect, kind=fitz.PDF_WIDGET_TYPE_TEXT):
+        widget = fitz.Widget()
+        widget.field_type = kind
+        widget.field_name = f"f{len(list(page.widgets() or []))}"
+        widget.field_label = label
+        widget.rect = fitz.Rect(*rect)
+        widget.field_value = value
+        page.add_widget(widget)
+
+    box("1 Enter the Rating for this solicitation, offer, and award", "DO-C3", (400, 80, 500, 94))
+    box("Enter the page number for this page", "1", (510, 80, 540, 94))
+    box("2 Enter the Contract Number", "FA300224C0008", (72, 110, 220, 124))
+    box("3 Enter the Solicitation Number", "FA300223R00090009", (230, 110, 380, 124))
+    box('4 Click here to select, "Negotiated (RFP)" for the Type of Solicitation', True, (400, 110, 410, 120), fitz.PDF_WIDGET_TYPE_CHECKBOX)
+    box("5 Enter the Date Issued (enter 2 digit month, 2 digit day and 4 digit year)", "21 Apr 2023", (430, 110, 540, 124))
+    # The same number the box holds, printed as text inside it.
+    page.insert_text((80, 120), "FA300224C0008", fontsize=8)
+    return doc.tobytes()
+
+
+def test_a_filled_form_reads_as_item_number_field_name_and_value() -> None:
+    from app.source_structure.original_export import original_rows
+
+    layout = client.get(f"/api/documents/{_upload(_filled_form_pdf(), 'sf33')}/original-structure").json()
+    fields = [f for f in _fields(layout) if f["found_by"] == "form widget"]
+    by_name = {f["field_name"]: f for f in fields}
+    # Every filled box is kept, under the form's own field name.
+    assert set(by_name) >= {"Rating", "Page Number", "Contract Number", "Solicitation Number", "Negotiated (RFP)", "Date Issued"}
+    assert by_name["Rating"]["effective_value"] == "DO-C3"
+    # Item numbers come from the form, in its order: 1, 2, 3, 4, 5.
+    numbers = [f["item"]["number"] for f in fields if f.get("item") and f["item_start"]]
+    assert numbers == ["1", "2", "3", "4", "5"]
+    # The original wording stays on the record, for traceability.
+    assert by_name["Contract Number"]["label"] == "2 Enter the Contract Number"
+    # A ticked box reads Selected; its extracted state is kept as it was.
+    assert by_name["Negotiated (RFP)"]["choice"] == "Selected"
+    # Printed text repeating a box's value is the box read twice: not a second field.
+    assert [f["effective_value"] for f in _fields(layout)].count("FA300224C0008") == 1
+
+    rows = [r.values for r in original_rows(layout) if r.kind in ("field", "subfield")]
+    assert ["1", "Rating", "DO-C3"] in rows
+    assert ["", "Page Number", "1"] in rows
+    assert ["2", "Contract Number", "FA300224C0008"] in rows
+    assert ["4", "Negotiated (RFP)", "Selected"] in rows
+    # No instruction survives as a field name.
+    assert not [r for r in rows if r[1].lower().startswith(("enter ", "click "))]
+
+
+def _ruled_form_pdf() -> bytes:
+    """A ruled, fillable form in the shape of an SF33 cover, as the page
+    prints it: captions in their own cells, a box whose description gives
+    the wrong item number (5 where the page prints 7), a code box drawn
+    inside item 7, an unnumbered page box, ticked and unticked choices, a
+    table of contents printed in two halves with their own rows, and an
+    amendments table whose halves share rows."""
+
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+
+    def line(x0, y0, x1, y1):
+        page.draw_line((x0, y0), (x1, y1), width=0.5)
+
+    def text(x, y, words):
+        page.insert_text((x, y), words, fontsize=7)
+
+    def box(label, value, rect, kind=fitz.PDF_WIDGET_TYPE_TEXT):
+        widget = fitz.Widget()
+        widget.field_type = kind
+        widget.field_name = f"f{len(list(page.widgets() or []))}"
+        widget.field_label = label
+        widget.rect = fitz.Rect(*rect)
+        widget.field_value = value
+        page.add_widget(widget)
+
+    choice = fitz.PDF_WIDGET_TYPE_CHECKBOX
+    # Frame and rows.
+    line(20, 40, 20, 206)
+    line(592, 40, 592, 206)
+    for y in (40, 80, 100, 116, 128, 164, 206):
+        line(20, y, 592, y)
+    # Item 7 (its box says 5) and its CODE box; item 4's two choices.
+    line(300, 40, 300, 80)
+    text(24, 50, "7. ISSUED BY")
+    text(170, 49, "CODE")
+    line(200, 40, 200, 52)
+    line(200, 52, 296, 52)
+    box("Enter the Issued By Code", "FA3002", (204, 42, 294, 51))
+    box("5 Enter the info for who issued this solicitation, offer, and award",
+        "FA3002  338 ESS CC\nJBSA RANDOLPH, TX 78150-4300\nUNITED STATES", (24, 56, 296, 78))
+    text(304, 50, "4. TYPE OF SOLICITATION")
+    box('4 Click here to select, "Sealed Bid (IFB)" for the Type of Solicitation', False, (304, 56, 312, 64), choice)
+    text(316, 63, "SEALED BID (IFB)")
+    box('4 Click here to select, "Negotiated (RFP)" for the Type of Solicitation', True, (304, 68, 312, 76), choice)
+    text(316, 75, "NEGOTIATED (RFP)")
+    # A page box with its own label and no number.
+    text(24, 92, "PAGE")
+    box("Enter the page number for this page", "1", (60, 84, 100, 98))
+    # Item 11: (X) | SEC | DESCRIPTION | PAGE(S), twice side by side.
+    text(250, 112, "11. TABLE OF CONTENTS")
+    for x in (45, 70, 250, 300, 325, 350, 530):
+        line(x, 116, x, 164)
+    for x, words in ((24, "(X)"), (48, "SEC"), (75, "DESCRIPTION"), (255, "PAGE(S)"),
+                     (304, "(X)"), (328, "SEC"), (355, "DESCRIPTION"), (535, "PAGE(S)")):
+        text(x, 125, words)
+    for y in (140, 152):
+        line(20, y, 300, y)
+    line(300, 146, 592, 146)
+    for top, letter, words, ticked, pages in ((128, "A", "SOLICITATION/CONTRACT FORM", True, "1-2"),
+                                              (140, "B", "SUPPLIES OR SERVICES", True, "3-10"),
+                                              (152, "C", "DESCRIPTION/SPECIFICATIONS", False, "")):
+        box(f'11 Click here to select, "{letter} - {words.title()}" for Part I - The Schedule', ticked, (24, top + 2, 32, top + 10), choice)
+        text(55, top + 9, letter)
+        text(75, top + 9, words)
+        box(f"11 Enter the Page numbers for Section {letter}", pages, (255, top + 1, 298, top + 11))
+    for top, letter, words, ticked, pages in ((128, "I", "CONTRACT CLAUSES", True, "11-20"),
+                                              (146, "J", "LIST OF ATTACHMENTS", False, "")):
+        box(f'11 Click here to select, "{letter} - {words.title()}" for Part II', ticked, (304, top + 4, 312, top + 12), choice)
+        text(335, top + 11, letter)
+        text(355, top + 11, words)
+        box(f"11 Enter the Page numbers for Section {letter}", pages, (535, top + 3, 590, top + 13))
+    # Item 14: a caption column, then AMENDMENT NUMBER | DATE, twice, on shared rows.
+    text(24, 175, "14. ACKNOWLEDGMENT OF AMENDMENTS")
+    line(150, 164, 150, 206)
+    for x in (260, 370, 480):
+        line(x, 164, x, 206)
+    for y in (178, 192):
+        line(150, y, 592, y)
+    for x, words in ((155, "AMENDMENT NUMBER"), (265, "DATE"), (375, "AMENDMENT NUMBER"), (485, "DATE")):
+        text(x, 174, words)
+    for index, (top, x, number, date) in enumerate(((178, 152, "0009", "08 Feb 2024"), (178, 372, "0007", "16 Jan 2024"),
+                                                    (192, 152, "0001", "19 May 2023"), (192, 372, "0002", "05 Jun 2023"))):
+        ordinal = ("first", "second", "third", "fourth")[index]
+        box(f"14 Enter the {ordinal} Amendment Number (if applicable)", number, (x, top + 2, x + 106, top + 12))
+        box(f"14 Enter the acknowledgment date for the {ordinal} Amendment Number", date, (x + 110, top + 2, x + 216, top + 12))
+    return doc.tobytes()
+
+
+def _form_layout(document_id: str, metadata: list[DocumentMetadataField] | None = None, geometry: bool = True) -> dict:
+    from app.source_structure.original_layout import _form_pages
+
+    database = SessionLocal()
+    try:
+        document = database.get(Document, document_id)
+        structure = get_or_build_source_structure(database, document)
+        return build_original_layout(structure, metadata or [], forms=_form_pages(document, structure) if geometry else None)
+    finally:
+        database.close()
+
+
+@pytest.fixture(scope="module")
+def ruled_form_id() -> str:
+    return _upload(_ruled_form_pdf(), "sf33-ruled")
+
+
+def test_form_boxes_take_the_item_number_the_page_prints(ruled_form_id: str) -> None:
+    by_name = {f["field_name"]: f for f in _fields(_form_layout(ruled_form_id))}
+    issued = by_name["Issued By"]
+    # Printed as item 7; the box's own description says 5, and that is kept.
+    assert issued["item"]["number"] == "7"
+    assert issued["form_item"]["number_source"] == "printed" and issued["form_item"]["described_as"] == "5"
+    assert issued["label"].startswith("5 Enter the info")
+    # The code box drawn inside item 7 is item 7's, though it has no number of its own.
+    assert by_name["Issued By Code"]["item"]["id"] == issued["item"]["id"]
+    # Both under the printed caption, which names the item.
+    assert issued["item"]["name"] == "Issued By" and issued["item"]["has_subfields"]
+    # A box with its own label and no printed number stands alone: no parent is invented.
+    assert by_name["Page Number"]["item"] is None
+    assert by_name["Page Number"]["form_item"]["number_source"] == "none"
+
+
+def test_without_the_page_geometry_numbers_fall_back_to_the_box_descriptions(ruled_form_id: str) -> None:
+    by_name = {f["field_name"]: f for f in _fields(_form_layout(ruled_form_id, geometry=False))}
+    # The documented fallback: the description's own number, said to be so.
+    assert by_name["Issued By"]["item"]["number"] == "5"
+    assert by_name["Issued By"]["form_item"]["number_source"] == "form_field"
+
+
+def test_ticked_and_unticked_choices_are_both_shown_with_their_raw_state(ruled_form_id: str) -> None:
+    by_name = {f["field_name"]: f for f in _fields(_form_layout(ruled_form_id))}
+    sealed, negotiated = by_name["Sealed Bid (IFB)"], by_name["Negotiated (RFP)"]
+    assert (sealed["choice"], negotiated["choice"]) == ("Not Selected", "Selected")
+    # A confirmed state, not a blank or missing value; the form's own value is kept.
+    assert sealed["form_state"]["state"] == "not_selected" and sealed["quality"] == "confirmed"
+    assert negotiated["form_state"]["raw"] == negotiated["form_state"]["on_state"]
+    assert sealed["item"]["name"] == "Type of Solicitation" == negotiated["item"]["name"]
+
+    # The structure reader (and so the Advanced Grid) is unchanged: it still
+    # has no candidate for an unticked box.
+    database = SessionLocal()
+    try:
+        structure = get_or_build_source_structure(database, database.get(Document, ruled_form_id))
+    finally:
+        database.close()
+    widgets = [c for c in structure.field_candidates if c.structural_relation == "form_widget"]
+    assert widgets and all(c.raw_value.strip() for c in widgets)
+    assert not any("Sealed Bid" in c.label_text for c in widgets)
+
+
+def test_an_unrecognized_choice_state_is_not_read_as_selected_or_not() -> None:
+    from app.source_structure.form_geometry import FormBox
+
+    def state(value: str) -> str | None:
+        return FormBox("b", "x", "CheckBox", value, "Yes", (0, 0, 1, 1)).state
+
+    assert (state("Yes"), state("Off"), state(""), state("Maybe")) == ("selected", "not_selected", "not_selected", "unrecognized")
+    # A box whose own "on" value is "0" (FA30's clause boxes) is ticked when it holds "0".
+    assert FormBox("b", "x", "CheckBox", "0", "0", (0, 0, 1, 1)).state == "selected"
+
+
+def test_a_form_table_keeps_its_printed_columns_and_reading_order(ruled_form_id: str) -> None:
+    tables = {t["item"]["number"]: t for t in _tables(_form_layout(ruled_form_id)) if t.get("item")}
+    contents = tables["11"]
+    assert contents["title"] == "Table of Contents"
+    # Printed in two halves with their own rows: one table, left half then right.
+    assert contents["headers"] == ["(X)", "SEC", "DESCRIPTION", "PAGE(S)"] and contents["form_table"]["folded"]
+    assert [r["cells"] for r in contents["rows"]] == [
+        ["Selected", "A", "SOLICITATION/CONTRACT FORM", "1-2"],
+        ["Selected", "B", "SUPPLIES OR SERVICES", "3-10"],
+        ["Not Selected", "C", "DESCRIPTION/SPECIFICATIONS", ""],
+        ["Selected", "I", "CONTRACT CLAUSES", "11-20"],
+        ["Not Selected", "J", "LIST OF ATTACHMENTS", ""],
+    ]
+    # Halves sharing their rows keep the printed columns as they are.
+    amendments = tables["14"]
+    assert amendments["headers"] == ["AMENDMENT NUMBER", "DATE", "AMENDMENT NUMBER", "DATE"]
+    assert not amendments["form_table"]["folded"]
+    assert [r["cells"] for r in amendments["rows"]] == [
+        ["0009", "08 Feb 2024", "0007", "16 Jan 2024"], ["0001", "19 May 2023", "0002", "05 Jun 2023"],
+    ]
+    # The table's boxes aren't also listed as fields; each row can be traced to them.
+    names = {f["field_name"] for f in _fields(_form_layout(ruled_form_id))}
+    assert not any("Page Numbers for Section" in n or "Amendment Number" in n for n in names)
+    assert all(r["form_boxes"] and r["bbox"] for r in contents["rows"])
+    assert all(not r.get("flags") for t in tables.values() for r in t["rows"])
+
+
+def test_an_address_block_is_split_into_its_parts_and_kept_whole() -> None:
+    from app.source_structure.original_layout import block_parts
+
+    parts = block_parts(
+        "FA3002  338 ESS CC\nCP 210-652-6903, 2021 FIRST STREET WEST  BLDG 853\nJBSA RANDOLPH, TX 78150-4300\nUNITED STATES\n"
+        "KEVIN SARGENT, Contracting Officer, Email: kevin.sargent.7@us.af.mil Telephone: 487-8228"
+    )
+    assert [(p["label"], p["value"]) for p in parts] == [
+        ("Code", "FA3002"), ("Office", "338 ESS CC"), ("Telephone (CP)", "210-652-6903"),
+        ("Street Address", "2021 FIRST STREET WEST BLDG 853"), ("City", "JBSA RANDOLPH"), ("State", "TX"),
+        ("ZIP Code", "78150-4300"), ("Country", "UNITED STATES"), ("Contracting Officer", "KEVIN SARGENT"),
+        ("Contracting Officer Email", "kevin.sargent.7@us.af.mil"), ("Contracting Officer Telephone", "487-8228"),
+    ]
+    payment = block_parts("ACCTG DISB STA NR 387700\nDFAS DEAMS, 27 ARKANSAS RD\nLIMESTONE, ME 04751-6216\nUNITED STATES")
+    assert ("Office", "DFAS DEAMS") in [(p["label"], p["value"]) for p in payment]
+    # Nothing is guessed: no city line, or a line it can't place, and the block stays whole.
+    assert block_parts("SCD:    PAS:") == []
+    assert block_parts("ACME CORP\nSomewhere in the building\nAUSTIN, TX 78701") == []
+
+
+def test_extractor_rows_repeating_the_form_are_kept_but_not_shown(ruled_form_id: str) -> None:
+    from app.source_structure.original_export import original_rows
+
+    metadata = [
+        _metadata(ruled_form_id, "pages", "DESCRIPTION", "3-10 11-20", 1),  # boxes' values
+        _metadata(ruled_form_id, "toc_row", "SEC", "SOLICITATION/CONTRACT FORM 1-2", 1),  # a form row read as text
+        _metadata(ruled_form_id, "page_label", "PAGE", "", 1),  # a printed label, no value
+        _metadata(ruled_form_id, "contractor", "Contractor Name", "ACME FEDERAL LLC", 1),  # a distinct value
+    ]
+    layout = _form_layout(ruled_form_id, metadata)
+    rows = {f["label"]: f for f in _fields(layout) if f.get("placed_by_page")}
+    assert rows["DESCRIPTION"]["form_duplicate"]["code"] == "form_value"
+    assert rows["SEC"]["form_duplicate"]["code"] == "form_row"
+    assert rows["PAGE"]["form_duplicate"]["code"] == "form_label"
+    assert "form_duplicate" not in rows["Contractor Name"]
+    # The reader's grid over the form's ruled cells is a repeat too.
+    grid = [t for t in _tables(layout) if t["detection_method"] == "pdf_ruling_lines"]
+    assert all(t["form_duplicate"]["code"] == "form_grid" for t in grid)
+    assert layout["stats"]["form_duplicates_hidden"] == 3 + len(grid)
+    # The records stay in the layout (review and Smart Review read them);
+    # the Original File writes the form's boxes instead.
+    written = original_rows(layout)
+    field_rows = [r.values for r in written if r.kind in ("field", "subfield")]
+    assert ["", "Contractor Name", "ACME FEDERAL LLC"] in field_rows
+    assert not [r for r in field_rows if r[1] in ("DESCRIPTION", "SEC", "PAGE")]
+    assert not [r for r in written if r.values and str(r.values[0]).startswith("7. ISSUED BY")]
+
+
+def test_the_form_reads_the_same_in_the_tab_layout_and_the_excel_export(ruled_form_id: str) -> None:
+    import io
+
+    from openpyxl import load_workbook
+
+    from app.source_structure.original_export import original_rows
+
+    layout = client.get(f"/api/documents/{ruled_form_id}/original-structure").json()
+    response = client.get(f"/api/documents/{ruled_form_id}/original-structure/export.xlsx")
+    assert response.status_code == 200
+    workbook = load_workbook(io.BytesIO(response.content))
+    assert workbook.sheetnames == ["Original File"]
+    sheet = workbook["Original File"]
+    assert not sheet.merged_cells.ranges
+    written = [[c if c is not None else "" for c in row] for row in sheet.iter_rows(values_only=True)]
+    rows = original_rows(layout)
+    # The workbook is exactly the export's rows.
+    assert [w[: len(r.values)] for w, r in zip(written, rows)] == [[v if v is not None else "" for v in r.values] for r in rows]
+    # Item numbers once, in the order the layout gives them.
+    printed_numbers = [r.values[0] for r in rows if r.kind in ("item", "field", "table_title") and r.values[0][:1].isdigit()]
+    layout_numbers = []
+    for section in layout["sections"]:
+        for item in section["items"]:
+            number = (item.get("item") or {}).get("number")
+            if number and (not layout_numbers or layout_numbers[-1] != number):
+                layout_numbers.append(number)
+    assert printed_numbers == layout_numbers
+    # In the form's numbering (item 4, printed beside item 7, comes first).
+    assert printed_numbers == ["4", "7", "11", "14"]
+    assert ["7", "Issued By", ""] == written[[r[0] for r in written].index("7")][:3]
+    assert ["", "Sealed Bid (IFB)", "Not Selected"] in [r[:3] for r in written]
+    assert ["11", "Table of Contents", "Source: page 1"] in [r[:3] for r in written]
+    assert ["Not Selected", "C", "DESCRIPTION/SPECIFICATIONS", None] in [list(r[:4]) for r in sheet.iter_rows(values_only=True)]
+    # The address block: its parts under it, its printed text kept in a note.
+    issued_row = next(i for i, r in enumerate(written) if r[1] == "Issued By" and r[0] == "")
+    assert written[issued_row + 1][1:3] == ["Code", "FA3002"]
+    assert "Printed as FA3002" in sheet.cell(row=issued_row + 1, column=3).comment.text
+
+
 def test_original_structure_endpoint(brief_id: str) -> None:
     response = client.get(f"/api/documents/{brief_id}/original-structure")
     assert response.status_code == 200
@@ -754,8 +1107,9 @@ def test_selected_records_export_in_every_format(brief_id: str) -> None:
     csv_text = client.post(
         f"/api/documents/{brief_id}/original-structure/export-selected", json={"records": [field["record_key"]], "format": "csv"},
     ).content.decode("utf-8-sig").splitlines()
-    # The same rows as the Excel export: the section, the field columns, the field.
-    assert csv_text[1] == "Item #,Section / Field Name,Extracted Value,Field Details / Sub-Attributes" and len(csv_text) == 3
+    # The same rows as the Excel export: the section, the field columns, the
+    # field's item, the field.
+    assert csv_text[1] == "Item #,Field Name,Extracted Value" and len(csv_text) == 4
 
 
 def test_a_missing_row_is_added_marked_and_still_needs_approval(brief_id: str) -> None:

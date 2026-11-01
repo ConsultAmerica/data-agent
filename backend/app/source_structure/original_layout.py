@@ -28,9 +28,22 @@ from sqlalchemy.orm import Session
 
 from app.models.document import Document
 from app.models.document_metadata_field import DocumentMetadataField
+from app.models.document_page import DocumentPage
 from app.models.structure_record_review import StructureRecordReview
 from app.services.evidence_text import source_text_of
-from app.source_structure.models import FieldCandidate, StructuredSourceDocument, TableCandidate
+from app.source_structure.form_geometry import (
+    NOT_SELECTED,
+    SELECTED,
+    STATE_LABELS,
+    UNRECOGNIZED,
+    FormBox,
+    FormPage,
+    FormTable,
+    is_label_caption,
+    form_box_pages,
+    read_form_pages,
+)
+from app.source_structure.models import FieldCandidate, StructuredSourceDocument, TableCandidate, TableCell
 from app.source_structure.service import get_or_build_source_structure
 from app.source_structure.text_shapes import infer_value_type, normalize_space
 from app.staging.validation import OCR_VERIFY_MIN_CONFIDENCE
@@ -227,7 +240,7 @@ def _section_headings(structure: StructuredSourceDocument, candidates: list[Fiel
     for region in structure.regions:
         if region.region_type not in ("HEADING", "PARAGRAPH"):
             continue
-        page, y = region.page or 0, _y(region.bbox)
+        page, y = region.page or 0, _at(region.bbox, region.source_locator)
         lines = [normalize_space(line) for line in region.text.split("\n") if line.strip()]
         for offset, line in enumerate(lines):
             match = _UCF_SECTION.match(line)
@@ -275,12 +288,261 @@ class _Field:
 
 
 def _usable(candidate: FieldCandidate) -> bool:
-    # Accepted pairs, and blanks printed on the form (empty underlines).
+    # Accepted pairs, blanks printed on the form (empty underlines), and any
+    # filled-in form box: its value is the form's own, and its long built-in
+    # description ("1 Enter the Rating for this solicitation…") is cleaned
+    # by form_label, not a reason to drop it.
+    if candidate.structural_relation == "form_widget" and candidate.raw_value.strip():
+        return True
     return candidate.acceptance == "accepted" or candidate.reasons == ["empty_value"]
+
+
+# A form box's built-in description: an instruction around the field's name.
+_FORM_NUMBER = re.compile(r"^(\d{1,3}[A-Za-z]?)[.)]?\s+(?=\S)")
+# A ruled form box's code before its caption: "a ", "1 ", "15 ", "12a ".
+_BOX_CODE_PREFIX = re.compile(r"^(?:[a-z]|\d{1,2}[a-z]?)[.)]?\s+")
+# "(To be completed by the Government)": who fills the box, not its name.
+_WHO_FILLS = re.compile(r"^\((?:to be )?(?:completed|filled(?: in)?) by [^)]*\)\s*", re.I)
+_CHOICE = re.compile(r"^click (?:here )?to (?:select|check|choose),?\s*[\"“']([^\"”']+)[\"”'](?:\s+(?:for|as|under)\s+(.+))?$", re.I)
+_INSTRUCTION = re.compile(
+    r"^(?:please\s+)?(?:enter|type|input|provide|insert|fill in|select|choose|specify|indicate)\s+(?:in\s+)?(?:the\s+|an?\s+|your\s+)?",
+    re.I,
+)
+_INSTRUCTION_NOTE = re.compile(r"\s*\((?:enter|if applicable|use|format|mm|dd|yyyy|\d+\s*digit)[^)]*\)", re.I)
+_INSTRUCTION_SCOPE = re.compile(
+    r"\s+(?:for|of|on|in)\s+(?:this|the)\s+(?:solicitation|offer|award|page|contract|form|document|order)\b.*$"
+    r"|\s+(?:who|that)\s+has\s+more\s+info.*$|\s+with\s+more\s+info.*$",
+    re.I,
+)
+_WHO_DID = re.compile(r"^info(?:rmation)?\s+(?:for|about)\s+who\s+(\w+ed)\b.*$", re.I)
+_SMALL_WORDS = {"a", "an", "and", "as", "at", "by", "for", "in", "of", "on", "or", "the", "to", "with"}
+_SELECTED = {"1", "on", "yes", "true", "x", "checked"}
+
+
+def _title(text: str) -> str:
+    words = text.split()
+    return " ".join(
+        w if (w[:1].isupper() or any(ch.isdigit() for ch in w)) else (w if i and w.lower() in _SMALL_WORDS else w[:1].upper() + w[1:])
+        for i, w in enumerate(words)
+    )
+
+
+def form_label(label: str) -> tuple[str, str, bool]:
+    """(item number, field name, is a choice box) for a form box's
+    description. "2 Enter the Contract Number" → ("2", "Contract Number",
+    False); '4 Click here to select, "Negotiated (RFP)" for the Type' →
+    ("4", "Negotiated (RFP)", True). Wording that isn't an instruction is
+    returned as it is: only clear instructions are removed."""
+
+    text = normalize_space(label)
+    number = ""
+    numbered = _FORM_NUMBER.match(text)
+    if numbered:
+        number, text = numbered.group(1).upper(), text[numbered.end():]
+    text = _WHO_FILLS.sub("", text)
+    choice = _CHOICE.match(text)
+    if choice:
+        return number, choice.group(1).strip(), True
+    instruction = _INSTRUCTION.match(text)
+    if not instruction or instruction.end() >= len(text):
+        return number, text, False
+    name = text[instruction.end():]
+    name = _INSTRUCTION_NOTE.sub("", name)
+    # A long note in parentheses explains the box; it isn't its name.
+    name = re.sub(r"\s*\((?:[^()\s]+\s+){5,}[^()]*\)", "", name)
+    who = _WHO_DID.match(name)
+    if who:
+        name = f"{who.group(1)} By"
+    name = _INSTRUCTION_SCOPE.sub("", name).strip(" ,;:")
+    name = re.sub(r"^(?:the\s+)?person'?s\s+", "", name, flags=re.I)
+    return number, _title(name) if name else text, False
+
+
+def _drop_form_echoes(candidates: list[FieldCandidate]) -> list[FieldCandidate]:
+    """A value the page's text also shows inside a filled-in form box is
+    that box read twice: the box (with the form's own name) is kept."""
+
+    boxes: dict[int, list[FieldCandidate]] = {}
+    for c in candidates:
+        if c.structural_relation == "form_widget" and c.value_bbox:
+            boxes.setdefault(c.page or 0, []).append(c)
+
+    def covered(box, value) -> float:
+        width = max(0.0, min(box[2], value[2]) - max(box[0], value[0]))
+        height = max(0.0, min(box[3], value[3]) - max(box[1], value[1]))
+        area = max(1e-6, (value[2] - value[0]) * (value[3] - value[1]))
+        return width * height / area
+
+    kept = []
+    for c in candidates:
+        if c.structural_relation != "form_widget" and c.raw_value.strip() and c.value_bbox:
+            # Its value is (part of) what a box holds: a fifth or more of it
+            # lies inside filled boxes.
+            if sum(covered(b.value_bbox, c.value_bbox) for b in boxes.get(c.page or 0, [])) >= 0.2:
+                continue
+        kept.append(c)
+    return kept
+
+
+@dataclass(frozen=True)
+class _FormInfo:
+    """A form box candidate on its printed page: its item number, where the
+    number came from (printed | form_field | none), the number its own
+    description gives, and the printed caption of its item."""
+
+    box: FormBox
+    number: str
+    source: str
+    described: str
+    caption: str | None
+    # A box with no description of its own: the wording printed beside it.
+    beside: str | None = None
+
+
+def caption_name(text: str) -> str:
+    """A printed caption as an item name: "TYPE OF SOLICITATION" → "Type
+    of Solicitation"; a note in parentheses ("(If other than item 7)") is
+    not part of it."""
+
+    words = re.sub(r"\s*\([^)]*\)", "", text).strip(" :;,.").split()
+
+    def word(w: str, index: int) -> str:
+        if any(ch.isdigit() for ch in w) or "." in w:
+            return w
+        low = w.lower()
+        if 0 < index < len(words) - 1 and low in _SMALL_WORDS:
+            return low
+        return re.sub(r"[a-z]+", lambda m: m.group(0).capitalize(), low)
+
+    return " ".join(word(w, i) for i, w in enumerate(words))
+
+
+def _form_boxes(
+    candidates: list[FieldCandidate], forms: dict[int, FormPage]
+) -> tuple[list[FieldCandidate], dict[str, _FormInfo], list[tuple[int, FormTable]]]:
+    """Form box candidates joined to their boxes on the printed page.
+
+    Adds a candidate for each unticked choice and each empty box (the
+    structure reader keeps only filled boxes: a blank form would otherwise
+    list none of its boxes), numbers every box by the printed form, and reads
+    the tables the boxes fill: their candidates are left out, the table
+    takes their place."""
+
+    infos: dict[str, _FormInfo] = {}
+    joined: set[tuple[int, str, tuple[float, ...]]] = set()
+    extra: list[FieldCandidate] = []
+
+    def info(form: FormPage, box: FormBox, label: str) -> _FormInfo:
+        described = form_label(label)[0]
+        number, source = form.printed_number(box, described)
+        caption = next((c.text for c in form.captions if c.number == number), None)
+        return _FormInfo(box, number, source, described, caption, None if box.described else form.text_beside(box))
+
+    for c in candidates:
+        form = forms.get(c.page or 0)
+        if form is None or c.structural_relation != "form_widget" or not c.value_bbox:
+            continue
+        box = next((b for b in form.boxes if all(abs(x - y) < 0.5 for x, y in zip(b.rect, c.value_bbox))), None)
+        if box is not None:
+            infos[c.candidate_id] = info(form, box, c.label_text)
+            joined.add((form.page, box.name, box.rect))
+    for page, form in sorted(forms.items()):
+        for box in form.boxes:
+            if (page, box.name, box.rect) in joined:
+                continue
+            if box.state != NOT_SELECTED and (box.is_choice or box.value.strip()):
+                continue
+            candidate = FieldCandidate(
+                candidate_id=f"form-box-{page}-{len(extra)}", raw_label=box.label, raw_value="",
+                label_text=box.label, value_type_hint="text", structural_relation="form_widget", page=page,
+                value_bbox=box.rect, extraction_method="form_widget",
+                evidence_text=f"{box.label}: {box.value or 'Off'}" if box.is_choice else f"{box.label}: (blank)",
+            )
+            extra.append(candidate)
+            infos[candidate.candidate_id] = info(form, box, box.label)
+
+    # A table the item's boxes (filled, empty and unticked) are printed in.
+    tables: list[tuple[int, FormTable]] = []
+    consumed: set[tuple[int, str]] = set()
+    for page, form in sorted(forms.items()):
+        by_number: dict[str, list[FormBox]] = {}
+        for box in form.boxes:
+            number = form.printed_number(box, form_label(box.label)[0])[0]
+            if number:
+                by_number.setdefault(number, []).append(box)
+        for number, boxes in sorted(by_number.items(), key=lambda kv: _item_key(kv[0])):
+            table = form.table(number, boxes)
+            if table is not None:
+                tables.append((page, table))
+                consumed |= {(page, name) for name in table.boxes}
+    kept = [
+        c for c in candidates + extra
+        if c.candidate_id not in infos or (c.page or 0, infos[c.candidate_id].box.name) not in consumed
+    ]
+    return kept, infos, tables
+
+
+def _item_key(number: str) -> tuple[int, str]:
+    digits = re.match(r"\d+", number)
+    return (int(digits.group()) if digits else 10**6, number)
+
+
+def _order_form_runs(
+    stream: list[tuple[int, float, str, Any]], infos: dict[str, _FormInfo] | None = None
+) -> list[tuple[int, float, str, Any]]:
+    """A run of form boxes (and the form's tables) on one page follows the
+    form's numbering: boxes printed side by side (4 then 5) come out in
+    item order, and within an item, row by row, left to right. Unnumbered
+    boxes keep their place relative to the item before them."""
+
+    infos = infos or {}
+    out: list[tuple[int, float, str, Any]] = []
+    run: list[tuple[int, float, str, Any]] = []
+
+    def number_of(entry: tuple[int, float, str, Any]) -> str:
+        if entry[2] == "formtable":
+            return entry[3].number
+        known = infos.get(entry[3].candidate_id)
+        return known.number if known else form_label(entry[3].label_text)[0]
+
+    def flush() -> None:
+        current = ""
+        keyed = []
+        for index, entry in enumerate(run):
+            number = number_of(entry) or current
+            current = number
+            if entry[2] == "formtable":
+                box = entry[3].bbox
+            else:
+                box = entry[3].value_bbox or entry[3].label_bbox or (0, entry[1], 0, entry[1])
+            keyed.append(((_item_key(number) if number else (-1, ""), round(box[1] / 6), box[0], index), entry))
+        out.extend(entry for _, entry in sorted(keyed, key=lambda k: k[0]))
+        run.clear()
+
+    for entry in stream:
+        if entry[2] == "formtable" or (entry[2] == "field" and entry[3].structural_relation == "form_widget"):
+            if run and run[-1][0] != entry[0]:
+                flush()
+            run.append(entry)
+            continue
+        flush()
+        out.append(entry)
+    flush()
+    return out
 
 
 def _y(box) -> float:
     return box[1] if box else 0.0
+
+
+def _at(box, locator) -> float:
+    """Where an item sits on its page: its top, or for a web page (no
+    coordinates) its position in the document."""
+
+    if box:
+        return box[1]
+    order = locator.document_order if locator is not None else None
+    return float(order) if order is not None else 0.0
 
 
 def _page_of(metadata: DocumentMetadataField) -> int | None:
@@ -459,6 +721,74 @@ def composite_parts(value: str | None) -> list[dict[str, str]]:
     return [{"label": "Start Date", "value": match.group(1)}, {"label": "End Date", "value": match.group(2)}]
 
 
+_BLOCK_CODE = re.compile(r"^(?P<code>[A-Z0-9]{5,6})\s{2,}(?P<office>\S.*)$")
+_BLOCK_PHONE = re.compile(r"^(?:(?P<tag>[A-Z]{1,3})\s+)?(?P<phone>\(?\d{3}\)?[ -]\d{3}-\d{4}),\s*(?P<street>\S.*)$")
+_BLOCK_STREET = re.compile(r"^(?:\d+[A-Z]?\s+\S|P\.?\s*O\.?\s+BOX\b)", re.I)
+_BLOCK_OFFICE_STREET = re.compile(r"^(?P<office>[^,\d][^,]*),\s*(?P<street>\d+[A-Z]?\s+\S.*)$")
+_BLOCK_CITY = re.compile(r"^(?P<city>[A-Za-z][A-Za-z .'-]*),\s*(?P<state>[A-Z]{2})\s+(?P<zip>\d{5}(?:-\d{4})?)$")
+_BLOCK_COUNTRY = {"UNITED STATES", "UNITED STATES OF AMERICA", "USA", "US", "CANADA", "MEXICO"}
+_BLOCK_CONTACT = re.compile(
+    r"^(?P<name>[^,:@]+?)(?:,\s*(?P<title>[^,:@]+?))?,\s*Email:\s*(?P<email>[^\s@]+@\S+)"
+    r"(?:\s+(?:Telephone|Phone|Tel):\s*(?P<phone>[\d() .+-]{7,}?))?\s*$",
+    re.I,
+)
+
+
+def block_parts(value: str | None) -> list[dict[str, str]]:
+    """The parts of a printed address block (an Issued By or offeror box):
+    code and office, street, city, state and ZIP, country, and each
+    contact's name, email and telephone, every one exactly as printed.
+
+    Only a block with a "City, ST 12345" line, every line of which is
+    recognised, is split; anything else is left whole, so nothing is
+    guessed. The full text stays on the record."""
+
+    lines = [line.strip() for line in (value or "").splitlines() if line.strip()]
+    if len(lines) < 2 or not any(_BLOCK_CITY.match(normalize_space(line)) for line in lines):
+        return []
+    parts: list[dict[str, str]] = []
+
+    def add(label: str, text: str | None) -> None:
+        text = normalize_space(text or "")
+        if not text:
+            return
+        taken = {p["label"] for p in parts}
+        name, n = label, 2
+        while name in taken:
+            name, n = f"{label} {n}", n + 1
+        parts.append({"label": name, "value": text})
+
+    for index, raw in enumerate(lines):
+        line = normalize_space(raw)
+        if m := _BLOCK_CODE.match(raw):
+            add("Code", m["code"])
+            add("Office", m["office"])
+        elif m := _BLOCK_PHONE.match(line):
+            add(f"Telephone ({m['tag']})" if m["tag"] else "Telephone", m["phone"])
+            add("Street Address", m["street"])
+        elif m := _BLOCK_CITY.match(line):
+            add("City", m["city"])
+            add("State", m["state"])
+            add("ZIP Code", m["zip"])
+        elif line.upper() in _BLOCK_COUNTRY:
+            add("Country", line)
+        elif m := _BLOCK_CONTACT.match(line):
+            role = _title(m["title"].strip()) if m["title"] else "Contact"
+            add(role, m["name"])
+            add(f"{role} Email", m["email"])
+            add(f"{role} Telephone", m["phone"])
+        elif m := _BLOCK_OFFICE_STREET.match(line):
+            add("Office", m["office"])
+            add("Street Address", m["street"])
+        elif _BLOCK_STREET.match(line):
+            add("Street Address", line)
+        elif index == 0:
+            add("Name", line)
+        else:
+            return []
+    return parts if len(parts) >= 2 else []
+
+
 def _is_artifact(payload: dict[str, Any]) -> bool:
     """A "field" made by the layout reader, not printed: no value, no
     extraction row, no flag, no review, and a label with no words."""
@@ -508,6 +838,13 @@ def _field_quality(payload: dict[str, Any], candidate: FieldCandidate | None) ->
         return UNREADABLE
     if codes & _CONFLICT_FLAGS:
         return CONFLICTING
+    state = (payload.get("form_state") or {}).get("state")
+    if state == UNRECOGNIZED:
+        # A value the box doesn't define: neither selected nor not.
+        return UNREADABLE
+    if state in (SELECTED, NOT_SELECTED) and payload["review_status"] != "Needs review":
+        # The box's own state, read from the form: unticked is a value.
+        return CONFIRMED
     if candidate is None:
         return MISSING_EXTRACTION if not extracted.strip() else EXTRACTED
     # Missing only when nothing was read: an empty duplicate candidate beside
@@ -552,7 +889,7 @@ def _box_union(boxes: list[Any]) -> list[float] | None:
     return [min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes)]
 
 
-def _field_payload(item: _Field, review: StructureRecordReview | None = None) -> dict[str, Any]:
+def _field_payload(item: _Field, review: StructureRecordReview | None = None, form: _FormInfo | None = None) -> dict[str, Any]:
     c = item.candidate
     m = item.match
     flags = list(dict.fromkeys(item.flags))
@@ -582,6 +919,35 @@ def _field_payload(item: _Field, review: StructureRecordReview | None = None) ->
     }
     if item.repeated:
         payload["repeated_header"] = True
+    if c.structural_relation == "ruled_form_box":
+        # A printed box: its code is the item number ("15 State" and "15
+        # Employer state ID no." are one item), its caption the field name.
+        code = _BOX_CODE_PREFIX.match(normalize_space(c.label_text)) if c.box_code else None
+        name = c.label_text[code.end():].strip() if code else c.label_text
+        payload["form_item"] = {"number": c.box_code or "", "name": name, "number_source": "printed_box" if c.box_code else "none"}
+    elif c.structural_relation == "form_widget" or _INSTRUCTION.match(_FORM_NUMBER.sub("", normalize_space(c.label_text))):
+        number, name, is_choice = form_label(c.label_text)
+        payload["form_item"] = {"number": number, "name": name, "number_source": "form_field" if number else "none"}
+        if form is not None:
+            # Numbered by the printed form; the description's own number is
+            # kept when the two disagree.
+            payload["form_item"].update(number=form.number, number_source=form.source)
+            if form.described and form.described != form.number:
+                payload["form_item"]["described_as"] = form.described
+            if form.caption and is_label_caption(form.caption):
+                payload["form_item"]["caption"] = caption_name(form.caption)
+            if form.beside:
+                # Its internal name ("dummy Field Name3") says nothing; the page does.
+                payload["form_item"]["name"] = form.beside
+            if form.box.is_choice:
+                # Selected, Not Selected, or a state the box doesn't define;
+                # the form's own value ("1", "Off") stays as extracted.
+                state = form.box.state
+                payload["form_state"] = {"state": state, "raw": form.box.value, "on_state": form.box.on_state}
+                payload["choice"] = STATE_LABELS.get(state, document_value)
+        elif is_choice:
+            # A ticked box; the form's own state ("1") stays as extracted.
+            payload["choice"] = "Selected" if _norm(document_value) in _SELECTED else document_value
     # Fields with an extraction row are reviewed there; the others here.
     if m is None and review is not None:
         payload["review_status"] = _STRUCTURE_REVIEW_LABELS.get(review.status, review.status)
@@ -590,6 +956,8 @@ def _field_payload(item: _Field, review: StructureRecordReview | None = None) ->
         payload["structure_review"] = _review_payload(review)
     _set_quality(payload, c)
     payload["parts"] = composite_parts(payload["effective_value"])
+    if not payload["parts"] and c.structural_relation == "form_widget":
+        payload["parts"] = block_parts(payload["effective_value"])
     return payload
 
 
@@ -602,6 +970,119 @@ def _review_payload(review: StructureRecordReview) -> dict[str, Any]:
         "reviewed_by": review.actor_name,
         "reviewed_at": review.updated_at.isoformat() if review.updated_at else None,
     }
+
+
+_FORM_REPEAT_MESSAGES = {
+    "form_value": "Repeats a form box's value",
+    "form_row": "Repeats a row of the form (its printed wording and box values)",
+    "form_text": "The form's printed wording read as a value",
+    "form_label": "A printed form label with no value of its own",
+    "form_grid": "The form's ruled cells read as a table; its boxes are shown instead",
+    "value_as_label": "A value read as a label; the form's boxes are shown instead",
+}
+
+
+def _box_form_repeat(payload: dict[str, Any], page_lines: list[str]) -> dict[str, str] | None:
+    """On a page read as a ruled form (its boxes hold its values), whether a
+    text-extractor reading only garbles the page: a "label" that is a single
+    token holding a figure ("Xax-kk-4621" → "WC-2025-004821": two box values
+    paired), or two words printed side by side on one line ("Department of
+    the Treasury — Internal Revenue Service" → "Revenue" / "Service")."""
+
+    label = normalize_space(payload.get("label") or "")
+    value = normalize_space(payload.get("effective_value") or "")
+    if not label:
+        return None
+    if " " not in label and re.search(r"\d", label):
+        code = "value_as_label"
+    elif value and any(f"{label} {value}".lower() in line.lower() for line in page_lines):
+        code = "form_text"
+    else:
+        return None
+    return {"code": code, "message": _FORM_REPEAT_MESSAGES[code]}
+
+
+def _form_repeat(payload: dict[str, Any], form: FormPage | None) -> dict[str, str] | None:
+    """Whether an extracted row with no exact position only repeats the form
+    page it was read from: every word of its label and value is the form's
+    printed wording or a box's value. A row with any word of its own is a
+    distinct value and stays."""
+
+    if form is None:
+        return None
+
+    def words(text: str | None) -> set[str]:
+        return set(re.findall(r"[a-z0-9]+", (text or "").lower()))
+
+    values = set().union(*(words(b.value) for b in form.boxes))
+    printed = set().union(*(words(line.text) for line in form.lines))
+    label, value = words(payload["label"]), words(payload.get("effective_value"))
+    if not label <= values | printed:
+        return None
+    if not value:
+        code = "form_label" if label else None
+    elif not value <= values | printed:
+        code = None
+    elif value <= values:
+        code = "form_value"
+    elif value & values:
+        code = "form_row"
+    elif _blank_form(form) or not re.search(r"\d", payload.get("effective_value") or ""):
+        # A figure ("41 U.S.C. 3304(a)") is printed wording only when no
+        # box is filled; otherwise it could be a value typed on the page.
+        code = "form_text"
+    else:
+        code = None
+    return {"code": code, "message": _FORM_REPEAT_MESSAGES[code]} if code else None
+
+
+def _blank_form(form: FormPage) -> bool:
+    """No box filled in: every word on the page is the form's own print."""
+
+    return not any(b.value.strip() and b.state != NOT_SELECTED for b in form.boxes)
+
+
+def _printed_words(form: FormPage) -> set[str]:
+    return set().union(*(set(re.findall(r"[a-z0-9]+", line.text.lower())) for line in form.lines))
+
+
+def _printed_echo(payload: dict[str, Any], form: FormPage | None) -> bool:
+    """An empty box given, by the text extractor's matched reading, words the
+    form prints elsewhere ("6 Requisition/Purchase Number" ← "8. ADDRESS
+    OFFER TO"). Not yet reviewed, so it isn't the box's value."""
+
+    metadata = payload.get("metadata") or {}
+    reading = payload.get("effective_value") or ""
+    if form is None or payload.get("document_value") or not reading.strip():
+        return False
+    if metadata.get("review_status") not in (None, "pending"):
+        return False
+    if re.search(r"\d", reading) and not _blank_form(form):
+        return False
+    return set(re.findall(r"[a-z0-9]+", reading.lower())) <= _printed_words(form)
+
+
+def _form_wording(payload: dict[str, Any], relation: str, form: FormPage | None) -> dict[str, str] | None:
+    """Whether a label/value pair the text reader found on a fillable form
+    page is only the form's printed wording paired up ("REQUISITION/PURCHASE
+    NUMBER" → "8. ADDRESS OFFER TO", "NUMBER" → "EXTENSION"). On such a page
+    what's filled in lives in the boxes, so a pair made entirely of printed
+    words isn't a value; the boxes are shown instead."""
+
+    if form is None or relation in ("form_widget", "ruled_form_box"):
+        return None
+
+    def words(text: str | None) -> set[str]:
+        return set(re.findall(r"[a-z0-9]+", (text or "").lower()))
+
+    printed = _printed_words(form)
+    label, value = words(payload["label"]), words(payload.get("effective_value"))
+    if not label or not label <= printed or not value <= printed:
+        return None
+    if re.search(r"\d", payload.get("effective_value") or "") and not _blank_form(form):
+        return None
+    code = "form_text" if value else "form_label"
+    return {"code": code, "message": _FORM_REPEAT_MESSAGES[code]}
 
 
 def _metadata_field_payload(m: DocumentMetadataField, placed_by_page: bool = False) -> dict[str, Any]:
@@ -731,7 +1212,8 @@ def _is_broken_prose(tables: list[TableCandidate]) -> bool:
 
 
 def _table_payload(
-    tables: list[TableCandidate], heading: str | None, table_key: str, reviews: dict[str, StructureRecordReview]
+    tables: list[TableCandidate], heading: str | None, table_key: str, reviews: dict[str, StructureRecordReview],
+    typed_columns: bool = True,
 ) -> dict[str, Any]:
     first = tables[0]
     headers = list(first.headers) if first.header_cells else [h for h in first.headers]
@@ -764,7 +1246,8 @@ def _table_payload(
                     )
                 )
             ])
-    flags = _column_flags(headers, texts)
+    # A form's boxes hold exactly what was entered: no column guesswork.
+    flags = _column_flags(headers, texts) if typed_columns else {}
     for (row_index, column), code in flags.items():
         rows[row_index].setdefault("flags", []).append(
             {"code": code, "column": column, "message": FLAG_LABELS[code]}
@@ -798,15 +1281,44 @@ def _table_payload(
         "id": first.candidate_id,
         "shared_columns": _shared_columns(headers, rows, bool(first.header_cells)),
         "record_key": table_key,
-        "title": heading,
+        "title": first.caption or heading,
         "headers": headers,
         "headers_printed": bool(first.header_cells),
         "pages": sorted({t.page for t in tables if t.page}),
         "continued": len(tables) > 1,
+        # The detected tables it was built from (a table continued across
+        # pages is several), for the completeness audit.
+        "source_tables": [t.candidate_id for t in tables],
         "detection_method": first.detection_method,
         "rows": rows,
         "row_count": len(rows),
     }
+
+
+def _form_table_payload(page: int, table: FormTable, reviews: dict[str, StructureRecordReview]) -> dict[str, Any]:
+    """A table printed on the form and filled in its boxes (a table of
+    contents, a list of amendments), as any other table: its printed
+    headers, its rows in reading order, each cell as the box or page holds
+    it (a choice box as Selected / Not Selected)."""
+
+    slug = _slug(table.number)
+    candidate = TableCandidate(
+        candidate_id=f"form-table-{page}-{slug}", region_id=f"form-table-{page}-{slug}", page=page,
+        bbox=table.bbox, detection_method="pdf_form_grid", extraction_method="form_widget",
+        headers=table.headers,
+        header_cells=[TableCell(row_index=-1, column_index=i, text=h, bbox=b) for i, (h, b) in enumerate(zip(table.headers, table.header_boxes))],
+        rows=[
+            [TableCell(row_index=r, column_index=i, text=text, bbox=box) for i, (text, box) in enumerate(zip(cells, boxes))]
+            for r, (cells, boxes) in enumerate(zip(table.rows, table.row_boxes))
+        ],
+    )
+    name = caption_name(table.caption.text) if table.caption and is_label_caption(table.caption.text) else None
+    payload = _table_payload([candidate], name, f"form-table:{page}:{slug}", reviews, typed_columns=False)
+    payload["item"] = {"number": table.number, "name": name or ""}
+    payload["form_table"] = {"folded": table.folded}
+    for row, sources in zip(payload["rows"], table.row_sources):
+        row["form_boxes"] = sources
+    return payload
 
 
 def _apply_hierarchy(section_id: str, items: list[dict[str, Any]]) -> None:
@@ -814,11 +1326,43 @@ def _apply_hierarchy(section_id: str, items: list[dict[str, Any]]) -> None:
     and name, the field's own wording, and whether it opens the item (the
     only row that shows the item's number and name)."""
 
+    def box_number(entry: dict[str, Any]) -> str | None:
+        form = entry.get("form_item") if entry["kind"] == "field" and not entry.get("group") else None
+        return form["number"] if form and form["number"] else None
+
+    # How many boxes in a row share each box's number.
+    run_sizes: list[int] = []
+    index = 0
+    while index < len(items):
+        number = box_number(items[index])
+        end = index + 1
+        while number and end < len(items) and box_number(items[end]) == number:
+            end += 1
+        run_sizes += [end - index] * (end - index)
+        index = end
+
     previous: str | None = None
-    for item in items:
+    for position, item in enumerate(items):
         if item["kind"] != "field":
             item["parent_id"] = section_id
             previous = None
+            continue
+        form = item.get("form_item")
+        if form and not item.get("group"):
+            # A form box: its own number; boxes sharing it form one item.
+            item["field_name"] = form["name"]
+            if not form["number"]:
+                # No printed number: on its own, under no item.
+                item["item"], item["item_start"], item["parent_id"] = None, True, section_id
+                previous = None
+                continue
+            item_id = f"item:{section_id}:{_slug(form['number'])}:form"
+            # Several boxes under one printed caption: the caption names the item.
+            caption = form.get("caption") if run_sizes[position] > 1 else None
+            item["item"] = {"id": item_id, "number": form["number"], "name": caption or "", "has_subfields": bool(caption)}
+            item["item_start"] = item_id != previous
+            item["parent_id"] = item_id
+            previous = item_id
             continue
         number, name, field_name, has_subfields = item_parts(item.get("group"), item["label"])
         item["field_name"] = display_label(field_name)
@@ -868,7 +1412,8 @@ def _apply_table_context(sections: list[dict[str, Any]]) -> list[dict[str, Any]]
             if label:
                 block.setdefault(label, item)
                 continue
-            if item["kind"] != "table":
+            if item["kind"] != "table" or item.get("form_table"):
+                # A form's own table sits among the form's boxes: nothing to repeat above it.
                 continue
             if block:
                 inherited = entries(block)
@@ -908,9 +1453,17 @@ def build_original_layout(
     structure: StructuredSourceDocument,
     metadata_rows: list[DocumentMetadataField],
     reviews: list[StructureRecordReview] | None = None,
+    forms: dict[int, FormPage] | None = None,
+    page_texts: dict[int, str] | None = None,
 ) -> dict[str, Any]:
+    """`forms`: the printed geometry of the document's form pages
+    (form_geometry.py). Without it, form boxes are numbered by their own
+    descriptions and unticked choices aren't shown."""
+
     by_key = {r.record_key: r for r in reviews or []}
-    candidates = [c for c in structure.field_candidates if _usable(c)]
+    forms = forms or {}
+    candidates = _drop_form_echoes([c for c in structure.field_candidates if _usable(c)])
+    candidates, form_infos, form_tables = _form_boxes(candidates, forms)
     headings = _section_headings(structure, candidates)
     # A heading is never a field: a blank "field" captioned with a heading's
     # own words is that heading read twice.
@@ -923,9 +1476,15 @@ def build_original_layout(
 
     # One reading-order stream of headings, fields and tables.
     stream: list[tuple[int, float, str, Any]] = [(p, y, "heading", (t, level)) for p, y, t, level in headings]
-    stream += [(c.page or 0, _y(c.label_bbox or c.value_bbox), "field", c) for c in candidates]
-    stream += [(t.page or 0, _y(t.bbox), "table", t) for t in tables]
+    # A ruled form's boxes keep the form's rows: by the box's top, then left to right.
+    stream += [
+        (c.page or 0, c.box_rect[1] + c.box_rect[0] / 1e4 if c.box_rect else _at(c.label_bbox or c.value_bbox, c.source_locator), "field", c)
+        for c in candidates
+    ]
+    stream += [(t.page or 0, _at(t.bbox, t.source_locator), "table", t) for t in tables]
+    stream += [(page, t.bbox[1], "formtable", t) for page, t in form_tables]
     stream.sort(key=lambda item: (item[0], item[1]))
+    stream = _order_form_runs(stream, form_infos)
 
     fields: list[_Field] = []
     sections: list[dict[str, Any]] = []
@@ -967,6 +1526,11 @@ def build_original_layout(
             if level == 1:
                 parent = title
             current = section(title, page, level)
+        elif kind == "formtable":
+            flush_tables()
+            if current is None:
+                current = section(None, page)
+            current["items"].append(("formtable", (page, item)))
         elif kind == "field":
             printed = (_norm(item.label_text), _norm(item.raw_value))
             if pending_tables and printed[1] and printed in printed_in_section and page > (pending_tables[-1].page or 0):
@@ -991,7 +1555,7 @@ def build_original_layout(
             else:
                 flush_tables()
                 pending_tables = [item]
-        last_kind = kind
+        last_kind = "field" if kind == "formtable" else kind
     flush_tables()
 
     unplaced = _match_metadata(fields, metadata_rows)
@@ -1031,22 +1595,53 @@ def build_original_layout(
         else:
             home["items"].append(("metadata", m))
 
+    # Pages read as ruled forms (raster boxes), and each page's printed lines.
+    box_form_pages = {c.page or 0 for c in candidates if c.structural_relation == "ruled_form_box"}
+    page_lines: dict[int, list[str]] = {}
+    for page, text in (page_texts or {}).items():
+        if page in box_form_pages:
+            # The page's own text, as the extractor read it, line by line and
+            # column by column: its readings are checked against it.
+            page_lines[page] = [normalize_space(part) for part in re.split(r"\n|\s{3,}", text) if part.strip()]
     out_sections = []
     tables_on_page: dict[int, int] = {}
     dropped_tables = 0
+    dropped_sources = 0
     artifacts = 0
+    form_repeats = 0
     for entry in sections:
         items = []
         for kind, value in entry["items"]:
             if kind == "field":
-                payload = _field_payload(value, by_key.get(value.record_key))
+                payload = _field_payload(value, by_key.get(value.record_key), form_infos.get(value.candidate.candidate_id))
                 # Left out of the view and exports; the record is untouched.
                 if _is_artifact(payload):
                     artifacts += 1
                     continue
+                form = forms.get(payload["page"] or 0)
+                if value.candidate.structural_relation == "form_widget" and _printed_echo(payload, form):
+                    # Shown blank, as printed; the reading stays on its record.
+                    payload["printed_echo"] = payload["effective_value"]
+                    payload["extracted_value"] = payload["effective_value"] = ""
+                wording = _form_wording(payload, value.candidate.structural_relation, form)
+                if wording:
+                    payload["form_duplicate"] = wording
+                    form_repeats += 1
                 items.append(payload)
             elif kind == "metadata":
-                items.append(_metadata_field_payload(value, placed_by_page=True))
+                payload = _metadata_field_payload(value, placed_by_page=True)
+                repeat = _form_repeat(payload, forms.get(payload["page"] or 0))
+                if repeat is None and (payload["page"] or 0) in box_form_pages:
+                    repeat = _box_form_repeat(payload, page_lines.get(payload["page"] or 0, []))
+                if repeat:
+                    # The text extractor's reading of the form itself. Kept
+                    # (Smart Review and review still see it); the Original
+                    # File shows the form's own boxes instead.
+                    payload["form_duplicate"] = repeat
+                    form_repeats += 1
+                items.append(payload)
+            elif kind == "formtable":
+                items.append(_form_table_payload(value[0], value[1], by_key))
             else:
                 page = value[0].page or 0
                 table_key = f"table:{page}:{tables_on_page.get(page, 0)}"
@@ -1054,8 +1649,18 @@ def build_original_layout(
                 # Keys are numbered before this check, so they stay stable.
                 if _is_broken_prose(value):
                     dropped_tables += 1
+                    dropped_sources += len(value)
                     continue
-                items.append(_table_payload(value, entry["title"], table_key, by_key))
+                payload = _table_payload(value, entry["title"], table_key, by_key)
+                form = forms.get(page)
+                if form is not None and value[0].bbox and sum(
+                    1 for b in form.boxes
+                    if value[0].bbox[0] <= b.center[0] <= value[0].bbox[2] and value[0].bbox[1] <= b.center[1] <= value[0].bbox[3]
+                ) >= 2:
+                    # The form's ruled cells read as a grid: its boxes are shown instead.
+                    payload["form_duplicate"] = {"code": "form_grid", "message": _FORM_REPEAT_MESSAGES["form_grid"]}
+                    form_repeats += 1
+                items.append(payload)
         # A printed contract part stays listed even with nothing of its own.
         if items or (has_parts and entry["level"] == 1):
             _apply_hierarchy(entry["id"], items)
@@ -1077,12 +1682,13 @@ def build_original_layout(
     for table in (i for s in out_sections for i in s["items"] if i["kind"] == "table"):
         _reconcile_context(table)
 
-    all_items = [i for s in out_sections for i in s["items"] if not i.get("placed_by_page")]
+    all_items = [i for s in out_sections for i in s["items"] if not i.get("placed_by_page") and not i.get("form_duplicate")]
     field_items = [i for i in all_items if i["kind"] == "field"]
     table_items = [i for i in all_items if i["kind"] == "table"]
     quality = {code: 0 for code in QUALITY_LABELS}
     for item in [i for s in out_sections for i in s["items"] if i["kind"] == "field"] + unplaced_items:
-        quality[item["quality"]] += 1
+        if not item.get("form_duplicate"):
+            quality[item["quality"]] += 1
     cell_issues = {UNREADABLE: 0, UNVERIFIED_OCR: 0}
     for table in table_items:
         for row in table["rows"]:
@@ -1106,8 +1712,11 @@ def build_original_layout(
             "placed_by_page": len(unplaced) - len(still_unplaced),
             # Headerless alignment "tables" that were paragraphs cut into columns.
             "tables_set_aside": dropped_tables,
+            "table_sources_set_aside": dropped_sources,
             # Empty "fields" with no printed label: reader artifacts, not shown.
             "artifacts_hidden": artifacts,
+            # Text-extractor rows that only repeat a form's boxes or wording.
+            "form_duplicates_hidden": form_repeats,
             "quality": quality,
             "cell_issues": cell_issues,
             "source_location": {
@@ -1175,5 +1784,29 @@ def original_layout_for(database: Session, document: Document) -> dict[str, Any]
     reviews = list(
         database.scalars(select(StructureRecordReview).where(StructureRecordReview.document_id == document.id))
     )
-    layout = build_original_layout(structure, metadata_rows, reviews)
+    box_pages = {c.page for c in structure.field_candidates if c.structural_relation == "ruled_form_box" and c.page}
+    page_texts = {
+        page.page_number: page.final_text or ""
+        for page in database.scalars(
+            select(DocumentPage).where(DocumentPage.document_id == document.id, DocumentPage.page_number.in_(box_pages))
+        )
+    } if box_pages else {}
+    layout = build_original_layout(structure, metadata_rows, reviews, _form_pages(document, structure), page_texts)
     return {"document_id": document.id, "source_type": structure.source_type, "pages": structure.stats.pages, **layout}
+
+
+def _form_pages(document: Document, structure: StructuredSourceDocument) -> dict[int, FormPage]:
+    """The printed geometry of the pages holding form boxes, filled or not."""
+
+    if structure.source_type != "pdf":
+        return {}
+    from app.core.config import get_settings
+    from app.services.document_storage import DocumentStorageError, ensure_local_copy
+
+    try:
+        path = ensure_local_copy(get_settings(), stored_filename=document.stored_filename)
+    except DocumentStorageError:
+        return {}
+    pages = {c.page for c in structure.field_candidates if c.structural_relation == "form_widget" and c.page}
+    pages |= form_box_pages(path)
+    return read_form_pages(path, pages) if pages else {}

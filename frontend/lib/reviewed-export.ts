@@ -51,6 +51,8 @@ export interface OraclePayloadPreview {
   authoritative_count: number;
   skipped_count: number;
   ready_to_send: boolean;
+  /** Whether this document type can become an Oracle Procurement record. */
+  oracle_scope?: { applicable: boolean; family: string | null; reason: string | null };
   actor?: {
     actor_id?: string;
     actor_type?: string;

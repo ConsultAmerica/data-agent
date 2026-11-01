@@ -1,0 +1,49 @@
+{
+  "description": "Field names that mean the same thing, for Oracle mapping suggestions. Each group is a list of names; add groups here or in the file named by ORACLE_MAPPING_ALIASES_PATH. These are source-side wordings only: target names always come from a registered template.",
+  "groups": [
+    [
+      "award amount",
+      "contract amount",
+      "total award amount",
+      "obligated amount",
+      "amount"
+    ],
+    [
+      "date issued",
+      "issue date",
+      "issued date"
+    ],
+    [
+      "issued by",
+      "issuing office",
+      "contracting office"
+    ],
+    [
+      "requisition purchase request",
+      "requisition number",
+      "purchase request number",
+      "pr number"
+    ],
+    [
+      "payment office",
+      "paying office",
+      "payment will be made by"
+    ],
+    [
+      "information contact",
+      "contact name",
+      "point of contact"
+    ],
+    [
+      "contact email",
+      "email",
+      "email address"
+    ],
+    [
+      "contact telephone",
+      "telephone",
+      "phone",
+      "phone number"
+    ]
+  ]
+}

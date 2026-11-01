@@ -79,7 +79,9 @@ export default function OracleSendConfirmModal({
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
           <ChecklistGroup title="Delivery checks" items={items.filter((item) => item.group === "system")} />
-          <ChecklistGroup title="Required header metadata" items={items.filter((item) => item.group === "metadata")} />
+          {items.some((item) => item.group === "metadata") && (
+            <ChecklistGroup title="Required header metadata" items={items.filter((item) => item.group === "metadata")} />
+          )}
           {!ready && (
             <p className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-foreground" role="status">
               <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
