@@ -147,7 +147,8 @@ def original_rows(layout: dict[str, Any]) -> list[Row]:
     if layout.get("unplaced"):
         sections.append({"title": "Extracted fields without a printed position", "level": 1, "items": layout["unplaced"]})
     for section in sections:
-        if not section["items"]:
+        # A section whose only items repeat the form's boxes isn't listed.
+        if not section["items"] or all(i.get("form_duplicate") for i in section["items"]):
             continue
         gap()
         title = section.get("title") or ""

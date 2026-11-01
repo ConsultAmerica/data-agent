@@ -293,3 +293,4 @@ function fallbackCrumbs(path: string): BreadcrumbCrumb[] {
 }
 
 export const SIDEBAR_COLLAPSED_KEY = "da-sidebar-collapsed";
+export const SIDEBAR_FOLDED_GROUPS_KEY = "da-sidebar-folded-groups";

@@ -270,3 +270,14 @@ def test_oracle_preview_never_sets_send_allowed() -> None:
     body = preview.json()
     assert body["send_allowed"] is False
     assert body["actor"]["can_send"] is True
+
+
+def test_oracle_scope_names_documents_procurement_cant_take() -> None:
+    from app.services.reviewed_export import oracle_scope
+
+    far = oracle_scope("far_regulation")
+    assert not far["applicable"] and "FAR regulation text" in far["reason"] and "Clause Library" in far["reason"]
+    assert not oracle_scope("passport")["applicable"]
+    assert not oracle_scope("bank_statement")["applicable"]
+    for family in ("government_contract", "invoice", "purchase_order", "correspondence", None):
+        assert oracle_scope(family) == {"applicable": True, "family": family, "reason": None}

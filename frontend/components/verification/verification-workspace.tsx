@@ -11,6 +11,7 @@ import DocumentAuditTrail from "@/components/review/document-audit-trail";
 import { MAPPING_LABEL, MAPPING_TONE, useOracleMappings } from "@/components/smart-view/oracle-status";
 import type { SourceViewRequest } from "@/components/source-verification-panel";
 import BusinessDataView from "@/components/verification/business-data-view";
+import DocumentCheckSummary from "@/components/verification/document-check-summary";
 import type { Density } from "@/components/verification/field-card";
 import RecordDetails from "@/components/verification/record-details";
 import ReviewSelectedBar from "@/components/verification/review-selected-bar";
@@ -519,6 +520,11 @@ function Workspace({
       </div>
 
       {error && <p className="mt-3 rounded-lg border border-danger/30 bg-danger/5 p-3 text-sm text-danger" role="alert">{error}</p>}
+
+      {!external && (
+        // Upload and extraction quality; reloads with the workspace's data.
+        <DocumentCheckSummary documentId={documentId} refreshKey={structure} onClassificationChanged={onClassificationChanged} />
+      )}
 
       {!external && (
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs" data-testid="review-counts">

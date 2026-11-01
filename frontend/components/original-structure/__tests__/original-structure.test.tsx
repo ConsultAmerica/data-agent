@@ -177,6 +177,36 @@ describe("OriginalStructureView", () => {
     expect(within(table).getByText("Not Selected")).toBeInTheDocument();
   });
 
+  it("hides a grid read over the form's cells, as the export does, and a section left with nothing", async () => {
+    const grid: LayoutTable = { kind: "table", id: "g", record_key: "table:1:0", title: "Form grid", headers: ["A", "B"],
+      headers_printed: false, pages: [1], continued: false, detection_method: "pdf_ruling_lines", row_count: 1,
+      form_duplicate: { code: "form_grid", message: "The form's boxes are shown instead" },
+      rows: [{ id: "r", record_key: "table:1:0:row:0", page: 1, cells: ["SHOULD NOT SHOW", "x"] }] };
+    const form: OriginalStructure = { ...data, unplaced: [], sections: [
+      { ...data.sections[0], items: [data.sections[0].items[0]] },
+      { id: "s9", title: "Only a form grid", page: 1, items: [grid] },
+    ] };
+    render(<OriginalStructureView documentId="d1" documentName="brief.pdf" pageCount={6} stagingProfileId={null} structure={form} />);
+    await screen.findAllByTestId("layout-field-grid");
+    expect(screen.queryByText("SHOULD NOT SHOW")).toBeNull();
+    expect(screen.queryByText("Only a form grid")).toBeNull();
+  });
+
+  it("keeps the printed label and says how it reads for the document's type", async () => {
+    const invoice: OriginalStructure = { ...data, unplaced: [], sections: [{ ...data.sections[0], items: [
+      field({ id: "po", label: "P.O. No.", field_name: "P.O. No.", document_value: "PO-7788", extracted_value: "PO-7788", effective_value: "PO-7788",
+        label_info: { printed: "P.O. No.", display: "Purchase Order Number", item_number: "", meaning: "Purchase Order Number", source: "alias", resolved: true } }),
+      field({ id: "bt", label: "Bill To", field_name: "Bill To", document_value: "Globex", extracted_value: "Globex", effective_value: "Globex",
+        label_info: { printed: "Bill To", display: "Bill To", item_number: "", meaning: "Customer", source: "printed", resolved: true } }),
+    ] }] };
+    render(<OriginalStructureView documentId="d1" documentName="invoice.pdf" pageCount={1} stagingProfileId={null} structure={invoice} />);
+    const names = await screen.findAllByTestId("field-name");
+    // The tab (and its Excel) shows the printed name; the tooltip how it reads.
+    expect(names.map((n) => n.textContent)).toEqual(["P.O. No.", "Bill To"]);
+    expect(names[0].getAttribute("title")).toContain("Reads as: Purchase Order Number");
+    expect(names[1].getAttribute("title")).toContain("Means: Customer");
+  });
+
   it("shows a table's contract once above it and marks cells worth a second look", async () => {
     renderView();
     const table = await screen.findByTestId("layout-table");

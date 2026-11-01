@@ -56,6 +56,7 @@ StructuralRelation = Literal[
     "form_fill_in",  # printed wording + value written into its blank
     "ruled_form_row",  # captions on the left, the value on a drawn underline at the right
     "table_key_value_grid",  # ruled grid of caption | value cells
+    "ruled_form_box",  # a box of a ruled form (W-2…): small caption at its top, the value under it
     "label_above_value",  # "Label:" with the value directly below
     "form_widget",  # PDF AcroForm field
     "html_label_for",  # <label for=…> → control
@@ -119,6 +120,10 @@ class FieldCandidate(BaseModel):
     ocr_confidence: float | None = None
     # The OCR passes disagreed on a word of the VALUE.
     ocr_contested: bool = False
+    # A ruled form box's printed code ("a", "1", "15"), from its caption,
+    # and the box itself (its fields keep the form's row order).
+    box_code: str | None = None
+    box_rect: BBox | None = None
 
 
 class TableCell(BaseModel):
@@ -175,6 +180,9 @@ class TableCandidate(BaseModel):
     extraction_method: str = "native"
     headers: list[str]
     header_cells: list[TableCell] = Field(default_factory=list)
+    # The table's own printed title (an HTML <caption>, or a title row
+    # spanning the table above its header row).
+    caption: str | None = None
     rows: list[list[TableCell]]
     column_hints: dict[int, list[ColumnHint]] = Field(default_factory=dict)
     total_row_indices: list[int] = Field(default_factory=list)

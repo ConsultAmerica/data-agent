@@ -303,6 +303,47 @@ def test_html_letterhead_heading_is_not_a_label():
     assert "Billed To" not in note.source_locator.section_path
 
 
+def test_html_fill_in_table_reads_its_label_row_as_the_header():
+    # FAR clause forms: a title row, the column labels in <td>s, then
+    # underscore lines to write on.
+    x = extract_html_structure(
+        b"<table><tbody>"
+        b"<tr><td colspan='3'>Required Delivery Schedule</td></tr>"
+        b"<tr><td colspan='3'>[Contracting Officer insert specific details]</td></tr>"
+        b"<tr><td>Item No.</td><td>Quantity</td><td>Within Days After Date of Contract</td></tr>"
+        b"<tr><td>________</td><td>________</td><td>[insert]</td></tr>"
+        b"<tr><td>________</td><td>________</td><td>________</td></tr>"
+        b"</tbody></table>"
+        b"<table><thead><tr><th>Line Item No.</th><th>Country of Origin</th></tr></thead>"
+        b"<tbody><tr><td>__________</td><td>__________</td></tr></tbody></table>"
+        b"<table><tr><td>Line Item No.</td><td>Country of Origin</td></tr>"
+        b"<tr><td>CLIN 0001</td><td>Canada</td></tr></table>"
+    )
+    schedule, printed, filled = x.tables
+    assert schedule.headers == ["Item No.", "Quantity", "Within Days After Date of Contract"]
+    assert schedule.header_cells and schedule.acceptance == "accepted"
+    assert schedule.caption == "Required Delivery Schedule — [Contracting Officer insert specific details]"
+    assert [c.text for c in schedule.rows[1]] == ["", "", ""]
+    # Blank lines are empty cells, never values.
+    assert [c.text for c in printed.rows[0]] == ["", ""]
+    # A label row over real values stays a row: nothing says it is a header.
+    assert not filled.header_cells
+    assert [c.text for c in filled.rows[1]] == ["CLIN 0001", "Canada"]
+
+
+def test_html_items_carry_document_order_so_tables_stay_under_their_heading():
+    from app.source_structure.original_layout import _at
+
+    x = extract_html_structure(
+        b"<h2>52.211-8 Time of Delivery.</h2><table><tr><th>Item No.</th></tr><tr><td>1</td></tr></table>"
+        b"<h2>52.211-9 Desired Time of Delivery.</h2><table><tr><th>Item No.</th></tr><tr><td>2</td></tr></table>"
+    )
+    first, second = (r for r in x.regions if r.region_type == "HEADING")
+    table_a, table_b = x.tables
+    order = [_at(None, item.source_locator) for item in (first, table_a, second, table_b)]
+    assert order == sorted(order) and len(set(order)) == 4
+
+
 # --- HTML fixtures A–E ----------------------------------------------------------
 
 

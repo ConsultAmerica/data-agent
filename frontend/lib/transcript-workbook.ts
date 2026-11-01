@@ -112,6 +112,7 @@ const METHOD_WORDS: Record<string, string> = {
   same_line_filler: "Same-line field",
   form_fill_in: "Form field",
   table_key_value_grid: "Form grid",
+  ruled_form_box: "Form box",
   label_above_value: "Label above value",
   html_label_for: "HTML form label",
   html_definition_list: "HTML definition list",

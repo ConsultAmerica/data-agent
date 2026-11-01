@@ -292,6 +292,7 @@ async def oracle_payload_preview(
         fields=fields,
         dry_run=bool(settings.oracle_dry_run),
     )
+    preview["oracle_scope"] = _scope(database, document_id)
     # Send gate: preview never authorizes send by itself.
     preview["send_allowed"] = False
     preview["actor"] = {
@@ -301,6 +302,14 @@ async def oracle_payload_preview(
         "can_send": actor.has("oracle.send"),
     }
     return preview
+
+
+def _scope(database: Session, document_id: str) -> dict:
+    from app.classification.service import current
+    from app.services.reviewed_export import oracle_scope
+
+    row = current(database, document_id)
+    return oracle_scope(row.family if row is not None else None)
 
 
 @router.post("/{document_id}/oracle-send")
@@ -339,6 +348,10 @@ async def oracle_send(
         fields=fields,
         dry_run=bool(settings.oracle_dry_run),
     )
+
+    scope = _scope(database, document_id)
+    if not scope["applicable"]:
+        raise HTTPException(status_code=409, detail=scope["reason"])
 
     if preview["authoritative_count"] == 0:
         raise HTTPException(

@@ -62,6 +62,16 @@ export interface LayoutField {
   group: string | null;
   /** The label as printed. */
   label: string;
+  /** The label recognized for the document's type (app/document_validation/labels.py):
+   * the printed wording is kept in `printed`. */
+  label_info?: {
+    printed: string;
+    display: string;
+    item_number: string;
+    meaning: string | null;
+    source: "form" | "alias" | "abbreviation" | "printed" | "technical" | "missing";
+    resolved: boolean;
+  };
   /** The value as printed on the page (null: not placed in the layout). */
   document_value: string | null;
   blank: boolean;
@@ -180,6 +190,8 @@ export interface LayoutTable {
   headers_printed: boolean;
   pages: number[];
   continued: boolean;
+  /** A grid read over a form's ruled cells: the form's own boxes are shown instead. */
+  form_duplicate?: { code: string; message: string };
   detection_method: string;
   rows: LayoutTableRow[];
   row_count: number;

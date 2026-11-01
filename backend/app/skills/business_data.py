@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import re
 from typing import Any
 
+from app.document_validation.association import label_vocabulary, looks_like_label, shared_identifier_issues
 from app.skills.definitions import FieldSpec, Skill, TableSpec
 from app.skills.registry import skill_for_family
 from app.skills.values import normalized, parse_date, parse_money
@@ -86,10 +87,14 @@ def _table_score(headers: list[str], spec: TableSpec) -> int:
     return sum(1 for h in headers if normalized(h) in columns)
 
 
+# A month and year dates a clause or a period ("NOV 2021", "June 2024").
+_MONTH_YEAR = re.compile(r"^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}$", re.I)
+
+
 def _type_check(spec: FieldSpec, value: str) -> str | None:
     if not value:
         return None
-    if spec.type == "date" and parse_date(value) is None:
+    if spec.type == "date" and parse_date(value) is None and not _MONTH_YEAR.match(value.strip()):
         return "invalid_date"
     if spec.type in ("currency", "number") and parse_money(value) is None:
         return "invalid_number"
@@ -108,7 +113,11 @@ ISSUE_MESSAGES = {
     "invalid_identifier": "The value doesn't match the identifier's format",
     "repeating_record": "Printed for several records; each value is kept",
     "repeated_in_other_sections": "Also printed elsewhere in the document for another record",
+    "value_is_label": "The value read is a label, not a value: the value is likely in another box",
+    "shared_identifier": "Has the same value as another identifier: one was likely read from the other's box",
 }
+# Issues that make which value belongs to the field uncertain.
+_AMBIGUOUS = {"conflicting_values", "value_is_label", "shared_identifier", "layout_flags"}
 
 
 def _plausible(spec: FieldSpec, value: str) -> bool:
@@ -144,13 +153,28 @@ def _candidate(record: _Record) -> dict[str, Any]:
     }
 
 
-def _field_result(spec: FieldSpec, records: list[_Record]) -> dict[str, Any]:
+def _association(issues: list[str], chosen: dict[str, Any] | None) -> str:
+    """confirmed (a person decided), matched, needs_review (which value
+    belongs here is uncertain) or unresolved (no value)."""
+
+    if chosen is None:
+        return "unresolved"
+    if chosen["review_status"] in _REVIEWED:
+        return "confirmed"
+    return "needs_review" if _AMBIGUOUS & set(issues) else "matched"
+
+
+def _field_result(spec: FieldSpec, records: list[_Record], vocabulary: set[str] | frozenset[str] = frozenset()) -> dict[str, Any]:
     candidates = [_candidate(r) for r in records]
-    with_value = [c for c in candidates if c["value"] and _plausible(spec, c["value"])]
+    # A label read as a value is kept as a candidate, never chosen.
+    label_values = [c for c in candidates if c["value"] and looks_like_label(c["value"], vocabulary)]
+    with_value = [c for c in candidates if c["value"] and _plausible(spec, c["value"]) and c not in label_values]
     chosen = next((c for c in with_value if c["review_status"] in _REVIEWED), None) or (with_value[0] if with_value else None)
     issues: list[str] = []
     if spec.required and not with_value:
         issues.append("missing_required")
+    if label_values:
+        issues.append("value_is_label")
     if len(with_value) > _REPEATING:
         issues.append("repeating_record")
     elif with_value:
@@ -176,6 +200,8 @@ def _field_result(spec: FieldSpec, records: list[_Record]) -> dict[str, Any]:
         validation = "missing" if spec.required else "not_found"
     elif "missing_required" in issues or type_issue or "conflicting_values" in issues:
         validation = "failed"
+    elif "value_is_label" in issues and not chosen:
+        validation = "failed"
     elif set(issues) - {"repeating_record", "repeated_in_other_sections", "duplicate_candidates"}:
         validation = "warning"
     elif chosen:
@@ -198,6 +224,7 @@ def _field_result(spec: FieldSpec, records: list[_Record]) -> dict[str, Any]:
         "confidence": chosen["confidence"] if chosen else None,
         "validation_status": validation,
         "review_status": chosen["review_status"] if chosen else None,
+        "association": _association(issues, chosen),
         "issues": [{"code": code, "message": ISSUE_MESSAGES[code], "source": "field"} for code in issues if code in ISSUE_MESSAGES]
         + [{**flag, "source": "layout"} for c in candidates for flag in c["layout_flags"]],
         "candidates": candidates,
@@ -258,10 +285,19 @@ def build_business_data(layout: dict[str, Any], classification: dict[str, Any]) 
         other = [_candidate(r) for r in records if r.section is None]
         return {**base, "sections": sections, "other": {"values": other, "tables": []}, "issues": [], "stats": _stats(sections, other)}
 
+    vocabulary = label_vocabulary(layout)
     by_spec: dict[str, list[_Record]] = {}
     unclaimed: list[_Record] = []
     for record in records:
+        # The printed label first; then as the document type writes it out
+        # ("P.O. No." → Purchase Order Number) or what it means ("Bill To"
+        # → Customer). The printed label stays on the record.
+        # (label_info: annotate_labels, run by every caller before this.)
+        info = record.item.get("label_info") or {}
         spec = _best_spec(record.label, skill)
+        for alternative in (info.get("display"), info.get("meaning")):
+            if spec is None and alternative and alternative != record.label:
+                spec = _best_spec(alternative, skill)
         if spec is None:
             unclaimed.append(record)
         else:
@@ -281,7 +317,7 @@ def build_business_data(layout: dict[str, Any], classification: dict[str, Any]) 
 
     sections = []
     for section in skill.sections:
-        fields = [_field_result(spec, by_spec.get(spec.key, [])) for spec in section.fields]
+        fields = [_field_result(spec, by_spec.get(spec.key, []), vocabulary) for spec in section.fields]
         section_tables = [
             _table_out(table, source, spec.label)
             for spec in section.tables for table, source in claimed_tables.get(spec.key, [])
@@ -292,6 +328,16 @@ def build_business_data(layout: dict[str, Any], classification: dict[str, Any]) 
     from app.skills.validation import cross_field_issues
 
     values = {f["key"]: f for s in sections for f in s["fields"]}
+    for key, others in shared_identifier_issues(list(values.values())).items():
+        field = values[key]
+        field["issues"].append({
+            "code": "shared_identifier", "source": "field",
+            "message": f"Has the same value as {', '.join(others)}: one was likely read from the other's box",
+        })
+        if field["association"] == "matched":
+            field["association"] = "needs_review"
+        if field["validation_status"] == "passed":
+            field["validation_status"] = "warning"
     return {
         **base,
         "sections": sections,

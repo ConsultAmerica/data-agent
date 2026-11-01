@@ -490,6 +490,40 @@ def _raster_grid_table(
 
     x_rules = grid.columns
     x0, top, x1, bottom = grid.bbox
+    cell_words = getattr(grid, "box_words", None)
+    cell_boxes = getattr(grid, "cell_boxes", None)
+    if cell_words and cell_boxes:
+        # Each ruled cell was read on its own (form_box_ocr): its words
+        # replace the page pass's there; a cell its crop couldn't read (a
+        # dark header band) keeps the page's words.
+        page_lines = lines
+        words: list[Word] = []
+        header_bottom = min(cy1 for _, _, _, cy1 in cell_boxes)
+        for index, (cx0, cy0, cx1, cy1) in enumerate(cell_boxes):
+            own = cell_words.get(index)
+            # The first row's printed column names the page pass reads well
+            # (often light on a dark band, which a crop reads worse).
+            header = cy1 <= header_bottom + 0.5
+            page_own = [
+                w for line in page_lines for seg in line.free_segments for w in seg.words
+                if cx0 <= (w.x0 + w.x1) / 2 <= cx1 and cy0 <= (w.y0 + w.y1) / 2 <= cy1
+            ]
+            # A cell the page pass found empty, whose crop reads only short
+            # scraps without a figure ("ene - in", "i"), holds specks of its
+            # rules, not text.
+            specks = bool(own) and not page_own and all(
+                len(w.text) <= 3 and not any(ch.isdigit() for ch in w.text) for w in own
+            )
+            if own and not specks and not (header and page_own):
+                words.extend(own)
+                continue
+            words.extend(page_own)
+        for line in page_lines:
+            for seg in line.segments:
+                sx0, sy0, sx1, sy1 = seg.bbox
+                if x0 - 2 <= (sx0 + sx1) / 2 <= x1 + 2 and top - 1 <= (sy0 + sy1) / 2 <= bottom + 2:
+                    seg.used = True
+        lines = build_lines(words)
 
     def column_of(word: Word) -> int | None:
         centre = (word.x0 + word.x1) / 2
@@ -589,6 +623,206 @@ def _raster_grid_table(
             if x0 - 2 <= (sx0 + sx1) / 2 <= x1 + 2:
                 seg.used = True
     return table, regions
+
+
+# A form box's printed code before its caption: "a Employee's SSN",
+# "1 Wages, tips, other comp.", "15 State", "12a See instructions".
+_BOX_CODE = re.compile(r"^(?P<code>[a-z]|[\dlIL]{1,2}[a-z]?)[.)]?\s+(?P<name>\S.*)$")
+
+
+def _box_code(caption: str) -> str | None:
+    """A caption's box code, with OCR's 1-for-l/I/L slips mended inside a
+    number ("L7" is box 17); a lone letter stays a letter code ("a")."""
+
+    match = _BOX_CODE.match(caption)
+    if not match:
+        return None
+    code = match.group("code")
+    if any(ch.isdigit() for ch in code):
+        code = re.sub(r"[lIL]", "1", code)
+    elif len(code) > 1 or not code.islower():
+        return None
+    return code
+_VALUE_EDGE = re.compile(r"^[\s—–\-|:]+|[\s—–\-|:]+$")
+
+
+def _box_rows(lines: list[Line], box: BBox) -> list[list[Segment]]:
+    """The segments of `lines` inside `box`, row by row, top to bottom."""
+
+    bx0, by0, bx1, by1 = box
+    rows: list[list[Segment]] = []
+    for line in lines:
+        inside = [
+            seg for seg in line.segments
+            if bx0 + 1 <= (seg.bbox[0] + seg.bbox[2]) / 2 <= bx1 - 1
+            and by0 + 1 <= (seg.bbox[1] + seg.bbox[3]) / 2 <= by1 - 1
+        ]
+        if inside:
+            rows.append(sorted(inside, key=lambda seg: seg.bbox[0]))
+    rows.sort(key=lambda row: min(seg.bbox[1] for seg in row))
+    return rows
+
+
+def _read_box(
+    rows: list[list[Segment]], box: BBox, columns: list[tuple[float, float]] | None = None
+) -> tuple[list[tuple[str, str, list[Word], list[Word]]], list[tuple[float, float]]]:
+    """(caption, value, caption words, value words) for each field a box
+    holds, and the box's columns: its leading rows set smaller than the rest
+    are the caption; two captions printed side by side ("e Employee's name
+    f Employee's address") split the box at the second. `columns` imposes a
+    split read from another pass."""
+
+    if not rows:
+        return [], []
+    bx0, _, bx1, _ = box
+
+    def height(row: list[Segment]) -> float:
+        sizes = sorted(w.y1 - w.y0 for seg in row for w in seg.words)
+        return sizes[len(sizes) // 2] if sizes else 0.0
+
+    tallest = max(height(row) for row in rows)
+    caption_rows = 0
+    while caption_rows < len(rows) and height(rows[caption_rows]) < 0.8 * tallest:
+        caption_rows += 1
+    captions, values = rows[: max(1, caption_rows)], rows[max(1, caption_rows):]
+    if columns is None:
+        first = captions[0]
+        starts = [bx0] + [seg.bbox[0] - 2 for seg in first[1:] if _box_code(seg.text.strip())]
+        if len(starts) > 1 and _box_code(first[0].text.strip()):
+            columns = list(zip(starts, starts[1:] + [bx1]))
+        else:
+            columns = [(bx0, bx1)]
+    out = []
+    for cx0, cx1 in columns:
+        def within(seg: Segment) -> list[Word]:
+            return [w for w in seg.words if cx0 <= (w.x0 + w.x1) / 2 < cx1]
+
+        label_words = [w for row in captions for seg in row for w in within(seg)]
+        value_words = [w for row in values for seg in row for w in within(seg)]
+        caption = normalize_space(" ".join(w.text for w in label_words))
+        value = _VALUE_EDGE.sub("", normalize_space(" ".join(w.text for w in value_words)))
+        out.append((caption, value, label_words, value_words))
+    return out, columns
+
+
+def _edits(a: str, b: str) -> int:
+    previous = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        current = [i]
+        for j, cb in enumerate(b, 1):
+            current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (ca != cb)))
+        previous = current
+    return previous[-1]
+
+
+_MONEY = re.compile(r"^[$€£]\d{1,3}(?:,\d{3})*(?:\.\d{2})?$")
+_CLEAN_FIGURE = re.compile(r"^\d{1,3}(?:,\d{3})*(?:\.\d{2})?$|^\d+(?:[-/.]\d+)+$")
+
+
+def reconcile_box_value(readings: list[str], page_text: str) -> tuple[str, bool]:
+    """One value from a box's independent OCR readings (its own crop first,
+    then the page pass) and the page's text, and whether they disagree.
+
+    A reading the page text also holds, or holds in a near-identical form
+    ("586,420.00" beside "$86,420.00"), gains support; among equals a clean
+    amount with its currency sign wins, then the box's own reading.
+    Disagreement is reported, never hidden: the value goes to review."""
+
+    readings = [normalize_space(r) for r in readings if r and r.strip()]
+    if not readings:
+        return "", False
+    chunks = {normalize_space(c) for c in re.split(r"\s{2,}|\n", page_text or "") if c.strip()}
+    support: dict[str, int] = {}
+    for reading in readings:
+        support[reading] = support.get(reading, 0) + 1
+    for reading in list(dict.fromkeys(readings)):
+        limit = max(1, len(reading) // 8)
+        for chunk in chunks:
+            if abs(len(chunk) - len(reading)) <= limit and _edits(reading, chunk) <= limit:
+                support[chunk] = support.get(chunk, 0) + 1
+
+    def rank(candidate: str) -> tuple[int, int, int]:
+        shape = 2 if _MONEY.match(candidate) else 1 if _CLEAN_FIGURE.match(candidate) else 0
+        order = -readings.index(candidate) if candidate in readings else -len(readings)
+        return support[candidate], shape, order
+
+    best = max(support, key=rank)
+    return best, len(support) > 1
+
+
+def _raster_form_fields(
+    ids: "_Ids",
+    page_number: int,
+    lines: list[Line],
+    boxes: list[BBox],
+    extraction_method: str,
+    box_words: dict[int, list[Word]] | None = None,
+    page_text: str = "",
+) -> list[FieldCandidate]:
+    """The boxes of a ruled form on a raster page, each read as its caption
+    (the small print at the box's top) and its value (what's written under
+    it), in reading order. Each box's own OCR (box_words, form_box_ocr) is
+    read first; the page pass's words in the box are a second reading of
+    its value. An empty box is kept with a blank value: it was printed."""
+
+    fields: list[FieldCandidate] = []
+    for index, box in enumerate(boxes):
+        page_rows = _box_rows(lines, box)
+        for row in page_rows:
+            for seg in row:
+                seg.used = True
+        own = box_words.get(index) if box_words else None
+        primary, columns = _read_box(_box_rows(build_lines(own), box), box) if own else ([], [])
+        second, page_columns = _read_box(page_rows, box)
+        if len(columns) == 1 and len(page_columns) > 1:
+            # The page pass read the box's two captions; its own crop blurred
+            # a code ("e" as "@"): split its reading where the page pass did.
+            primary, columns = _read_box(_box_rows(build_lines(own), box), box, page_columns)
+        if not any(caption for caption, *_ in primary):
+            primary, second = second, []
+        for position, (caption, value, label_words, value_words) in enumerate(primary):
+            if not caption:
+                continue
+            aligned = second[position] if len(second) == len(primary) else None
+            code = _box_code(caption)
+            if code is None and aligned is not None and _box_code(aligned[0]):
+                # Its crop blurred the code ("'@ Employee's name"); the page
+                # pass read it: that code, the crop's caption words.
+                # A letter left in the blur ("'=f") is the code; else the
+                # page pass's.
+                blurred = re.match(r"^\W*([a-z])?\W*\s+(?=\w)", caption)
+                code = blurred.group(1) if blurred and blurred.group(1) else _box_code(aligned[0])
+                caption = f"{code} {caption[blurred.end():] if blurred else caption}"
+            elif code is not None:
+                # The mended code in place of its OCR spelling ("L7" → "17").
+                caption = f"{code} {_BOX_CODE.match(caption).group('name')}"
+            readings = [value]
+            if aligned is not None and aligned[1]:
+                readings.append(aligned[1])
+            disagree = False
+            if value:
+                value, disagree = reconcile_box_value(readings, page_text)
+            field = _field(
+                ids, page_number, caption, value, "ruled_form_box",
+                _union([(w.x0, w.y0, w.x1, w.y1) for w in label_words]),
+                _union([(w.x0, w.y0, w.x1, w.y1) for w in value_words]) if value_words else None,
+                f"{caption} {value}".strip(), extraction_method,
+            )
+            field.box_code = code
+            field.box_rect = box
+            # Its place makes it a label (small print at the top of a ruled
+            # box): only the value's own checks apply.
+            field.reasons = [r for r in field.reasons if not r.startswith("label_")]
+            if not value and field.reasons == ["empty_value"]:
+                field.reasons = []  # a printed box left empty: a blank value
+            field.acceptance = "rejected" if field.reasons else "accepted"
+            if disagree:
+                field.ocr_contested = True
+                field.quality_flags.append("ocr_readings_disagree")
+            known = [w.conf for w in value_words if w.conf is not None]
+            field.ocr_confidence = min(known) if known else None
+            fields.append(field)
+    return fields
 
 
 def _key_value_grid_fields(ids: "_Ids", page_number: int, table: TableCandidate, extraction_method: str) -> list[FieldCandidate] | None:
@@ -1679,6 +1913,10 @@ def _ocr_contested(words: list[Word], bbox) -> bool:
 
 def _assign_ocr_confidence(result: "PageStructure", words: list[Word]) -> None:
     for field in result.fields:
+        if field.structural_relation == "ruled_form_box":
+            # Read from the box's own OCR and reconciled with the page pass
+            # (_raster_form_fields): its own confidence and disagreement stand.
+            continue
         field.ocr_confidence = _min_ocr_confidence(words, field.value_bbox)
         field.ocr_contested = _ocr_contested(words, field.value_bbox)
     for table in result.tables:
@@ -1875,8 +2113,21 @@ def _extract_structure(
     # 1b. Ruled tables printed on a raster (OCR) page — from the image's own
     # column rules. Claimed before any label/value pairing, so table cells
     # never become scalar fields.
+    # A grid whose dividers change from row to row is a form of boxes, read
+    # box by box (caption over value), never as a table.
+    form_box_fields: list[FieldCandidate] = []
     for grid in raster_grids or []:
-        built = _raster_grid_table(ids, page_number, lines, grid, extraction_method, page_text)
+        boxes = grid.form_boxes() if hasattr(grid, "form_boxes") else None
+        if boxes:
+            form_box_fields.extend(_raster_form_fields(
+                ids, page_number, lines, boxes, extraction_method,
+                box_words=getattr(grid, "box_words", None), page_text=getattr(grid, "page_text", ""),
+            ))
+            continue
+        # Cut to its ruled frame: a screenshot's page edges and toolbar
+        # aren't columns of the table.
+        framed = grid if getattr(grid, "cell_boxes", None) or not hasattr(grid, "framed") else grid.framed()
+        built = _raster_grid_table(ids, page_number, lines, framed, extraction_method, page_text)
         if built is not None:
             table, regions = built
             result.tables.append(table)
@@ -1931,7 +2182,7 @@ def _extract_structure(
 
     # 4. Separator-less pairs, only from what no table claimed.
     fields.extend(_loose_label_value_candidates(ids, page_number, lines, extraction_method))
-    fields[:0] = grid_fields
+    fields[:0] = form_box_fields + grid_fields
     _rescue_form_captions(fields)
 
     for f in fields:
@@ -1952,5 +2203,8 @@ def _extract_structure(
     result.regions.extend(_group_key_values(ids, page_number, fields))
     result.regions.extend(_text_regions(ids, page_number, lines, extraction_method))
     if extraction_method == "ocr":
-        _assign_ocr_confidence(result, words)
+        # Words read from a box's or cell's own crop count too: a value
+        # taken from one carries that reading's confidence.
+        cropped = [w for grid in raster_grids or [] for ws in (getattr(grid, "box_words", None) or {}).values() for w in ws]
+        _assign_ocr_confidence(result, words + cropped)
     return result

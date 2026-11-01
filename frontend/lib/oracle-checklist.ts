@@ -49,14 +49,29 @@ function headerValue(header: Record<string, string>, keys: string[]): string | n
 }
 
 export function buildOracleChecklist(preview: OraclePayloadPreview): OracleChecklistItem[] {
+  const role: OracleChecklistItem = {
+    id: "role",
+    group: "system",
+    label: "Your role can send to Oracle",
+    passed: preview.actor?.can_send === true,
+    detail: preview.actor?.can_send === true ? "oracle.send granted" : "Preview only — ask an administrator for oracle.send.",
+  };
+  // A document Oracle Procurement has no record for (FAR regulation text, an
+  // ID, a bank statement): say that once, not four header checks it can never pass.
+  if (preview.oracle_scope && !preview.oracle_scope.applicable) {
+    return [
+      role,
+      {
+        id: "scope",
+        group: "system",
+        label: "Document type can go to Oracle Procurement",
+        passed: false,
+        detail: preview.oracle_scope.reason ?? "This document type isn't sent to Oracle Procurement.",
+      },
+    ];
+  }
   const system: OracleChecklistItem[] = [
-    {
-      id: "role",
-      group: "system",
-      label: "Your role can send to Oracle",
-      passed: preview.actor?.can_send === true,
-      detail: preview.actor?.can_send === true ? "oracle.send granted" : "Preview only — ask an administrator for oracle.send.",
-    },
+    role,
     {
       id: "clean-review",
       group: "system",

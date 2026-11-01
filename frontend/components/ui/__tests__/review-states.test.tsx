@@ -52,16 +52,19 @@ describe("stageChecklist", () => {
   it("lists only the processing job's real stages, marking done and current", () => {
     const items = stageChecklist("indexing", [
       { stage: "reading_document", at: "t1" },
-      { stage: "rendering_ocr", at: "t2" },
-      { stage: "indexing", at: "t3" },
+      { stage: "verifying_file", at: "t2" },
+      { stage: "rendering_ocr", at: "t3" },
+      { stage: "indexing", at: "t4" },
     ]);
     expect(items.map((item) => [item.stage, item.status])).toEqual([
       ["reading_document", "done"],
+      ["verifying_file", "done"],
       ["rendering_ocr", "done"],
       ["indexing", "current"],
       ["discovering_fields", "pending"],
+      ["classifying", "pending"],
     ]);
-    expect(items[3].label).toBe("Discovering fields, CLIN schedules and tables");
+    expect(items[4].label).toBe("Discovering fields, CLIN schedules and tables");
   });
 
   it("switches to the extraction job's stages and finishes on complete", () => {

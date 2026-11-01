@@ -28,6 +28,9 @@ _LAYOUT_KIND = {
     "cell_column_mismatch": "invalid_cell",
 }
 
+# Field issues reported under another kind.
+_FIELD_KIND = {"value_is_label": "incorrect_association", "shared_identifier": "incorrect_association"}
+
 KIND_LABELS = {
     "missing_required": "Missing required fields",
     "missing_value": "Values extraction missed",
@@ -131,11 +134,14 @@ def validation_summary(business: dict[str, Any], layout: dict[str, Any]) -> dict
                 code = issue["code"]
                 if issue.get("source") == "layout" or code in ("repeating_record", "repeated_in_other_sections"):
                     continue  # layout flags are reported once, below
+                kind = _FIELD_KIND.get(code, code)
                 issues.append({
-                    "kind": code,
-                    "severity": _SEVERITY.get(code, "warning"),
+                    "kind": kind,
+                    "code": code,
+                    "severity": _SEVERITY.get(kind, "warning"),
                     "message": f"{field['label']}: {issue['message']}",
                     "fields": [field["key"]],
+                    "association": field.get("association"),
                     "values": {field["key"]: field["value"]} if field["value"] else {},
                     "candidates": [c["value"] for c in field["candidates"] if c["value"]],
                     "record_keys": [c["record_key"] for c in field["candidates"]],
@@ -174,6 +180,11 @@ def validation_summary(business: dict[str, Any], layout: dict[str, Any]) -> dict
                             "page": row.get("page"),
                             "section": section["title"],
                         })
+    # Values read from the wrong box, for records no skill field checks.
+    from app.document_validation.association import layout_association_issues
+
+    flagged = {key for i in issues for key in i.get("record_keys") or []}
+    issues.extend(i for i in layout_association_issues(layout, business) if not flagged & set(i["record_keys"]))
     groups = []
     for kind, label in KIND_LABELS.items():
         found = [i for i in issues if i["kind"] == kind]

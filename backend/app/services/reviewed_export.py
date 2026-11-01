@@ -582,6 +582,47 @@ def build_export_xlsx(
     return buffer.getvalue()
 
 
+# Families that are FAR regulation text, not a procurement record.
+_FAR_FAMILIES = frozenset({"far_regulation", "far_regulatory_change", "xml_data"})
+# Document classes a Procurement payload (contract / invoice / PO header) is
+# built from. A General Document keeps the header checks: it may be one.
+_NOT_PROCUREMENT = {
+    "bank_statement": "a bank statement",
+    "financial_statement": "a financial statement",
+    "identity": "an identity document",
+    "academic": "an academic document",
+}
+
+
+def oracle_scope(family: str | None) -> dict[str, Any]:
+    """Whether a Procurement payload can be built from this document type,
+    and if not, why — said once, instead of header checks it can never pass."""
+
+    from app.classification.document_class import document_class_for_family
+
+    if family in _FAR_FAMILIES:
+        return {
+            "applicable": False,
+            "family": family,
+            "reason": (
+                "This is FAR regulation text, not a contract, invoice or purchase order, so it has no "
+                "contract number, counterparty, award date or amount to send to Oracle Procurement. "
+                "Its clauses go to Oracle's Contract Clause Library: use the FAR clause export instead."
+            ),
+        }
+    document_class = document_class_for_family(family)
+    if document_class in _NOT_PROCUREMENT:
+        return {
+            "applicable": False,
+            "family": family,
+            "reason": (
+                f"This is {_NOT_PROCUREMENT[document_class]}, not a contract, invoice or purchase order: "
+                "Oracle Procurement has no record to create from it."
+            ),
+        }
+    return {"applicable": True, "family": family, "reason": None}
+
+
 def build_oracle_payload_preview(
     *,
     document: Document,

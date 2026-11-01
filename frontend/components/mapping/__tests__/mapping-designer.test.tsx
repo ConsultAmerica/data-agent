@@ -132,6 +132,10 @@ describe("Mapping designer — Oracle Fusion mapping workspace", () => {
   });
 
   it("activates a saved draft profile for use", async () => {
+    vi.mocked(getTemplate).mockResolvedValue({
+      ...TEMPLATE,
+      catalog: { ...TEMPLATE.catalog!, verified: true, status: "verified", status_label: "Verified", status_reason: null },
+    });
     vi.mocked(listProfiles).mockResolvedValue([profile()]);
     vi.mocked(profileAction).mockResolvedValue(profile({ status: "active", approved_by: "Reviewer" }));
     render(<MappingDesigner />);
@@ -139,6 +143,21 @@ describe("Mapping designer — Oracle Fusion mapping workspace", () => {
     await waitFor(() => expect(profileAction).toHaveBeenCalledWith(3, "activate"));
     expect(await screen.findByText(/approved and active/)).toBeInTheDocument();
     expect(screen.getByTestId("profile-status")).toHaveTextContent("Active · v2");
+  });
+
+  it("holds Activate until the target is verified, and links to setting the target up", async () => {
+    vi.mocked(getTemplate).mockResolvedValue({
+      ...TEMPLATE,
+      catalog: { ...TEMPLATE.catalog!, application: null, integration_method: null, status_reason: "Its Oracle application and integration method aren't set." },
+    });
+    vi.mocked(listProfiles).mockResolvedValue([profile()]);
+    render(<MappingDesigner />);
+    const activate = await screen.findByRole("button", { name: /Activate/ });
+    expect(activate).toBeDisabled();
+    expect(activate).toHaveAttribute("title", expect.stringContaining("aren't set"));
+    expect(screen.getByTestId("set-up-target")).toHaveTextContent("Set up the target");
+    expect(screen.getByTestId("set-up-target")).toHaveAttribute("href", "/mapping?template=7");
+    expect(profileAction).not.toHaveBeenCalled();
   });
 
   it("asks for a target when none is chosen, and says when none is configured", async () => {

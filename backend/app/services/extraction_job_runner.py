@@ -5,6 +5,8 @@ import time
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
 
+import logging
+
 from app.core.config import get_settings
 from app.core.observability import bind_job_context, log_event
 from app.database.session import SessionLocal
@@ -58,6 +60,9 @@ EMPTY_STRUCTURES_WARNING = (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 def run_in_worker_thread(job_runner, *args) -> None:
     """BackgroundTasks entry point for the async job runners below.
 
@@ -107,6 +112,26 @@ def _append_stage(job: ExtractionJob, stage: str) -> None:
     job.stage = stage
 
 
+class FileVerificationError(Exception):
+    """The stored file failed verification (corrupt, password-protected,
+    not what its extension says): retrying won't help."""
+
+
+# Why a job failed, from the error: (reason, retryable).
+def failure_reason(exc: Exception) -> tuple[str, bool]:
+    if isinstance(exc, FileVerificationError):
+        return "file_invalid", False
+    if isinstance(exc, DocumentStorageError):
+        return "source_unavailable", True
+    if isinstance(exc, DocumentExtractionError):
+        return "extraction_failed", True
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return "timeout", True
+    if isinstance(exc, ValueError) and "not found" in str(exc).lower():
+        return "document_missing", False
+    return "unexpected_error", True
+
+
 def _fail_job(job: ExtractionJob, database, exc: Exception) -> None:
     # Discard any partial writes from the failed stage (e.g. a
     # delete-then-insert of discovered targets that threw mid-loop) before
@@ -114,9 +139,23 @@ def _fail_job(job: ExtractionJob, database, exc: Exception) -> None:
     # and a later "Use Existing" reload sees a non-empty but incomplete
     # target set and wrongly treats it as a finished, reusable result.
     database.rollback()
+    reason, retryable = failure_reason(exc)
     job.status = "failed"
-    job.error_message = str(exc)
+    job.error_message = str(exc) or type(exc).__name__
     job.completed_at = datetime.now(timezone.utc)
+    # The stage it failed in and why, kept with the stage history and
+    # timings recorded so far (partial diagnostics survive the failure).
+    job.result_json = {
+        **(job.result_json or {}),
+        "failure": {
+            "stage": job.stage,
+            "reason": reason,
+            "retryable": retryable,
+            "message": job.error_message,
+            "error_type": type(exc).__name__,
+            "at": job.completed_at.isoformat(),
+        },
+    }
     database.commit()
     log_event(
         "job_failed",
@@ -126,6 +165,17 @@ def _fail_job(job: ExtractionJob, database, exc: Exception) -> None:
         job_id=job.id,
         document_id=job.document_id,
     )
+
+
+def _fail_unexpected(database, job_id: int, exc: Exception) -> None:
+    logger.exception("Job %s failed", job_id)
+    try:
+        database.rollback()
+        job = database.get(ExtractionJob, job_id)
+        if job is not None and job.status in ("queued", "processing"):
+            _fail_job(job, database, exc)
+    except Exception:  # noqa: BLE001 - recovery marks it interrupted later
+        logger.exception("Recording the failure of job %s failed", job_id)
 
 
 async def run_processing_job(job_id: int) -> None:
@@ -223,6 +273,22 @@ async def run_processing_job(job_id: int) -> None:
                 stage_timings["source_retrieval_ms"] = int(
                     (time.perf_counter() - retrieval_started) * 1000
                 )
+
+                _append_stage(job, "verifying_file")
+                database.commit()
+                verify_started = time.perf_counter()
+                from app.document_validation.file_check import verify_stored_file
+                from pathlib import Path as _Path
+
+                verification = await run_in_threadpool(verify_stored_file, document, _Path(file_path))
+                merge_provenance(document, {"file_verification": verification})
+                stage_timings["file_verification_ms"] = int((time.perf_counter() - verify_started) * 1000)
+                failed_checks = [c for c in verification["checks"] if c["status"] == "failed"]
+                if failed_checks:
+                    database.commit()
+                    _fail_job(job, database, FileVerificationError(failed_checks[0]["detail"]))
+                    return
+                database.commit()
 
                 _append_stage(job, "rendering_ocr")
                 job.progress = 20
@@ -372,6 +438,8 @@ async def run_processing_job(job_id: int) -> None:
 
         # Classify now, from the pages just read, so the type (and anything
         # needing review) is known before extraction. Never fails the job.
+        _append_stage(job, "classifying")
+        database.commit()
         classification_started = time.perf_counter()
         try:
             from app.classification.service import record_prediction
@@ -388,6 +456,8 @@ async def run_processing_job(job_id: int) -> None:
                 stage_timings[f"discovery_{key}"] = value
         if not reused_discovery:
             stage_timings.pop("schema_discovery_ms", None)
+        # Keep the stages recorded since the payload was copied (classifying).
+        payload["stage_history"] = (job.result_json or {}).get("stage_history") or payload.get("stage_history")
         payload["metrics"] = job_metrics(
             database, job,
             total_ms=int((time.perf_counter() - started) * 1000),
@@ -418,6 +488,8 @@ async def run_processing_job(job_id: int) -> None:
 
         prebuild_structure_soon(job.document_id)
 
+    except Exception as exc:  # noqa: BLE001 - fail visibly, never hang until presumed dead
+        _fail_unexpected(database, job_id, exc)
     finally:
         await stop_heartbeat(heartbeat)
         database.close()
@@ -720,6 +792,8 @@ async def run_extraction_job(
             **{f"timing_{key}": value for key, value in stage_timings.items()},
         )
 
+    except Exception as exc:  # noqa: BLE001 - fail visibly, never hang until presumed dead
+        _fail_unexpected(database, job_id, exc)
     finally:
         await stop_heartbeat(heartbeat)
         database.close()

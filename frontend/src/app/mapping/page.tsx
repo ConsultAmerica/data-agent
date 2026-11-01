@@ -44,6 +44,13 @@ function StatusBadge({ template }: { template: OracleTemplate }) {
 }
 import type { DocumentSummary } from "@/types/document";
 
+/** The target a link asked for (/mapping?template=12), e.g. from the Mapping Designer's draft-target note. */
+function linkedTemplateId(): number | null {
+  if (typeof window === "undefined") return null;
+  const id = Number(new URLSearchParams(window.location.search).get("template"));
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
 function formatDate(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -64,7 +71,8 @@ export default function MappingStudioPage() {
       .then((rows) => {
         setError(null);
         setTemplates(rows);
-        setSelectedId((current) => current ?? rows[0]?.id ?? null);
+        const linked = linkedTemplateId();
+        setSelectedId((current) => current ?? rows.find((row) => row.id === linked)?.id ?? rows[0]?.id ?? null);
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Unable to load templates."));
     getCatalog().then(setCatalog).catch(() => setCatalog(null));
@@ -554,7 +562,8 @@ function CatalogPanel({
   onAttributes: (file: File) => void;
 }) {
   const catalog = template.catalog;
-  const [editing, setEditing] = useState(false);
+  // Opened from a link to set this target up: its details form is ready.
+  const [editing, setEditing] = useState(() => linkedTemplateId() === template.id && !catalog?.application);
   const [form, setForm] = useState({
     application: catalog?.application ?? "",
     integration_method: (catalog?.integration_method ?? "") as IntegrationMethod | "",

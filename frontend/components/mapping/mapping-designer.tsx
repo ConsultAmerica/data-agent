@@ -149,6 +149,8 @@ export default function MappingDesigner() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // The server refuses to activate a mapping to an unverified target; say so before the click.
+  const targetVerified = !template?.catalog || template.catalog.status === "verified";
   const [dirty, setDirty] = useState(false);
 
   const spec: MappingSpec = useMemo(
@@ -455,8 +457,11 @@ export default function MappingDesigner() {
             {saving ? "Saving…" : "Save mapping"}
           </button>
           {profile && !dirty && profile.status !== "active" && (
-            <button type="button" onClick={() => void lifecycle("activate")} className="btn-secondary h-9 px-3 text-sm"
-              title="Approve this version for use (needs the review permission and a verified target)">
+            <button type="button" onClick={() => void lifecycle("activate")} disabled={!targetVerified}
+              className="btn-secondary h-9 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+              title={targetVerified
+                ? "Approve this version for use (needs the review permission)"
+                : `Only a mapping to a verified target can be activated. ${template?.catalog?.status_reason ?? ""}`.trim()}>
               <BadgeCheck className="h-4 w-4" aria-hidden="true" />
               Activate
             </button>
@@ -535,7 +540,14 @@ export default function MappingDesigner() {
         {template?.catalog && template.catalog.status !== "verified" && (
           <p className="mt-2 flex items-center gap-1.5 text-xs text-warning" data-testid="target-status-note">
             <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-            {template.catalog.status_label} target: {template.catalog.status_reason} Mappings can be drafted and previewed; only a verified target is import-ready.
+            <span>
+              {template.catalog.status_label} target: {template.catalog.status_reason} Mappings can be drafted and previewed; only a verified target is import-ready.{" "}
+              {template.catalog.status === "draft" && (
+                <Link href={`/mapping?template=${template.id}`} className="font-medium underline underline-offset-2" data-testid="set-up-target">
+                  {template.catalog.application && template.catalog.integration_method ? "Verify the target" : "Set up the target"}
+                </Link>
+              )}
+            </span>
           </p>
         )}
         {profile?.schema_update_available && (

@@ -227,7 +227,7 @@ def extract_page(
     ocr_error: str | None = None
     ocr_layout_payload: dict | None = None
     preprocess_tags: list[str] = []
-    ocr_text_page = None
+    ocr_words: list[tuple] | None = None
 
     final_text = native_text
     final_blocks = native_block_data
@@ -319,28 +319,21 @@ def extract_page(
                     page_height_pt=page.rect.height,
                 )
 
-            ocr_text_page = _run_with_timeout(
-                lambda: page.get_textpage_ocr(
-                    language=settings.ocr_language,
-                    dpi=effective_dpi,
-                    full=True,
-                    tessdata=tessdata,
-                ),
-                settings.ocr_page_timeout_seconds,
+            # MuPDF's OCR in a worker process: in this one it would hold
+            # the GIL and freeze the server for the whole page.
+            from app.services.ocr_worker import ocr_page
+
+            ocr_text, ocr_blocks, ocr_words = ocr_page(
+                document,
+                page_index,
+                language=settings.ocr_language,
+                dpi=effective_dpi,
+                tessdata=tessdata,
+                timeout_seconds=settings.ocr_page_timeout_seconds,
             )
 
             ocr_passes["text_ocr_ms"] = int((time.perf_counter() - mupdf_started) * 1000)
-            ocr_text = page.get_text(
-                "text",
-                textpage=ocr_text_page,
-                sort=True,
-            ).strip()
-
-            ocr_blocks = page.get_text(
-                "blocks",
-                textpage=ocr_text_page,
-                sort=True,
-            )
+            ocr_text = ocr_text.strip()
 
             ocr_block_data = convert_blocks(
                 ocr_blocks,
@@ -375,7 +368,7 @@ def extract_page(
         except FutureTimeoutError:
             ocr_error = (
                 f"MuPDF OCR exceeded {settings.ocr_page_timeout_seconds}s "
-                "and was abandoned."
+                "and was stopped."
             )
             log_event(
                 "ocr_mupdf",
@@ -561,14 +554,14 @@ def extract_page(
             # slow CPU) after MuPDF's OCR already found every word and its
             # box. Reuse those positions — no second OCR run — so the page
             # never ends up with text but no geometry.
-            if ocr_layout_payload is None and ocr_text_page is not None and extraction_method == "ocr":
+            if ocr_layout_payload is None and ocr_words is not None and extraction_method == "ocr":
                 try:
                     from app.services.ocr_word_layer import layout_from_textpage_words
 
                     layout_dpi = min(_bounded_ocr_dpi(page, settings.ocr_dpi), 220)
                     scale = layout_dpi / 72.0
                     textpage_layout = layout_from_textpage_words(
-                        page.get_text("words", textpage=ocr_text_page), scale=scale
+                        ocr_words, scale=scale
                     )
                     if textpage_layout is not None:
                         ocr_layout_payload = textpage_layout.to_json()

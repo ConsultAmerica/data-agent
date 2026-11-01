@@ -484,6 +484,28 @@ def _read(path: str, stamp: tuple[int, int], pages: tuple[int, ...]) -> dict[int
     return forms
 
 
+@lru_cache(maxsize=64)
+def _box_pages(path: str, stamp: tuple[int, int]) -> frozenset[int]:
+    import fitz
+
+    with fitz.open(path) as pdf:
+        if not pdf.is_form_pdf:
+            return frozenset()
+        return frozenset(index + 1 for index, page in enumerate(pdf) if page.first_widget is not None)
+
+
+def form_box_pages(path: Path | str) -> set[int]:
+    """The pages holding form boxes, filled or not (a blank form has no
+    filled box, yet its boxes are what it prints)."""
+
+    try:
+        stat = Path(path).stat()
+        return set(_box_pages(str(path), (stat.st_mtime_ns, stat.st_size)))
+    except Exception:  # noqa: BLE001 - geometry only refines the layout
+        logger.warning("Could not list the form pages of %s", path, exc_info=True)
+        return set()
+
+
 def read_form_pages(path: Path | str, pages: set[int]) -> dict[int, FormPage]:
     """The form pages among `pages` (those holding form boxes), read once per
     file version. A file that can't be read gives none: the layout then

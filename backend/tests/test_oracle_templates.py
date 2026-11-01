@@ -485,3 +485,27 @@ def test_bad_template_upload_is_rejected_with_a_reason() -> None:
     assert response.status_code == 422 and "Duplicate" in response.json()["detail"]
     response = client.post("/api/oracle/templates", files={"file": ("contract.pdf", b"%PDF-1.4", "application/pdf")})
     assert response.status_code == 422
+
+
+def test_a_header_repeated_for_a_lookups_id_and_name_is_kept_in_place() -> None:
+    # Oracle's contract line export prints a lookup as two columns under one
+    # label: the Supplier's id, then its name.
+    # A header row of display labels (Oracle's own export of contract lines).
+    parsed = parse_template("ContractLine.csv", b"Number,LineId,Supplier,Supplier,Status,Status,Unit Price\n")
+    names = [c.technical_name for c in parsed.columns]
+    assert names == ["Number", "LineId", "Supplier", "Supplier (2)", "Status", "Status (2)", "Unit Price"]
+    assert [c.header for c in parsed.columns] == [None, None, None, "Supplier", None, "Status", None]
+    assert any("Repeated header names (Status, Supplier)" in w for w in parsed.warnings)
+
+
+def test_an_export_prints_a_repeated_header_as_the_template_does() -> None:
+    columns = [vars(c) for c in parse_template("ContractLine.csv", b"Supplier,Supplier,Contract Name\n").columns]
+    spec = MappingSpec(mappings=[
+        ColumnMapping(column="Supplier (2)", source=SourceRef(kind="constant", constant="ACME Corp")),
+        ColumnMapping(column="Contract Name", source=SourceRef(kind="constant", constant="Base Operations")),
+    ])
+    built = build_rows(_workbook(), columns, spec)
+    assert built.headers == ["Supplier", "Supplier", "Contract Name"]
+    rows = list(csv.reader(io.StringIO(write_csv(built.headers, [[c.value for c in r] for r in built.rows]).decode())))
+    assert rows[0] == ["Supplier", "Supplier", "Contract Name"]
+    assert rows[1] == ["", "ACME Corp", "Base Operations"]

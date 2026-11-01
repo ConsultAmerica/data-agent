@@ -39,9 +39,13 @@ class TemplateError(ValueError):
 @dataclass
 class TemplateColumn:
     position: int
+    # Unique within the template: what mappings refer to.
     technical_name: str
     display_label: str | None
     required: bool | None
+    # The header exactly as the template prints it, when that differs from
+    # technical_name (a repeated header, told apart as "Supplier (2)").
+    header: str | None = None
 
 
 @dataclass
@@ -171,8 +175,27 @@ def _columns_from_rows(rows: list[list[str]]) -> tuple[int, int | None, list[Tem
 
     names = [column.technical_name.strip() for column in columns]
     duplicates = sorted({name for name in names if names.count(name) > 1})
-    if duplicates:
+    if duplicates and kinds[technical_row] == "technical":
+        # A technical attribute named twice: Oracle couldn't tell them apart.
         raise TemplateError(f"Duplicate header names: {', '.join(duplicates)}.")
+    if duplicates:
+        # Display labels repeat legitimately: Oracle exports print a lookup as
+        # two columns under one label (the Supplier's id, then its name). Each
+        # keeps its place and its printed header; the second and later are
+        # told apart for mapping.
+        seen: dict[str, int] = {}
+        for column in columns:
+            name = column.technical_name.strip()
+            seen[name] = seen.get(name, 0) + 1
+            if seen[name] > 1:
+                column.header = column.technical_name
+                column.technical_name = f"{name} ({seen[name]})"
+                if column.display_label:
+                    column.display_label = f"{column.display_label} ({seen[name]})"
+        warnings.append(
+            f"Repeated header names ({', '.join(duplicates)}) are kept in place: each repeat is mapped as "
+            f"\"{duplicates[0]} (2)\" and so on, and exports print the headers exactly as the template does."
+        )
     if not any(column.required for column in columns):
         warnings.append("The template does not mark required columns; required checks are not applied.")
     return technical_row, label_row, columns, warnings

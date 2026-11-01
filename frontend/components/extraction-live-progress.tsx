@@ -28,12 +28,14 @@ export const PIPELINE_STAGE_LABELS: Record<string, string> = {
   uploaded: "Upload",
   queued: "Understand",
   reading_document: "Understand",
+  verifying_file: "Understand",
   processing_document: "Understand",
   rendering_ocr: "Understand",
   running_ocr: "Understand",
   indexing: "Understand",
   detecting_structure: "Understand",
   discovering_fields: "Discover Schema",
+  classifying: "Discover Schema",
   extracting_data: "Extract",
   validating_results: "Validate",
   v3_classification: "Prepare Staging",
@@ -45,13 +47,15 @@ const PIPELINE_ORDER = EXTRACTION_WORKFLOW_STEPS.map((step) => step.label);
 
 /** The stages each backend job really runs, in order (extraction_job_runner:
  * run_processing_job / run_extraction_job), with what each one is doing. */
-const PROCESSING_STAGES = ["reading_document", "rendering_ocr", "indexing", "discovering_fields"] as const;
+const PROCESSING_STAGES = ["reading_document", "verifying_file", "rendering_ocr", "indexing", "discovering_fields", "classifying"] as const;
 const EXTRACTION_STAGES = ["extracting_data", "validating_results", "v3_classification"] as const;
 export const STAGE_ACTIVITY: Record<string, string> = {
   reading_document: "Reading pages and form blocks",
+  verifying_file: "Verifying the file: signature, pages, text layer, form fields",
   rendering_ocr: "Running OCR on scanned pages",
   indexing: "Indexing text and layout",
   discovering_fields: "Discovering fields, CLIN schedules and tables",
+  classifying: "Classifying the document type",
   extracting_data: "Extracting values",
   validating_results: "Validating values against the page",
   v3_classification: "Classifying records for staging",

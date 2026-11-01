@@ -598,6 +598,7 @@ async def upload_template(
             "technical_name": column.technical_name,
             "display_label": column.display_label,
             "required": column.required,
+            **({"header": column.header} if column.header else {}),
         }
         for column in parsed.columns
     ]

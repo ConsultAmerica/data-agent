@@ -18,6 +18,7 @@ import UniversalResults from "@/components/universal-results";
 import type { SourceViewRequest } from "@/components/source-verification-panel";
 import DocumentOverview from "@/components/document-overview";
 import BackendStatusBanner from "@/components/backend-status-banner";
+import { SkeletonDocumentWorkspace, SkeletonExtractionPage } from "@/components/ui/skeleton";
 import BatchFooter from "@/components/intake/batch-footer";
 import BatchIntakePortal from "@/components/intake/batch-intake-portal";
 import { useBatchQueue, type QueueItem } from "@/components/intake/batch-queue";
@@ -99,7 +100,7 @@ const ANALYZE_STAGE_MESSAGES = [
 
 export default function NewExtractionPage() {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<SkeletonExtractionPage />}>
       <NewExtractionPageContent />
     </Suspense>
   );
@@ -1244,6 +1245,12 @@ function NewExtractionPageContent() {
       }
     />
   );
+
+  // Reopening a document by URL: show the workspace's shape while it loads
+  // instead of flashing the New batch upload screen first.
+  if (reopenDocumentId && !document && !workflowError) {
+    return <SkeletonDocumentWorkspace label="Opening the extraction workspace…" />;
+  }
 
   return (
     <>

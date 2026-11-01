@@ -17,6 +17,9 @@ vi.mock("@/lib/assignments", async (importOriginal) => ({
   unassignFields: vi.fn(() => Promise.resolve({ unassigned: 1 })),
   getAssignees: vi.fn(() => Promise.resolve({ assignees: ["Dana Reyes"], current_actor: "Workspace User" })),
 }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }),
+}));
 vi.mock("@/lib/export", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/export")>()),
   downloadBlob: vi.fn(),

@@ -486,7 +486,8 @@ def build_rows(workbook: StagingWorkbook, template_columns: list[dict], spec: Ma
         raise ValueError("Too many rows to export at once.")
     records = row_dataset.records if row_dataset is not None else [None]
 
-    headers = [column["technical_name"] for column in template_columns]
+    # As the template prints them: a repeated header is written repeated.
+    headers = [column.get("header") or column["technical_name"] for column in template_columns]
     rows: list[list[BuiltCell]] = []
     for record in records:
         row: list[BuiltCell] = []

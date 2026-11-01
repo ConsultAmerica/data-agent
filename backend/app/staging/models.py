@@ -59,6 +59,10 @@ class SourceLocator(BaseModel):
     column_index: int | None = None
     sheet_name: str | None = None
     cell_ref: str | None = None  # e.g. "B7" for spreadsheets
+    # The element's position in the document (a web page has no page or
+    # coordinates): what reads it in order puts headings, fields and tables
+    # where they were printed.
+    document_order: int | None = None
 
 
 class CellProvenance(BaseModel):

@@ -139,8 +139,12 @@ export function fieldLine(field: Pick<LayoutField, "item" | "field_name" | "labe
 }
 
 /** Where a form box's item number comes from, for its tooltip. */
-export function numberNote(field: Pick<LayoutField, "form_item" | "label">, name: string): string | undefined {
+export function numberNote(field: Pick<LayoutField, "form_item" | "label" | "label_info">, name: string): string | undefined {
   const notes = [field.label !== name ? `Printed: ${field.label}` : ""];
+  // The label written out for this document type, and the field it means.
+  const info = field.label_info;
+  if (info?.display && info.display !== name) notes.push(`Reads as: ${info.display}`);
+  if (info?.meaning && info.meaning !== name && info.meaning !== info.display) notes.push(`Means: ${info.meaning}`);
   const form = field.form_item;
   if (form?.described_as) notes.push(`Item ${form.number} as printed on the form; the box's own description says ${form.described_as}`);
   else if (form?.number_source === "form_field") notes.push(`Item ${form.number} from the box's own description (no printed caption found in its cell)`);
@@ -265,10 +269,11 @@ export default function OriginalStructureView({
       : [];
     // The text extractor's second readings of a form are records, not rows
     // of the Original File: the form's own boxes are shown (as in the export).
-    return [...data.sections, ...extra].map((section) => ({
-      ...section,
-      items: section.items.filter((item) => !(item.kind === "field" && item.form_duplicate)),
-    }));
+    // A grid read over the form's ruled cells is hidden the same way, and a
+    // section left with nothing else isn't listed.
+    return [...data.sections, ...extra]
+      .map((section) => ({ ...section, items: section.items.filter((item) => !item.form_duplicate) }))
+      .filter((section, index) => section.items.length > 0 || [...data.sections, ...extra][index].items.length === 0);
   }, [data]);
   const sections = useMemo(() => filterSections(allSections, filter), [allSections, filter]);
 
@@ -665,7 +670,9 @@ export function TableView({ table, selectedId, onSelect, reviewEnabled = false, 
         <span className="font-medium text-foreground">{section === undefined ? table.title ?? "Table" : tableTitle(table, section)}</span>
         {table.form_table?.folded && <span title="Printed in two halves side by side; read left half, then right half">· read left, then right</span>}
         <span>
-          {table.row_count} row{table.row_count === 1 ? "" : "s"} · {table.pages.length > 1 ? `pages ${table.pages.join("–")}` : `page ${table.pages[0] ?? "—"}`}
+          {table.row_count} row{table.row_count === 1 ? "" : "s"}
+          {/* A web page or text file has no pages to cite. */}
+          {table.pages.length > 1 ? ` · pages ${table.pages.join("–")}` : table.pages.length === 1 ? ` · page ${table.pages[0]}` : ""}
           {table.continued && " · continued across pages"}
           {!table.headers_printed && " · no header row printed"}
           {hidden > 0 && ` · ${hidden} empty column${hidden === 1 ? "" : "s"} hidden`}
